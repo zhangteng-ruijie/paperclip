@@ -317,6 +317,92 @@ test('scanAndMaybeTranslateLowRisk updates low-risk copy files with injected tra
   }
 });
 
+test('scanAndMaybeTranslateLowRisk degrades to review-only mode when the translator fails', async () => {
+  const { sandboxRoot, sandbox } = createSandbox(`translate-fallback-${Date.now()}`);
+  await writeFixtureFiles(sandbox);
+
+  const { calls, run } = createRunMock({
+    '{"command":"git","args":["show","origin/master:ui/src/lib/inbox-copy.ts"]}': baselineSource,
+    '{"command":"git","args":["show","origin/master:docs/start/quickstart.md"]}': '# Quickstart\n\nUse `paperclipai run`.\n',
+  });
+
+  let translatorCalls = 0;
+
+  try {
+    const result = await scanAndMaybeTranslateLowRisk({
+      config: {
+        upstreamRef: 'origin/master',
+        dryRun: false,
+        llmApiBase: 'https://example.invalid/v1',
+        llmApiKey: 'secret',
+        llmModel: 'gpt-test',
+      },
+      cwd: sandbox,
+      run,
+      manifest: {
+        autoTranslationTargets: ['ui/src/lib/inbox-copy.ts'],
+        reviewOnlyPaths: [
+          {
+            englishPath: 'docs/start/quickstart.md',
+            chinesePath: 'docs/start/quickstart-zh-cn.md',
+          },
+        ],
+      },
+      translateEntries: async () => {
+        translatorCalls += 1;
+        throw new Error('Translation request failed: 502');
+      },
+    });
+
+    assert.equal(translatorCalls, 1);
+    assert.equal(result.translationSummary.mode, 'review-only');
+    assert.equal(result.translationSummary.reason, 'translator-error');
+    assert.equal(result.translationSummary.translatedEntryCount, 0);
+    assert.deepEqual(result.translationSummary.translatedFiles, []);
+    assert.deepEqual(result.translationSummary.failures, [
+      {
+        resourcePath: 'ui/src/lib/inbox-copy.ts',
+        message: 'Translation request failed: 502',
+      },
+    ]);
+    assert.match(fs.readFileSync(path.join(sandbox, 'ui', 'src', 'lib', 'inbox-copy.ts'), 'utf8'), /title: '收件箱'/);
+    assert.deepEqual(result.localizationSummary.manualReviewItems, [
+      {
+        type: 'copy-changed',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'title',
+        english: 'Inbox overview',
+        chinese: '收件箱',
+      },
+      {
+        type: 'copy-missing',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'helper',
+        english: 'Read more',
+      },
+      {
+        type: 'copy-stale',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'orphaned',
+        chinese: '旧字段',
+        baselineEnglish: undefined,
+      },
+      {
+        type: 'markdown-review',
+        path: 'docs/start/quickstart-zh-cn.md',
+        sourcePath: 'docs/start/quickstart.md',
+        reason: 'english-changed',
+      },
+    ]);
+    assert.deepEqual(calls, [
+      { command: 'git', args: ['show', 'origin/master:ui/src/lib/inbox-copy.ts'] },
+      { command: 'git', args: ['show', 'origin/master:docs/start/quickstart.md'] },
+    ]);
+  } finally {
+    fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
 test('scanAndMaybeTranslateLowRisk fails fast when upstream baseline lookup fails for a real git error', async () => {
   const { sandboxRoot, sandbox } = createSandbox(`translate-invalid-ref-${Date.now()}`);
   await writeFixtureFiles(sandbox);

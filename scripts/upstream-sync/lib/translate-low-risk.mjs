@@ -170,14 +170,41 @@ async function translateCopyFile({
   };
 }
 
-async function writeTranslatedCopyFile({ chinese, cwd, currentSource, fileSummary, pendingTranslations, resourcePath, translateEntries, translatedEntries, translatedFiles, translatedKeysByFile, baselineEntries, english }) {
-  const translations = await translateEntries({
-    resourcePath,
-    entries: pendingTranslations,
-    english,
-    chinese,
-    baselineEnglish: baselineEntries.english,
-  });
+function formatTranslationFailure(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function writeTranslatedCopyFile({
+  chinese,
+  cwd,
+  currentSource,
+  fileSummary,
+  pendingTranslations,
+  resourcePath,
+  translateEntries,
+  translatedEntries,
+  translatedFiles,
+  translatedKeysByFile,
+  baselineEntries,
+  english,
+  translationFailures,
+}) {
+  let translations;
+  try {
+    translations = await translateEntries({
+      resourcePath,
+      entries: pendingTranslations,
+      english,
+      chinese,
+      baselineEnglish: baselineEntries.english,
+    });
+  } catch (error) {
+    translationFailures.push({
+      resourcePath,
+      message: formatTranslationFailure(error),
+    });
+    return fileSummary;
+  }
 
   const nextChinese = { ...chinese };
   const translatedKeys = [];
@@ -239,12 +266,22 @@ async function scanMarkdownPair({ config, cwd, entry, run }) {
   });
 }
 
-function createTranslationSummary({ translatedEntries, translatedFiles, translationMode }) {
+function createTranslationSummary({ translatedEntries, translatedFiles, translationFailures, translationMode }) {
+  const degradedToReviewOnly = translationFailures.length > 0 && translatedEntries.length === 0;
+  const effectiveMode = degradedToReviewOnly
+    ? {
+        enabled: false,
+        mode: 'review-only',
+        reason: 'translator-error',
+      }
+    : translationMode;
+
   return {
-    ...translationMode,
+    ...effectiveMode,
     translatedFiles,
     translatedEntryCount: translatedEntries.length,
     translatedEntries,
+    failures: translationFailures,
   };
 }
 
@@ -270,6 +307,7 @@ async function scanLowRiskCopyFile({
   translatedEntries,
   translatedFiles,
   translatedKeysByFile,
+  translationFailures,
   translationMode,
 }) {
   const currentSource = await readWorkspaceFile(cwd, resourcePath);
@@ -307,6 +345,7 @@ async function scanLowRiskCopyFile({
     translatedEntries,
     translatedFiles,
     translatedKeysByFile,
+    translationFailures,
   });
 }
 
@@ -596,6 +635,7 @@ export async function scanAndMaybeTranslateLowRisk({
   const translatedFiles = [];
   const translatedEntries = [];
   const translatedKeysByFile = new Map();
+  const translationFailures = [];
 
   for (const resourcePath of manifest.autoTranslationTargets) {
     const fileSummary = await scanLowRiskCopyFile({
@@ -607,6 +647,7 @@ export async function scanAndMaybeTranslateLowRisk({
       translatedEntries,
       translatedFiles,
       translatedKeysByFile,
+      translationFailures,
       translationMode,
     });
     if (fileSummary) {
@@ -636,6 +677,7 @@ export async function scanAndMaybeTranslateLowRisk({
     translationSummary: createTranslationSummary({
       translatedEntries,
       translatedFiles,
+      translationFailures,
       translationMode,
     }),
   };

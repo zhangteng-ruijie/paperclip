@@ -133,21 +133,17 @@ function renderFallbackPrBody(report, error) {
   ].join('\n');
 }
 
-async function resolveValidationSummary({ config, runValidation, status }) {
+async function resolveValidationSummary({ runValidation, status }) {
   if (status === 'conflict') {
     const summary = createSkippedValidationSummary('replay-conflict', VALIDATION_LOG_PATH);
     await writeValidationArtifact(VALIDATION_LOG_PATH, summary);
     return summary;
   }
 
-  if (config.dryRun) {
-    const summary = createSkippedValidationSummary('dry-run', VALIDATION_LOG_PATH);
-    await writeValidationArtifact(VALIDATION_LOG_PATH, summary);
-    return summary;
-  }
-
   try {
-    return await runValidation({ artifactPath: VALIDATION_LOG_PATH });
+    const summary = await runValidation({ artifactPath: VALIDATION_LOG_PATH });
+    await writeValidationArtifact(summary?.logPath ?? VALIDATION_LOG_PATH, summary);
+    return summary;
   } catch (error) {
     const summary = createValidationErrorSummary(error, VALIDATION_LOG_PATH);
     await writeValidationArtifact(VALIDATION_LOG_PATH, summary);
@@ -167,7 +163,7 @@ export async function runUpstreamSync({
   let stage = 'list-maintenance-commits';
   let commits = [];
   let branchName = '';
-  let status = config.dryRun ? 'dry-run' : 'preparing';
+  let status = 'preparing';
   let diagnostics;
   let localizationResult = createSkippedLocalizationSummary('not-started');
   let validationSummary;
@@ -227,39 +223,37 @@ export async function runUpstreamSync({
       };
     }
 
-    if (!config.dryRun) {
-      stage = 'prepare-bot-branch';
-      await prepareBotBranch({
-        run,
-        baseRef: config.upstreamRef,
-        branchName,
-      });
+    stage = 'prepare-bot-branch';
+    await prepareBotBranch({
+      run,
+      baseRef: config.upstreamRef,
+      branchName,
+    });
 
+    try {
+      stage = 'replay-commit-stack';
+      await replayCommitStack({ run, commits });
+      status = config.dryRun ? 'dry-run' : 'replayed';
+    } catch (error) {
+      let conflicts;
+      stage = 'detect-conflicts';
       try {
-        stage = 'replay-commit-stack';
-        await replayCommitStack({ run, commits });
-        status = 'replayed';
-      } catch (error) {
-        let conflicts;
-        stage = 'detect-conflicts';
-        try {
-          conflicts = await listUnmergedFiles({ run });
-        } catch {
-          throw error;
-        }
-
-        if (conflicts.length === 0) {
-          throw error;
-        }
-
-        stage = 'capture-conflict-diagnostics';
-        status = 'conflict';
-        diagnostics = await captureConflictDiagnostics({
-          run,
-          failingCommit: error && typeof error === 'object' && 'failingCommit' in error ? error.failingCommit : commits[commits.length - 1],
-          conflicts,
-        });
+        conflicts = await listUnmergedFiles({ run });
+      } catch {
+        throw error;
       }
+
+      if (conflicts.length === 0) {
+        throw error;
+      }
+
+      stage = 'capture-conflict-diagnostics';
+      status = 'conflict';
+      diagnostics = await captureConflictDiagnostics({
+        run,
+        failingCommit: error && typeof error === 'object' && 'failingCommit' in error ? error.failingCommit : commits[commits.length - 1],
+        conflicts,
+      });
     }
     stage = 'scan-localization';
     localizationResult = status === 'conflict'
@@ -268,7 +262,6 @@ export async function runUpstreamSync({
 
     stage = 'resolve-validation-summary';
     validationSummary = await resolveValidationSummary({
-      config,
       runValidation,
       status,
     });

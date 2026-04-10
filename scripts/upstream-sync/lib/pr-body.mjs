@@ -46,10 +46,12 @@ export function renderPrBody({
 }) {
   const effectiveDiagnostics = conflictDiagnostics ?? diagnostics;
   const translatedFiles = translationSummary.translatedFiles ?? [];
+  const translationFailures = translationSummary.failures ?? [];
   const manualReviewItems = localizationSummary.manualReviewItems ?? [];
   const uiTypecheck = validationSummary.uiTypecheck ?? { status: 'not-run', summary: 'UI typecheck not run.' };
   const serverTypecheck = validationSummary.serverTypecheck ?? { status: 'not-run', summary: 'Server typecheck not run.' };
   const checkI18n = validationSummary.checkI18n ?? { status: 'not-run', summary: 'check:i18n not run.' };
+  const translationReasonLine = translationSummary.reason ? `- translation mode reason: \`${translationSummary.reason}\`` : null;
   const validationReason = validationSummary.reason ? `- reason: \`${validationSummary.reason}\`` : null;
   const validationLogLine = validationSummary.logPath ? `- log artifact: \`${validationSummary.logPath}\`` : null;
 
@@ -78,6 +80,10 @@ export function renderPrBody({
     ...(translatedFiles.length > 0
       ? translatedFiles.map((filePath) => `- \`${filePath}\``)
       : [`- none (${translationSummary.mode ?? 'review-only'})`]),
+    ...(translationReasonLine ? [translationReasonLine] : []),
+    ...(translationFailures.length > 0
+      ? translationFailures.map((failure) => `- translation failure: \`${failure.resourcePath}\` — ${failure.message}`)
+      : []),
     '',
     '## Validation',
     `- overall: \`${validationSummary.status ?? 'not-run'}\``,

@@ -68,7 +68,7 @@ Each scheduled run:
 
 Use **Actions → Upstream Sync → Run workflow** and enable the `dry_run` input.
 
-Dry-run mode still fetches the refs, generates the report artifacts, and prints the workflow outputs, but it does not:
+Dry-run mode still fetches the refs, creates the candidate `bot-upgrade/*` branch locally, replays the maintenance stack, runs localization/validation, generates the report artifacts, and prints the workflow outputs, but it does not:
 
 - push `bot-upgrade/*`
 - commit translation edits
@@ -93,13 +93,13 @@ The PR body always comes from the generated `pr_body_path` output.
 
 `.github/workflows/upstream-sync-pr.yml` runs on `pull_request` events that target `zh-enterprise`, but only executes for `bot-upgrade/*` source branches.
 
-It installs dependencies and runs the same required checks used by upstream-sync:
+It installs dependencies and lets the dry-run upstream-sync regeneration execute the same required checks used by the main workflow:
 
 - `pnpm --filter @paperclipai/ui typecheck`
 - `pnpm --filter @paperclipai/server typecheck`
 - `pnpm check:i18n`
 
-The workflow also regenerates dry-run upstream-sync artifacts for the PR branch when possible, then uploads the report and validation log artifacts with `if: always()`.
+The workflow regenerates dry-run upstream-sync artifacts for the PR branch when possible, then uploads the report and validation log artifacts with `if: always()`.
 
 ## Maintainer playbook
 

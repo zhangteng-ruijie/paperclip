@@ -91,7 +91,7 @@ jobs:
 
       - name: Run upstream sync
         id: sync
-        if: steps.preflight.outputs.skip_sync != 'true'
+        if: steps.preflight.outputs.skip_sync != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -119,6 +119,7 @@ jobs:
         env:
           SKIP_SYNC: ${{ steps.preflight.outputs.skip_sync }}
           EXISTING_PR_URL: ${{ steps.preflight.outputs.existing_pr_url }}
+          MANUAL_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           BRANCH_NAME: ${{ steps.sync.outputs.branch_name || steps.preflight.outputs.branch_name }}
           STATUS: ${{ steps.sync.outputs.status }}
           VALIDATION_STATUS: ${{ steps.sync.outputs.validation_status }}
@@ -127,10 +128,14 @@ jobs:
           {
             echo "## Upstream Sync"
             echo "- branch: \`${BRANCH_NAME:-<unknown>}\`"
-            if [ "$SKIP_SYNC" = "true" ]; then
+            if [ "$SKIP_SYNC" = "true" ] && [ "$MANUAL_DRY_RUN" != "true" ]; then
               echo "- result: already handled"
               echo "- existing PR: ${EXISTING_PR_URL}"
             else
+              if [ "$SKIP_SYNC" = "true" ] && [ -n "$EXISTING_PR_URL" ]; then
+                echo "- preflight: existing PR found, manual dry-run override applied"
+                echo "- existing PR: ${EXISTING_PR_URL}"
+              fi
               echo "- status: \`${STATUS:-<empty>}\`"
               echo "- validation: \`${VALIDATION_STATUS:-<empty>}\`"
               echo "- ready_for_pr: \`${READY_FOR_PR:-false}\`"
@@ -211,6 +216,7 @@ jobs:
         if: always()
         env:
           SKIP_SYNC: ${{ steps.preflight.outputs.skip_sync }}
+          MANUAL_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           STATUS: ${{ steps.sync.outputs.status }}
           VALIDATION_STATUS: ${{ steps.sync.outputs.validation_status }}
           STEP_OUTCOME: ${{ steps.sync.outcome }}
@@ -219,15 +225,15 @@ jobs:
           echo "status: ${STATUS:-<empty>}"
           echo "validation_status: ${VALIDATION_STATUS:-<empty>}"
 
-          if [ "$SKIP_SYNC" = "true" ]; then
+          if [ "$SKIP_SYNC" = "true" ] && [ "$MANUAL_DRY_RUN" != "true" ]; then
             exit 0
           fi
 
           case "$STATUS" in
-            no-op|dry-run)
+            no-op)
               exit 0
               ;;
-            replayed)
+            dry-run|replayed)
               if [ "$VALIDATION_STATUS" = "passed" ]; then
                 exit 0
               fi
