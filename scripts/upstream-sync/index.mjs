@@ -1,15 +1,39 @@
+import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { parseSyncConfig } from './lib/config.mjs';
 import { runUpstreamSync } from './lib/orchestrator.mjs';
 
-export function writeOutputs(result, stdout = process.stdout) {
-  stdout.write(`branch_name=${result.branchName}\n`);
-  stdout.write(`report_path=${result.reportPath}\n`);
-  stdout.write(`pr_body_path=${result.prBodyPath}\n`);
-  stdout.write(`status=${result.status}\n`);
-  stdout.write(`validation_status=${result.validationStatus ?? ''}\n`);
-  stdout.write(`ready_for_pr=${String(result.readyForPr ?? false)}\n`);
-  stdout.write(`validation_log_path=${result.validationLogPath ?? ''}\n`);
+export function formatOutputs(result) {
+  return [
+    `branch_name=${result.branchName ?? ''}`,
+    `report_path=${result.reportPath ?? ''}`,
+    `pr_body_path=${result.prBodyPath ?? ''}`,
+    `status=${result.status ?? ''}`,
+    `validation_status=${result.validationStatus ?? ''}`,
+    `ready_for_pr=${String(result.readyForPr ?? false)}`,
+    `validation_log_path=${result.validationLogPath ?? ''}`,
+    '',
+  ].join('\n');
+}
+
+export async function writeOutputs(
+  result,
+  stdout = process.stdout,
+  {
+    appendFileImpl = appendFile,
+    githubOutputPath = process.env.GITHUB_OUTPUT,
+  } = {},
+) {
+  const output = formatOutputs(result);
+  stdout.write(output);
+
+  if (githubOutputPath) {
+    await appendFileImpl(githubOutputPath, output, 'utf8');
+  }
+}
+
+export function resolveExitCode(result) {
+  return result?.status === 'error' ? 1 : 0;
 }
 
 export async function main(
@@ -19,12 +43,16 @@ export async function main(
     parseSyncConfig: parseSyncConfigImpl = parseSyncConfig,
     runUpstreamSync: runUpstreamSyncImpl = runUpstreamSync,
     stdout = process.stdout,
+    appendFileImpl = appendFile,
   } = {},
 ) {
   const config = parseSyncConfigImpl(env, argv);
   const result = await runUpstreamSyncImpl({ config });
 
-  writeOutputs(result, stdout);
+  await writeOutputs(result, stdout, {
+    appendFileImpl,
+    githubOutputPath: env.GITHUB_OUTPUT,
+  });
 
   return result;
 }
@@ -33,8 +61,12 @@ const invokedPath = process.argv[1];
 const isDirectRun = invokedPath ? import.meta.url === pathToFileURL(invokedPath).href : false;
 
 if (isDirectRun) {
-  main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  });
+  main()
+    .then((result) => {
+      process.exitCode = resolveExitCode(result);
+    })
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
 }
