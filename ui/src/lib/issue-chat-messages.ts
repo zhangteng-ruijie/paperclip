@@ -10,6 +10,8 @@ import type {
 import type { Agent, IssueComment } from "@paperclipai/shared";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { formatAssigneeUserLabel } from "./assignees";
+import { runtimeActorLabel } from "./actor-labels";
+import { getRuntimeLocaleConfig } from "./runtime-locale";
 import type { IssueTimelineEvent } from "./issue-timeline-events";
 import {
   summarizeNotice,
@@ -174,11 +176,28 @@ function authorNameForComment(
   if (comment.authorAgentId) {
     return agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8);
   }
-  return formatAssigneeUserLabel(comment.authorUserId ?? null, currentUserId) ?? "You";
+  return formatAssigneeUserLabel(comment.authorUserId ?? null, currentUserId) ?? runtimeActorLabel("you");
 }
 
 function formatStatusLabel(status: string) {
-  return status.replace(/_/g, " ");
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
+  if (!isZh) return status.replace(/_/g, " ");
+  return ({
+    none: "无",
+    todo: "待办",
+    in_progress: "进行中",
+    in_review: "待审核",
+    done: "已完成",
+    blocked: "阻塞",
+    backlog: "待规划",
+    running: "运行中",
+    queued: "排队中",
+    failed: "失败",
+    error: "错误",
+    timed_out: "超时",
+    cancelled: "已取消",
+    succeeded: "成功",
+  }[status] ?? status.replace(/_/g, " "));
 }
 
 function createCommentMessage(args: {
@@ -237,26 +256,29 @@ function createTimelineEventMessage(args: {
   currentUserId?: string | null;
 }) {
   const { event, agentMap, currentUserId } = args;
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const actorName = event.actorType === "agent"
     ? (agentMap?.get(event.actorId)?.name ?? event.actorId.slice(0, 8))
     : event.actorType === "system"
-      ? "System"
-      : (formatAssigneeUserLabel(event.actorId, currentUserId) ?? "Board");
+      ? runtimeActorLabel("system")
+      : (formatAssigneeUserLabel(event.actorId, currentUserId) ?? runtimeActorLabel("board"));
 
-  const lines: string[] = [`${actorName} updated this issue`];
+  const lines: string[] = [isZh ? `${actorName} 更新了此任务` : `${actorName} updated this issue`];
   if (event.statusChange) {
     lines.push(
-      `Status: ${event.statusChange.from ?? "none"} -> ${event.statusChange.to ?? "none"}`,
+      isZh
+        ? `状态：${formatStatusLabel(event.statusChange.from ?? "none")} → ${formatStatusLabel(event.statusChange.to ?? "none")}`
+        : `Status: ${event.statusChange.from ?? "none"} -> ${event.statusChange.to ?? "none"}`,
     );
   }
   if (event.assigneeChange) {
     const from = event.assigneeChange.from.agentId
       ? (agentMap?.get(event.assigneeChange.from.agentId)?.name ?? event.assigneeChange.from.agentId.slice(0, 8))
-      : (formatAssigneeUserLabel(event.assigneeChange.from.userId, currentUserId) ?? "Unassigned");
+      : (formatAssigneeUserLabel(event.assigneeChange.from.userId, currentUserId) ?? runtimeActorLabel("unassigned"));
     const to = event.assigneeChange.to.agentId
       ? (agentMap?.get(event.assigneeChange.to.agentId)?.name ?? event.assigneeChange.to.agentId.slice(0, 8))
-      : (formatAssigneeUserLabel(event.assigneeChange.to.userId, currentUserId) ?? "Unassigned");
-    lines.push(`Assignee: ${from} -> ${to}`);
+      : (formatAssigneeUserLabel(event.assigneeChange.to.userId, currentUserId) ?? runtimeActorLabel("unassigned"));
+    lines.push(isZh ? `负责人：${from} → ${to}` : `Assignee: ${from} -> ${to}`);
   }
 
   const message: ThreadSystemMessage = {
@@ -327,20 +349,23 @@ function computeSegmentTimings(entries: readonly IssueChatTranscriptEntry[]): Se
 
 export function formatDurationWords(ms: number | null) {
   if (ms === null || !Number.isFinite(ms) || ms <= 0) return null;
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   if (totalSeconds < 60) {
-    return `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
+    return isZh ? `${totalSeconds} 秒` : `${totalSeconds} second${totalSeconds === 1 ? "" : "s"}`;
   }
   const totalMinutes = Math.round(totalSeconds / 60);
   if (totalMinutes < 60) {
-    return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+    return isZh ? `${totalMinutes} 分钟` : `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
   }
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (minutes === 0) {
-    return `${hours} hour${hours === 1 ? "" : "s"}`;
+    return isZh ? `${hours} 小时` : `${hours} hour${hours === 1 ? "" : "s"}`;
   }
-  return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return isZh
+    ? `${hours} 小时 ${minutes} 分钟`
+    : `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function runDurationLabel(run: {
@@ -349,36 +374,38 @@ function runDurationLabel(run: {
   startedAt: Date | string | null;
   finishedAt?: Date | string | null;
 }) {
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const start = run.startedAt ?? run.createdAt;
   const end = run.finishedAt ?? null;
   const durationMs = end ? Math.max(0, toTimestamp(end) - toTimestamp(start)) : null;
   const durationText = formatDurationWords(durationMs);
   switch (run.status) {
     case "succeeded":
-      return durationText ? `Worked for ${durationText}` : "Finished work";
+      return durationText ? (isZh ? `执行了 ${durationText}` : `Worked for ${durationText}`) : isZh ? "已完成工作" : "Finished work";
     case "failed":
     case "error":
-      return durationText ? `Failed after ${durationText}` : "Run failed";
+      return durationText ? (isZh ? `${durationText} 后失败` : `Failed after ${durationText}`) : isZh ? "运行失败" : "Run failed";
     case "timed_out":
-      return durationText ? `Timed out after ${durationText}` : "Run timed out";
+      return durationText ? (isZh ? `${durationText} 后超时` : `Timed out after ${durationText}`) : isZh ? "运行超时" : "Run timed out";
     case "cancelled":
-      return durationText ? `Cancelled after ${durationText}` : "Run cancelled";
+      return durationText ? (isZh ? `${durationText} 后取消` : `Cancelled after ${durationText}`) : isZh ? "运行已取消" : "Run cancelled";
     case "queued":
-      return "Queued";
+      return isZh ? "排队中" : "Queued";
     case "running":
-      return "Working...";
+      return isZh ? "执行中…" : "Working...";
     default:
       return formatStatusLabel(run.status);
   }
 }
 
 function createHistoricalRunMessage(run: IssueChatLinkedRun, agentMap?: Map<string, Agent>) {
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const agentName = run.agentName ?? agentMap?.get(run.agentId)?.name ?? run.agentId.slice(0, 8);
   const message: ThreadSystemMessage = {
     id: `run:${run.runId}`,
     role: "system",
     createdAt: toDate(runTimestamp(run)),
-    content: [{ type: "text", text: `${agentName} run ${run.runId.slice(0, 8)} ${formatStatusLabel(run.status)}` }],
+    content: [{ type: "text", text: isZh ? `${agentName} 运行 ${run.runId.slice(0, 8)} ${formatStatusLabel(run.status)}` : `${agentName} run ${run.runId.slice(0, 8)} ${formatStatusLabel(run.status)}` }],
     metadata: {
       custom: {
         kind: "run",
@@ -595,13 +622,14 @@ function createLiveRunMessage(args: {
   transcript: readonly IssueChatTranscriptEntry[];
 }) {
   const { run, transcript } = args;
+  const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const { parts, notices, segments } = buildAssistantPartsFromTranscript(transcript);
   const waitingText =
     run.status === "queued"
-      ? "Queued..."
+      ? isZh ? "排队中…" : "Queued..."
       : parts.length > 0
         ? ""
-        : "Working...";
+        : isZh ? "执行中…" : "Working...";
 
   const content = parts;
 

@@ -19,8 +19,10 @@ import { SidebarProjects } from "./SidebarProjects";
 import { SidebarAgents } from "./SidebarAgents";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
+import { getShellCopy } from "../lib/shell-copy";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -28,6 +30,8 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 export function Sidebar() {
   const { openNewIssue } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
+  const { locale } = useLocale();
+  const copy = getShellCopy(locale);
   const inboxBadge = useInboxBadge(selectedCompanyId);
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedCompanyId!),
@@ -57,7 +61,7 @@ export function Sidebar() {
           />
         )}
         <span className="flex-1 text-sm font-bold text-foreground truncate pl-1">
-          {selectedCompany?.name ?? "Select company"}
+          {selectedCompany?.name ?? copy.selectCompany}
         </span>
         <Button
           variant="ghost"
@@ -77,12 +81,17 @@ export function Sidebar() {
             className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
           >
             <SquarePen className="h-4 w-4 shrink-0" />
-            <span className="truncate">New Issue</span>
+            <span className="truncate">{copy.newIssue}</span>
           </button>
-          <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem
+            to="/dashboard"
+            label={copy.dashboard}
+            icon={LayoutDashboard}
+            liveCount={liveRunCount}
+          />
           <SidebarNavItem
             to="/inbox"
-            label="Inbox"
+            label={copy.inbox}
             icon={Inbox}
             badge={inboxBadge.inbox}
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
@@ -97,22 +106,28 @@ export function Sidebar() {
           />
         </div>
 
-        <SidebarSection label="Work">
-          <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
-          <SidebarNavItem to="/routines" label="Routines" icon={Repeat} textBadge="Beta" textBadgeTone="amber" />
-          <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+        <SidebarSection label={copy.work}>
+          <SidebarNavItem to="/issues" label={copy.issues} icon={CircleDot} />
+          <SidebarNavItem
+            to="/routines"
+            label={copy.routines}
+            icon={Repeat}
+            textBadge="Beta"
+            textBadgeTone="amber"
+          />
+          <SidebarNavItem to="/goals" label={copy.goals} icon={Target} />
         </SidebarSection>
 
         <SidebarProjects />
 
         <SidebarAgents />
 
-        <SidebarSection label="Company">
-          <SidebarNavItem to="/org" label="Org" icon={Network} />
-          <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-          <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
-          <SidebarNavItem to="/activity" label="Activity" icon={History} />
-          <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+        <SidebarSection label={copy.company}>
+          <SidebarNavItem to="/org" label={copy.org} icon={Network} />
+          <SidebarNavItem to="/skills" label={copy.skills} icon={Boxes} />
+          <SidebarNavItem to="/costs" label={copy.costs} icon={DollarSign} />
+          <SidebarNavItem to="/activity" label={copy.activity} icon={History} />
+          <SidebarNavItem to="/company/settings" label={copy.settings} icon={Settings} />
         </SidebarSection>
 
         <PluginSlotOutlet
