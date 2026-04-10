@@ -9,8 +9,8 @@ import { runUpstreamSync } from './orchestrator.mjs';
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 function createSandbox(name) {
-  const sandboxRoot = path.join(repoRoot, 'scripts', 'upstream-sync', '.test-artifacts');
-  const sandbox = path.join(sandboxRoot, name);
+  const sandboxRoot = path.join(repoRoot, 'scripts', 'upstream-sync', '.test-artifacts', name);
+  const sandbox = sandboxRoot;
   fs.mkdirSync(sandbox, { recursive: true });
   return { sandboxRoot, sandbox };
 }
@@ -63,8 +63,12 @@ test('runUpstreamSync dry-run prepares a bot branch name without replaying commi
     assert.equal(result.branchName, 'bot-upgrade/abc123def456');
     assert.deepEqual(result.commits, ['c3', 'c2', 'c1']);
     assert.equal(fs.existsSync(path.join(sandbox, result.reportPath)), true);
+    assert.equal(result.reportPath, 'reports/upstream-sync-report.json');
     assert.equal(fs.existsSync(path.join(sandbox, result.prBodyPath)), true);
-    assert.match(fs.readFileSync(path.join(sandbox, result.reportPath), 'utf8'), /c3/);
+    const report = JSON.parse(fs.readFileSync(path.join(sandbox, result.reportPath), 'utf8'));
+    assert.equal(report.branchName, 'bot-upgrade/abc123def456');
+    assert.equal(report.validationSummary.status, 'not-run');
+    assert.equal(report.validationSummary.checkI18n.status, 'not-run');
     assert.match(fs.readFileSync(path.join(sandbox, result.prBodyPath), 'utf8'), /bot-upgrade\/abc123def456/);
     assert.deepEqual(calls, [
       { command: 'git', args: ['merge-base', 'origin/master', 'HEAD'] },
@@ -111,6 +115,7 @@ test('runUpstreamSync replays commits when not in dry-run mode', async () => {
     assert.equal(result.status, 'replayed');
     assert.deepEqual(result.commits, ['c1', 'c2']);
     assert.equal(fs.existsSync(path.join(sandbox, result.reportPath)), true);
+    assert.equal(result.reportPath, 'reports/upstream-sync-report.json');
     assert.equal(fs.existsSync(path.join(sandbox, result.prBodyPath)), true);
     assert.deepEqual(calls, [
       { command: 'git', args: ['merge-base', 'origin/master', 'HEAD'] },
@@ -168,15 +173,14 @@ test('runUpstreamSync captures cherry-pick conflicts and reports diagnostics', a
       failingCommitSummary: 'c2 conflict commit summary\n',
     });
     assert.equal(fs.existsSync(path.join(sandbox, result.reportPath)), true);
-    const report = fs.readFileSync(path.join(sandbox, result.reportPath), 'utf8');
-    assert.match(report, /- status: `conflict`/);
-    assert.match(report, /## Conflict diagnostics/);
-    assert.match(report, /- failing commit: `c2`/);
-    assert.match(report, /### Current git status/);
-    assert.match(report, /UU scripts\/upstream-sync\/lib\/orchestrator\.mjs/);
-    assert.match(report, /### Failing commit summary/);
-    assert.match(report, /c2 conflict commit summary/);
-    assert.match(report, /scripts\/upstream-sync\/lib\/orchestrator\.mjs/);
+    const report = JSON.parse(fs.readFileSync(path.join(sandbox, result.reportPath), 'utf8'));
+    assert.equal(report.status, 'conflict');
+    assert.deepEqual(report.conflictDiagnostics, {
+      failingCommit: 'c2',
+      status: 'UU scripts/upstream-sync/lib/orchestrator.mjs\n',
+      conflicts: ['scripts/upstream-sync/lib/orchestrator.mjs'],
+      failingCommitSummary: 'c2 conflict commit summary\n',
+    });
     assert.deepEqual(calls, [
       { command: 'git', args: ['merge-base', 'origin/master', 'HEAD'] },
       { command: 'git', args: ['rev-list', '--reverse', 'base-sha..HEAD'] },

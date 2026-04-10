@@ -10,9 +10,11 @@ import {
   prepareBotBranch,
   replayCommitStack,
 } from './git-ops.mjs';
+import { renderPrBody } from './pr-body.mjs';
+import { scanAndMaybeTranslateLowRisk } from './translate-low-risk.mjs';
 
 const execFile = promisify(execFileCallback);
-const REPORT_PATH = 'reports/upstream-sync-report.md';
+const REPORT_PATH = 'reports/upstream-sync-report.json';
 const PR_BODY_PATH = 'reports/upstream-sync-pr-body.md';
 
 function createGitRunner(cwd = process.cwd()) {
@@ -52,57 +54,63 @@ async function resolveBotBranchName({ run, branchPrefix, upstreamRef }) {
   return `${branchPrefix}/${shortSha}`;
 }
 
-function buildReportContent({ config, branchName, status, commits, diagnostics }) {
-  return [
-    '# Upstream sync report',
-    '',
-    `- status: \`${status}\``,
-    `- branch: \`${branchName}\``,
-    `- upstream ref: \`${config.upstreamRef}\``,
-    `- maintenance ref: \`${config.maintenanceRef}\``,
-    '',
-    '## Maintenance commits',
-    ...commits.map((commit) => `- \`${commit}\``),
-    '',
-    diagnostics?.conflicts?.length
-      ? [
-          '## Conflict diagnostics',
-          `- failing commit: \`${diagnostics.failingCommit}\``,
-          '### Current git status',
-          '```',
-          diagnostics.status,
-          '```',
-          '',
-          '### Failing commit summary',
-          '```',
-          diagnostics.failingCommitSummary,
-          '```',
-          '',
-          ...diagnostics.conflicts.map((file) => `- \`${file}\``),
-          '',
-        ]
-      : [],
-  ]
-    .flat()
-    .join('\n');
+function createValidationSummary() {
+  return {
+    status: 'not-run',
+    checkI18n: {
+      status: 'not-run',
+      summary: 'Task 5 will populate check:i18n results.',
+    },
+  };
 }
 
-function buildPrBodyContent({ config, branchName, status, commits }) {
-  return [
-    '# Upstream sync',
-    '',
-    `- status: \`${status}\``,
-    `- branch: \`${branchName}\``,
-    `- upstream ref: \`${config.upstreamRef}\``,
-    `- maintenance ref: \`${config.maintenanceRef}\``,
-    '',
-    '## Replayed commits',
-    ...commits.map((commit) => `- \`${commit}\``),
-    '',
-  ].join('\n');
+function createSkippedLocalizationSummary(reason) {
+  return {
+    localizationSummary: {
+      lowRiskFiles: [],
+      markdownPairs: [],
+      manualReviewItems: [],
+      skippedReason: reason,
+    },
+    translationSummary: {
+      enabled: false,
+      mode: 'review-only',
+      reason,
+      translatedFiles: [],
+      translatedEntryCount: 0,
+      translatedEntries: [],
+    },
+  };
 }
 
-export async function runUpstreamSync({ config, run = createGitRunner() }) {
+function buildReport({
+  config,
+  branchName,
+  status,
+  commits,
+  diagnostics,
+  localizationResult,
+  validationSummary,
+}) {
+  return {
+    branchName,
+    status,
+    commits,
+    upstreamRef: config.upstreamRef,
+    maintenanceRef: config.maintenanceRef,
+    conflictDiagnostics: diagnostics ?? null,
+    localizationSummary: localizationResult.localizationSummary,
+    translationSummary: localizationResult.translationSummary,
+    validationSummary,
+  };
+}
+
+export async function runUpstreamSync({
+  config,
+  run = createGitRunner(),
+  scanLocalization = scanAndMaybeTranslateLowRisk,
+  renderPrBodyContent = renderPrBody,
+} = {}) {
   const commits = await listMaintenanceCommits({
     run,
     upstreamRef: config.upstreamRef,
@@ -148,11 +156,26 @@ export async function runUpstreamSync({ config, run = createGitRunner() }) {
     }
   }
 
+  const validationSummary = createValidationSummary();
+  const localizationResult = status === 'conflict'
+    ? createSkippedLocalizationSummary('replay-conflict')
+    : await scanLocalization({ config, run });
+
+  const report = buildReport({
+    config,
+    branchName,
+    status,
+    commits,
+    diagnostics,
+    localizationResult,
+    validationSummary,
+  });
+
   const reportPath = REPORT_PATH;
   const prBodyPath = PR_BODY_PATH;
 
-  await writeArtifact(reportPath, buildReportContent({ config, branchName, status, commits, diagnostics }));
-  await writeArtifact(prBodyPath, buildPrBodyContent({ config, branchName, status, commits }));
+  await writeArtifact(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  await writeArtifact(prBodyPath, renderPrBodyContent(report));
 
   return {
     branchName,
@@ -161,5 +184,6 @@ export async function runUpstreamSync({ config, run = createGitRunner() }) {
     prBodyPath,
     status,
     diagnostics,
+    report,
   };
 }
