@@ -1,56 +1,131 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 
+import {
+  captureConflictDiagnostics,
+  listMaintenanceCommits,
+  prepareBotBranch,
+  replayCommitStack,
+} from './git-ops.mjs';
+
+const execFile = promisify(execFileCallback);
 const REPORT_PATH = 'reports/upstream-sync-report.md';
 const PR_BODY_PATH = 'reports/upstream-sync-pr-body.md';
 
-async function writeBootstrapArtifact(artifactPath, contents) {
+function createGitRunner(cwd = process.cwd()) {
+  return async ({ command, args }) => {
+    if (command !== 'git') {
+      throw new Error(`Unsupported command: ${command}`);
+    }
+
+    const { stdout } = await execFile(command, args, {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    return stdout;
+  };
+}
+
+async function writeArtifact(artifactPath, contents) {
   await mkdir(path.dirname(artifactPath), { recursive: true });
   await writeFile(artifactPath, contents, 'utf8');
 }
 
-function buildReportContent({ config, branchName, status }) {
+async function resolveBotBranchName({ run, branchPrefix, upstreamRef }) {
+  const shortSha = (await run({ command: 'git', args: ['rev-parse', '--short=12', upstreamRef] })).trim();
+  return `${branchPrefix}/${shortSha}`;
+}
+
+function buildReportContent({ config, branchName, status, commits, diagnostics }) {
   return [
-    '# Upstream sync bootstrap',
+    '# Upstream sync report',
     '',
-    'This is a Task 1 bootstrap artifact.',
-    `- branch: \`${branchName}\``,
-    `- repo: \`${config.githubRepository}\``,
-    `- base branch: \`${config.baseBranch}\``,
     `- status: \`${status}\``,
+    `- branch: \`${branchName}\``,
+    `- upstream ref: \`${config.upstreamRef}\``,
+    `- maintenance ref: \`${config.maintenanceRef}\``,
     '',
-    'Later tasks will replace this placeholder with a real sync report.',
+    '## Maintenance commits',
+    ...commits.map((commit) => `- \`${commit}\``),
+    '',
+    diagnostics?.conflicts?.length
+      ? [
+          '## Conflict diagnostics',
+          `- failing commit: \`${diagnostics.failingCommit}\``,
+          ...diagnostics.conflicts.map((file) => `- \`${file}\``),
+          '',
+        ]
+      : [],
+  ]
+    .flat()
+    .join('\n');
+}
+
+function buildPrBodyContent({ config, branchName, status, commits }) {
+  return [
+    '# Upstream sync',
+    '',
+    `- status: \`${status}\``,
+    `- branch: \`${branchName}\``,
+    `- upstream ref: \`${config.upstreamRef}\``,
+    `- maintenance ref: \`${config.maintenanceRef}\``,
+    '',
+    '## Replayed commits',
+    ...commits.map((commit) => `- \`${commit}\``),
     '',
   ].join('\n');
 }
 
-function buildPrBodyContent({ config, branchName, status }) {
-  return [
-    '# Bootstrap upstream sync',
-    '',
-    'This PR body is a bootstrap placeholder.',
-    `- branch: \`${branchName}\``,
-    `- repo: \`${config.githubRepository}\``,
-    `- status: \`${status}\``,
-    '',
-    'Later tasks will replace this with the final PR description.',
-    '',
-  ].join('\n');
-}
+export async function runUpstreamSync({ config, run = createGitRunner() }) {
+  const commits = await listMaintenanceCommits({
+    run,
+    upstreamRef: config.upstreamRef,
+    maintenanceRef: config.maintenanceRef,
+  });
+  const branchName = await resolveBotBranchName({
+    run,
+    branchPrefix: config.branchPrefix,
+    upstreamRef: config.upstreamRef,
+  });
 
-export async function runUpstreamSync({ config }) {
-  const branchName = `${config.branchPrefix}/sync`;
-  const status = config.dryRun ? 'bootstrap-dry-run' : 'bootstrap-not-ready';
+  let status = 'dry-run';
+  let diagnostics;
+
+  if (!config.dryRun) {
+    await prepareBotBranch({
+      run,
+      baseRef: config.upstreamRef,
+      branchName,
+    });
+
+    try {
+      await replayCommitStack({ run, commits });
+      status = 'replayed';
+    } catch (error) {
+      status = 'conflict';
+      diagnostics = await captureConflictDiagnostics({
+        run,
+        failingCommit: error && typeof error === 'object' && 'failingCommit' in error ? error.failingCommit : commits[commits.length - 1],
+      });
+    }
+  }
+
   const reportPath = REPORT_PATH;
   const prBodyPath = PR_BODY_PATH;
 
-  await writeBootstrapArtifact(reportPath, buildReportContent({ config, branchName, status }));
-  await writeBootstrapArtifact(prBodyPath, buildPrBodyContent({ config, branchName, status }));
+  await writeArtifact(reportPath, buildReportContent({ config, branchName, status, commits, diagnostics }));
+  await writeArtifact(prBodyPath, buildPrBodyContent({ config, branchName, status, commits }));
 
   return {
     branchName,
+    commits,
     reportPath,
     prBodyPath,
     status,
+    diagnostics,
   };
 }
