@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { main } from './index.mjs';
+import { main, resolveExitCode } from './index.mjs';
 
 test('main prints workflow-consumable validation outputs', async () => {
   let output = '';
@@ -67,4 +70,42 @@ test('main prints workflow-consumable outputs for error results', async () => {
   assert.match(output, /^validation_status=not-run$/m);
   assert.match(output, /^ready_for_pr=false$/m);
   assert.match(output, /^validation_log_path=reports\/upstream-sync-validation-log\.json$/m);
+});
+
+test('main mirrors outputs into GITHUB_OUTPUT when configured', async () => {
+  let output = '';
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-sync-index-'));
+  const githubOutputPath = path.join(tempDir, 'github-output.txt');
+
+  try {
+    await main([], { GITHUB_OUTPUT: githubOutputPath }, {
+      runUpstreamSync: async () => ({
+        branchName: 'bot-upgrade/abc123def456',
+        reportPath: 'reports/upstream-sync-report.json',
+        prBodyPath: 'reports/upstream-sync-pr-body.md',
+        status: 'replayed',
+        validationStatus: 'passed',
+        readyForPr: true,
+        validationLogPath: 'reports/upstream-sync-validation-log.json',
+      }),
+      parseSyncConfig: () => ({ dryRun: false }),
+      stdout: {
+        write(chunk) {
+          output += chunk;
+        },
+      },
+    });
+
+    const githubOutput = fs.readFileSync(githubOutputPath, 'utf8');
+    assert.equal(githubOutput, output);
+    assert.match(githubOutput, /^branch_name=bot-upgrade\/abc123def456$/m);
+    assert.match(githubOutput, /^ready_for_pr=true$/m);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('resolveExitCode returns non-zero for error results', () => {
+  assert.equal(resolveExitCode({ status: 'error' }), 1);
+  assert.equal(resolveExitCode({ status: 'replayed' }), 0);
 });
