@@ -13,6 +13,7 @@ const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
   codexHome: process.env.CODEX_HOME || null,
+  paperclipLocale: process.env.PAPERCLIP_LOCALE || null,
   paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
@@ -33,6 +34,7 @@ type CapturePayload = {
   argv: string[];
   prompt: string;
   codexHome: string | null;
+  paperclipLocale: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipEnvKeys: string[];
 };
@@ -69,6 +71,7 @@ describe("codex execute", () => {
     const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
     const previousPaperclipInWorktree = process.env.PAPERCLIP_IN_WORKTREE;
     const previousCodexHome = process.env.CODEX_HOME;
+    const previousPaperclipLocale = process.env.PAPERCLIP_LOCALE;
     process.env.HOME = root;
     process.env.PAPERCLIP_HOME = paperclipHome;
     delete process.env.PAPERCLIP_INSTANCE_ID;
@@ -137,6 +140,85 @@ describe("codex execute", () => {
       else process.env.PAPERCLIP_IN_WORKTREE = previousPaperclipInWorktree;
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
+      if (previousPaperclipLocale === undefined) delete process.env.PAPERCLIP_LOCALE;
+      else process.env.PAPERCLIP_LOCALE = previousPaperclipLocale;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes PAPERCLIP_LOCALE through to Codex and localizes managed-home logs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-locale-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "paperclip-home");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousCodexHome = process.env.CODEX_HOME;
+    const previousPaperclipLocale = process.env.PAPERCLIP_LOCALE;
+    process.env.HOME = root;
+    process.env.PAPERCLIP_HOME = paperclipHome;
+    process.env.CODEX_HOME = sharedCodexHome;
+    delete process.env.PAPERCLIP_LOCALE;
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-locale",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipLocale: "zh-CN",
+        },
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.paperclipLocale).toBe("zh-CN");
+      expect(capture.paperclipEnvKeys).toContain("PAPERCLIP_LOCALE");
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("使用 Paperclip 托管的 Codex 目录"),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      if (previousPaperclipLocale === undefined) delete process.env.PAPERCLIP_LOCALE;
+      else process.env.PAPERCLIP_LOCALE = previousPaperclipLocale;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

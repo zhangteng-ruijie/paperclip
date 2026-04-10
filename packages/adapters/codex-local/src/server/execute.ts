@@ -16,6 +16,7 @@ import {
   ensurePathInEnv,
   readPaperclipRuntimeSkillEntries,
   resolveCommandForLogs,
+  resolvePaperclipLocale,
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
   renderPaperclipWakePrompt,
@@ -25,6 +26,20 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
+import {
+  codexLoadedAgentInstructionsNote,
+  codexMissingInstructionsNote,
+  codexPrependedInstructionsNote,
+  codexRepoAgentsNote,
+  codexSkippedInstructionReinjectionNote,
+  formatCodexResumeUnavailableLog,
+  formatFailedToInjectCodexSkillLog,
+  formatInjectedCodexSkillLog,
+  formatRemovedStaleCodexSkillLog,
+  formatRepairedCodexSkillLog,
+  formatSavedSessionMismatchLog,
+  formatUnreadableInstructionsWarning,
+} from "./localization.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +124,7 @@ async function pruneBrokenUnavailablePaperclipSkillSymlinks(
   skillsHome: string,
   allowedSkillNames: Iterable<string>,
   onLog: AdapterExecutionContext["onLog"],
+  locale?: string | null,
 ) {
   const allowed = new Set(Array.from(allowedSkillNames));
   const entries = await fs.readdir(skillsHome, { withFileTypes: true }).catch(() => []);
@@ -133,7 +149,7 @@ async function pruneBrokenUnavailablePaperclipSkillSymlinks(
     await fs.unlink(target).catch(() => {});
     await onLog(
       "stdout",
-      `[paperclip] Removed stale Codex skill "${entry.name}" from ${skillsHome}\n`,
+      formatRemovedStaleCodexSkillLog(entry.name, skillsHome, locale),
     );
   }
 }
@@ -147,6 +163,7 @@ type EnsureCodexSkillsInjectedOptions = {
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
   desiredSkillNames?: string[];
   linkSkill?: (source: string, target: string) => Promise<void>;
+  locale?: string | null;
 };
 
 export async function ensureCodexSkillsInjected(
@@ -156,6 +173,7 @@ export async function ensureCodexSkillsInjected(
   const allSkillsEntries = options.skillsEntries ?? await readPaperclipRuntimeSkillEntries({}, __moduleDir);
   const desiredSkillNames =
     options.desiredSkillNames ?? allSkillsEntries.map((entry) => entry.key);
+  const locale = options.locale;
   const desiredSet = new Set(desiredSkillNames);
   const skillsEntries = allSkillsEntries.filter((entry) => desiredSet.has(entry.key));
   if (skillsEntries.length === 0) return;
@@ -186,7 +204,7 @@ export async function ensureCodexSkillsInjected(
           }
           await onLog(
             "stdout",
-            `[paperclip] Repaired Codex skill "${entry.runtimeName}" into ${skillsHome}\n`,
+            formatRepairedCodexSkillLog(entry.runtimeName, skillsHome, locale),
           );
           continue;
         }
@@ -197,12 +215,22 @@ export async function ensureCodexSkillsInjected(
 
       await onLog(
         "stdout",
-        `[paperclip] ${result === "repaired" ? "Repaired" : "Injected"} Codex skill "${entry.runtimeName}" into ${skillsHome}\n`,
+        formatInjectedCodexSkillLog({
+          locale,
+          skillName: entry.runtimeName,
+          skillsHome,
+          repaired: result === "repaired",
+        }),
       );
     } catch (err) {
       await onLog(
         "stderr",
-        `[paperclip] Failed to inject Codex skill "${entry.key}" into ${skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
+        formatFailedToInjectCodexSkillLog({
+          locale,
+          skillKey: entry.key,
+          skillsHome,
+          reason: err instanceof Error ? err.message : String(err),
+        }),
       );
     }
   }
@@ -211,6 +239,7 @@ export async function ensureCodexSkillsInjected(
     skillsHome,
     skillsEntries.map((entry) => entry.runtimeName),
     onLog,
+    locale,
   );
 }
 
@@ -243,6 +272,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const workspaceBranch = asString(workspaceContext.branchName, "");
   const workspaceWorktreePath = asString(workspaceContext.worktreePath, "");
   const agentHome = asString(workspaceContext.agentHome, "");
+  const paperclipLocale = resolvePaperclipLocale(context.paperclipLocale);
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
     ? context.paperclipWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -272,8 +302,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const desiredSkillNames = resolveCodexDesiredSkillNames(config, codexSkillEntries);
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const preparedManagedCodexHome =
-    configuredCodexHome ? null : await prepareManagedCodexHome(process.env, onLog, agent.companyId);
-  const defaultCodexHome = resolveManagedCodexHomeDir(process.env, agent.companyId);
+    configuredCodexHome
+      ? null
+      : await prepareManagedCodexHome(
+          {
+            ...process.env,
+            PAPERCLIP_LOCALE: paperclipLocale ?? process.env.PAPERCLIP_LOCALE,
+          },
+          onLog,
+          agent.companyId,
+        );
+  const defaultCodexHome = resolveManagedCodexHomeDir(
+    {
+      ...process.env,
+      PAPERCLIP_LOCALE: paperclipLocale ?? process.env.PAPERCLIP_LOCALE,
+    },
+    agent.companyId,
+  );
   const effectiveCodexHome = configuredCodexHome ?? preparedManagedCodexHome ?? defaultCodexHome;
   await fs.mkdir(effectiveCodexHome, { recursive: true });
   // Inject skills into the same CODEX_HOME that Codex will actually run with
@@ -285,11 +330,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       skillsHome: codexSkillsDir,
       skillsEntries: codexSkillEntries,
       desiredSkillNames,
+      locale: paperclipLocale,
     },
   );
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
-  const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  const env: Record<string, string> = {
+    ...buildPaperclipEnv(agent, { locale: paperclipLocale }),
+  };
   env.CODEX_HOME = effectiveCodexHome;
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
@@ -415,7 +463,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      `[paperclip] Codex session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
+      formatSavedSessionMismatchLog({
+        locale: paperclipLocale,
+        sessionId: runtimeSessionId,
+        runtimeSessionCwd,
+        cwd,
+      }),
     );
   }
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
@@ -434,12 +487,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const reason = err instanceof Error ? err.message : String(err);
       await onLog(
         "stdout",
-        `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
+        formatUnreadableInstructionsWarning({
+          locale: paperclipLocale,
+          instructionsFilePath,
+          reason,
+        }),
       );
     }
   }
   const repoAgentsNote =
-    "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Paperclip does not currently suppress that discovery.";
+    codexRepoAgentsNote(paperclipLocale);
   const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
   const templateData = {
     agentId: agent.id,
@@ -465,19 +522,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (instructionsPrefix.length > 0) {
       if (shouldUseResumeDeltaPrompt) {
         return [
-          `Loaded agent instructions from ${instructionsFilePath}`,
-          "Skipped stdin instruction reinjection because an existing Codex session is being resumed with a wake delta.",
+          codexLoadedAgentInstructionsNote(instructionsFilePath, paperclipLocale),
+          codexSkippedInstructionReinjectionNote(paperclipLocale),
           repoAgentsNote,
         ];
       }
       return [
-        `Loaded agent instructions from ${instructionsFilePath}`,
-        `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
+        codexLoadedAgentInstructionsNote(instructionsFilePath, paperclipLocale),
+        codexPrependedInstructionsNote(instructionsDir, paperclipLocale),
         repoAgentsNote,
       ];
     }
     return [
-      `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
+      codexMissingInstructionsNote(instructionsFilePath, paperclipLocale),
       repoAgentsNote,
     ];
   })();
@@ -624,7 +681,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   ) {
     await onLog(
       "stdout",
-      `[paperclip] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+      formatCodexResumeUnavailableLog(sessionId, paperclipLocale),
     );
     const retry = await runAttempt(null);
     return toResult(retry, true);

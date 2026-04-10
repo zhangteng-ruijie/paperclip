@@ -8,6 +8,7 @@ import {
   asString,
   buildPaperclipEnv,
   parseObject,
+  resolvePaperclipLocale,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -339,7 +340,9 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
   const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
   const paperclipEnv: Record<string, string> = {
-    ...buildPaperclipEnv(ctx.agent),
+    ...buildPaperclipEnv(ctx.agent, {
+      locale: resolvePaperclipLocale(ctx.context.paperclipLocale),
+    }),
     PAPERCLIP_RUN_ID: ctx.runId,
   };
 
