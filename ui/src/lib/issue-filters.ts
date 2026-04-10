@@ -22,10 +22,10 @@ export const issueStatusOrder = ["in_progress", "todo", "backlog", "in_review", 
 export const issuePriorityOrder = ["critical", "high", "medium", "low"];
 
 export const issueQuickFilterPresets = [
-  { label: "All", statuses: [] as string[] },
-  { label: "Active", statuses: ["todo", "in_progress", "in_review", "blocked"] },
-  { label: "Backlog", statuses: ["backlog"] },
-  { label: "Done", statuses: ["done", "cancelled"] },
+  { key: "all", label: "All", statuses: [] as string[] },
+  { key: "active", label: "Active", statuses: ["todo", "in_progress", "in_review", "blocked"] },
+  { key: "backlog", label: "Backlog", statuses: ["backlog"] },
+  { key: "done", label: "Done", statuses: ["done", "cancelled"] },
 ];
 
 export function issueFilterLabel(value: string): string {

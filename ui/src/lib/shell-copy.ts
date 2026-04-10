@@ -1,0 +1,131 @@
+type ShellCopyLocale = string | null | undefined;
+
+const shellCopy = {
+  en: {
+    selectCompany: "Select company",
+    newIssue: "New Issue",
+    dashboard: "Dashboard",
+    inbox: "Inbox",
+    work: "Work",
+    issues: "Issues",
+    routines: "Routines",
+    goals: "Goals",
+    company: "Company",
+    org: "Org",
+    skills: "Skills",
+    costs: "Costs",
+    activity: "Activity",
+    settings: "Settings",
+    home: "Home",
+    create: "Create",
+    agents: "Agents",
+    mobileNavigation: "Mobile navigation",
+    projects: "Projects",
+    newProject: "New project",
+    newAgent: "New agent",
+    documentation: "Documentation",
+    instanceSettings: "Instance settings",
+    closeSidebar: "Close sidebar",
+    projectPausedByBudget: "Project paused by budget",
+    agentPausedByBudget: "Agent paused by budget",
+    uploadAttachment: "Upload attachment",
+    upload: "Upload",
+    uploading: "Uploading...",
+    hiddenIssue: "This issue is hidden",
+    live: "Live",
+    routine: "Routine",
+    noProject: "No project",
+    copyIssueMarkdown: "Copy issue as markdown",
+    properties: "Properties",
+    showProperties: "Show properties",
+    hideIssue: "Hide this Issue",
+    addDescription: "Add a description...",
+    subIssues: "Sub-issues",
+    addSubIssue: "Add sub-issue",
+    subIssue: "Sub-issue",
+    attachments: "Attachments",
+    deletePrompt: "Delete?",
+    yes: "Yes",
+    no: "No",
+    deleteAttachment: "Delete attachment",
+    chat: "Chat",
+    loadEarlierComments: "Load earlier comments",
+    loadingEarlierComments: "Loading earlier comments...",
+    costSummary: "Cost Summary",
+    noCostData: "No cost data yet.",
+    noActivity: "No activity yet.",
+  },
+  "zh-CN": {
+    selectCompany: "选择公司",
+    newIssue: "新建任务",
+    dashboard: "仪表盘",
+    inbox: "收件箱",
+    work: "工作",
+    issues: "任务",
+    routines: "例行任务",
+    goals: "目标",
+    company: "公司",
+    org: "组织",
+    skills: "技能",
+    costs: "成本",
+    activity: "活动",
+    settings: "设置",
+    home: "首页",
+    create: "新建",
+    agents: "智能体",
+    mobileNavigation: "移动端导航",
+    projects: "项目",
+    newProject: "新建项目",
+    newAgent: "新建 Agent",
+    documentation: "文档",
+    instanceSettings: "实例设置",
+    closeSidebar: "关闭侧边栏",
+    projectPausedByBudget: "项目因预算已暂停",
+    agentPausedByBudget: "Agent 因预算已暂停",
+    uploadAttachment: "上传附件",
+    upload: "上传",
+    uploading: "上传中...",
+    hiddenIssue: "该任务已隐藏",
+    live: "进行中",
+    routine: "例行任务",
+    noProject: "无项目",
+    copyIssueMarkdown: "复制任务 Markdown",
+    properties: "属性",
+    showProperties: "显示属性",
+    hideIssue: "隐藏此任务",
+    addDescription: "添加描述...",
+    subIssues: "子任务",
+    addSubIssue: "添加子任务",
+    subIssue: "子任务",
+    attachments: "附件",
+    deletePrompt: "删除？",
+    yes: "是",
+    no: "否",
+    deleteAttachment: "删除附件",
+    chat: "对话",
+    loadEarlierComments: "加载更早评论",
+    loadingEarlierComments: "正在加载更早评论...",
+    costSummary: "成本汇总",
+    noCostData: "还没有成本数据。",
+    noActivity: "还没有活动记录。",
+  },
+} as const;
+
+function resolveLocale(locale: ShellCopyLocale) {
+  return locale === "zh-CN" ? "zh-CN" : "en";
+}
+
+export function getShellCopy(locale: ShellCopyLocale) {
+  return shellCopy[resolveLocale(locale)];
+}
+
+export function themeToggleLabel(nextTheme: "light" | "dark", locale: ShellCopyLocale): string {
+  if (locale === "zh-CN") {
+    return `切换到${nextTheme === "light" ? "浅色" : "深色"}模式`;
+  }
+  return `Switch to ${nextTheme} mode`;
+}
+
+export function liveRunCountLabel(count: number, locale: ShellCopyLocale): string {
+  return locale === "zh-CN" ? `${count} 运行中` : `${count} live`;
+}

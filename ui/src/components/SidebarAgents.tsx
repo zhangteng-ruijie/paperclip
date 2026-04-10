@@ -11,6 +11,8 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { useAgentOrder } from "../hooks/useAgentOrder";
+import { useLocale } from "../context/LocaleContext";
+import { getShellCopy, liveRunCountLabel } from "../lib/shell-copy";
 import { AgentIcon } from "./AgentIconPicker";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import {
@@ -24,6 +26,8 @@ export function SidebarAgents() {
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const { locale } = useLocale();
+  const copy = getShellCopy(locale);
   const location = useLocation();
 
   const { data: agents } = useQuery({
@@ -81,7 +85,7 @@ export function SidebarAgents() {
               )}
             />
             <span className="text-[10px] font-medium uppercase tracking-widest font-mono text-muted-foreground/60">
-              Agents
+              {copy.agents}
             </span>
           </CollapsibleTrigger>
           <button
@@ -90,7 +94,7 @@ export function SidebarAgents() {
               openNewAgent();
             }}
             className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label="New agent"
+            aria-label={copy.newAgent}
           >
             <Plus className="h-3 w-3" />
           </button>
@@ -120,7 +124,7 @@ export function SidebarAgents() {
                 {(agent.pauseReason === "budget" || runCount > 0) && (
                   <span className="ml-auto flex items-center gap-1.5 shrink-0">
                     {agent.pauseReason === "budget" ? (
-                      <BudgetSidebarMarker title="Agent paused by budget" />
+                      <BudgetSidebarMarker title={copy.agentPausedByBudget} />
                     ) : null}
                     {runCount > 0 ? (
                       <span className="relative flex h-2 w-2">
@@ -130,7 +134,7 @@ export function SidebarAgents() {
                     ) : null}
                     {runCount > 0 ? (
                       <span className="text-[11px] font-medium text-blue-600 dark:text-blue-400">
-                        {runCount} live
+                        {liveRunCountLabel(runCount, locale)}
                       </span>
                     ) : null}
                   </span>

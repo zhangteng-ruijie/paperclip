@@ -16,6 +16,7 @@ import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useGeneralSettings } from "../context/GeneralSettingsContext";
+import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
@@ -32,6 +33,21 @@ import {
   withIssueDetailHeaderSeed,
 } from "../lib/issueDetailBreadcrumb";
 import { hasBlockingShortcutDialog, isKeyboardShortcutTextInputTarget } from "../lib/keyboardShortcuts";
+import {
+  approvalStatusLabel,
+  formatAdapterLabel,
+  formatApprovalRequesterLabel,
+  formatBudgetAlert,
+  formatFailedRunTitle,
+  formatJoinRequestMeta,
+  formatJoinRequestTitle,
+  formatMarkAllReadDescription,
+  formatRetryButton,
+  formatUpdatedAtLabel,
+  getInboxCopy,
+  inboxEmptyMessage,
+} from "../lib/inbox-copy";
+import { formatIssueSubtaskCount } from "../lib/issues-copy";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
@@ -153,10 +169,6 @@ function runFailureMessage(run: HeartbeatRun): string {
   return firstNonEmptyLine(run.error) ?? firstNonEmptyLine(run.stderrExcerpt) ?? "Run exited with an error.";
 }
 
-function approvalStatusLabel(status: Approval["status"]): string {
-  return status.replaceAll("_", " ");
-}
-
 function readIssueIdFromRun(run: HeartbeatRun): string | null {
   const context = run.contextSnapshot;
   if (!context) return null;
@@ -202,6 +214,8 @@ export function FailedRunInboxRow({
   selected?: boolean;
   className?: string;
 }) {
+  const { locale } = useLocale();
+  const copy = getInboxCopy(locale);
   const issueId = readIssueIdFromRun(run);
   const issue = issueId ? issueById.get(issueId) ?? null : null;
   const displayError = runFailureMessage(run);
@@ -224,7 +238,7 @@ export function FailedRunInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label="Mark as read"
+                aria-label={copy.markAsRead}
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -238,7 +252,7 @@ export function FailedRunInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label={copy.dismissFromInbox}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -269,7 +283,7 @@ export function FailedRunInboxRow({
                   {issue.title}
                 </>
               ) : (
-                <>Failed run{linkedAgentName ? ` — ${linkedAgentName}` : ""}</>
+                 <>{formatFailedRunTitle(linkedAgentName, locale)}</>
               )}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -290,14 +304,14 @@ export function FailedRunInboxRow({
             disabled={isRetrying}
           >
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            {isRetrying ? "Retrying…" : "Retry"}
+            {formatRetryButton(isRetrying, locale)}
           </Button>
           {!showUnreadSlot && (
             <button
               type="button"
               onClick={onDismiss}
               className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-              aria-label="Dismiss"
+               aria-label={copy.dismiss}
             >
               <X className="h-4 w-4" />
             </button>
@@ -314,14 +328,14 @@ export function FailedRunInboxRow({
           disabled={isRetrying}
         >
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-          {isRetrying ? "Retrying…" : "Retry"}
+          {formatRetryButton(isRetrying, locale)}
         </Button>
         {!showUnreadSlot && (
           <button
             type="button"
             onClick={onDismiss}
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Dismiss"
+            aria-label={copy.dismiss}
           >
             <X className="h-4 w-4" />
           </button>
@@ -356,6 +370,8 @@ function ApprovalInboxRow({
   selected?: boolean;
   className?: string;
 }) {
+  const { locale } = useLocale();
+  const copy = getInboxCopy(locale);
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
   const showResolutionButtons =
@@ -380,7 +396,7 @@ function ApprovalInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label="Mark as read"
+                aria-label={copy.markAsRead}
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -394,7 +410,7 @@ function ApprovalInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label={copy.dismissFromInbox}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -420,9 +436,9 @@ function ApprovalInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="capitalize">{approvalStatusLabel(approval.status)}</span>
-              {requesterName ? <span>requested by {requesterName}</span> : null}
-              <span>updated {timeAgo(approval.updatedAt)}</span>
+              <span className="capitalize">{approvalStatusLabel(approval.status, locale)}</span>
+              {requesterName ? <span>{formatApprovalRequesterLabel(requesterName, locale)}</span> : null}
+              <span>{formatUpdatedAtLabel(timeAgo(approval.updatedAt), locale)}</span>
             </span>
           </span>
         </Link>
@@ -434,7 +450,7 @@ function ApprovalInboxRow({
               onClick={onApprove}
               disabled={isPending}
             >
-              Approve
+              {copy.approve}
             </Button>
             <Button
               variant="destructive"
@@ -443,7 +459,7 @@ function ApprovalInboxRow({
               onClick={onReject}
               disabled={isPending}
             >
-              Reject
+              {copy.reject}
             </Button>
           </div>
         ) : null}
@@ -456,7 +472,7 @@ function ApprovalInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            Approve
+            {copy.approve}
           </Button>
           <Button
             variant="destructive"
@@ -465,7 +481,7 @@ function ApprovalInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            Reject
+            {copy.reject}
           </Button>
         </div>
       ) : null}
@@ -496,10 +512,9 @@ function JoinRequestInboxRow({
   selected?: boolean;
   className?: string;
 }) {
-  const label =
-    joinRequest.requestType === "human"
-      ? "Human join request"
-      : `Agent join request${joinRequest.agentName ? `: ${joinRequest.agentName}` : ""}`;
+  const { locale } = useLocale();
+  const copy = getInboxCopy(locale);
+  const label = formatJoinRequestTitle(joinRequest.requestType, joinRequest.agentName, locale);
   const showUnreadSlot = unreadState !== null;
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
 
@@ -519,7 +534,7 @@ function JoinRequestInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label="Mark as read"
+                aria-label={copy.markAsRead}
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -533,7 +548,7 @@ function JoinRequestInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label={copy.dismissFromInbox}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -553,8 +568,8 @@ function JoinRequestInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span>requested {timeAgo(joinRequest.createdAt)} from IP {joinRequest.requestIp}</span>
-              {joinRequest.adapterType && <span>adapter: {joinRequest.adapterType}</span>}
+              <span>{formatJoinRequestMeta(timeAgo(joinRequest.createdAt), joinRequest.requestIp, locale)}</span>
+              {joinRequest.adapterType && <span>{formatAdapterLabel(joinRequest.adapterType, locale)}</span>}
             </span>
           </span>
         </div>
@@ -565,7 +580,7 @@ function JoinRequestInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            Approve
+            {copy.approve}
           </Button>
           <Button
             variant="destructive"
@@ -574,7 +589,7 @@ function JoinRequestInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            Reject
+            {copy.reject}
           </Button>
         </div>
       </div>
@@ -585,7 +600,7 @@ function JoinRequestInboxRow({
           onClick={onApprove}
           disabled={isPending}
         >
-          Approve
+          {copy.approve}
         </Button>
         <Button
           variant="destructive"
@@ -594,7 +609,7 @@ function JoinRequestInboxRow({
           onClick={onReject}
           disabled={isPending}
         >
-          Reject
+          {copy.reject}
         </Button>
       </div>
     </div>
@@ -604,6 +619,8 @@ function JoinRequestInboxRow({
 export function Inbox() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
+  const copy = getInboxCopy(locale);
   const { isMobile } = useSidebar();
   const navigate = useNavigate();
   const location = useLocation();
@@ -634,11 +651,11 @@ export function Inbox() {
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        "Inbox",
+        copy.inbox,
         `${location.pathname}${location.search}${location.hash}`,
         "inbox",
       ),
-    [location.pathname, location.search, location.hash],
+    [location.pathname, location.search, location.hash, copy.inbox],
   );
 
   const { data: session } = useQuery({
@@ -672,8 +689,8 @@ export function Inbox() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Inbox" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: copy.inbox }]);
+  }, [setBreadcrumbs, copy.inbox]);
 
   useEffect(() => {
     saveLastInboxTab(tab);
@@ -1068,7 +1085,7 @@ export function Inbox() {
       navigate(`/approvals/${id}?resolved=approved`);
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to approve");
+      setActionError(err instanceof Error ? err.message : copy.failedApprove);
     },
   });
 
@@ -1079,7 +1096,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to reject");
+      setActionError(err instanceof Error ? err.message : copy.failedReject);
     },
   });
 
@@ -1094,7 +1111,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to approve join request");
+      setActionError(err instanceof Error ? err.message : copy.failedApproveJoinRequest);
     },
   });
 
@@ -1107,7 +1124,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to reject join request");
+      setActionError(err instanceof Error ? err.message : copy.failedRejectJoinRequest);
     },
   });
 
@@ -1129,7 +1146,7 @@ export function Inbox() {
         payload,
       });
       if (!("id" in result)) {
-        throw new Error(result.message ?? "Retry was skipped.");
+        throw new Error(result.message ?? copy.retrySkipped);
       }
       return { newRun: result, originalRun: run };
     },
@@ -1195,7 +1212,7 @@ export function Inbox() {
       return { previousData };
     },
     onError: (err, id, context) => {
-      setActionError(err instanceof Error ? err.message : "Failed to archive issue");
+      setActionError(err instanceof Error ? err.message : copy.failedArchiveIssue);
       setArchivingIssueIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -1496,7 +1513,7 @@ export function Inbox() {
   }, [selectedIndex]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={InboxIcon} message="Select a company to view inbox." />;
+    return <EmptyState icon={InboxIcon} message={copy.selectCompany} />;
   }
 
   const hasRunFailures = failedRuns.length > 0;
@@ -1550,7 +1567,7 @@ export function Inbox() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search inbox…"
+            placeholder={copy.searchInbox}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 w-full pl-8 text-xs"
@@ -1562,14 +1579,14 @@ export function Inbox() {
             items={[
               {
                 value: "mine",
-                label: "Mine",
+                label: copy.mine,
               },
               {
                 value: "recent",
-                label: "Recent",
+                label: copy.recent,
               },
-              { value: "unread", label: "Unread" },
-              { value: "all", label: "All" },
+              { value: "unread", label: copy.unread },
+              { value: "all", label: copy.all },
             ]}
           />
         </Tabs>
@@ -1579,7 +1596,7 @@ export function Inbox() {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search inbox…"
+              placeholder={copy.searchInbox}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-8 w-[220px] pl-8 text-xs"
@@ -1591,7 +1608,7 @@ export function Inbox() {
             size="icon"
             className={cn("hidden h-8 w-8 shrink-0 sm:inline-flex", nestingEnabled && "bg-accent")}
             onClick={toggleNesting}
-            title={nestingEnabled ? "Disable parent-child nesting" : "Enable parent-child nesting"}
+            title={nestingEnabled ? copy.disableNesting : copy.enableNesting}
           >
             <ListTree className="h-3.5 w-3.5" />
           </Button>
@@ -1644,7 +1661,7 @@ export function Inbox() {
             visibleColumnSet={visibleIssueColumnSet}
             onToggleColumn={toggleIssueColumn}
             onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
-            title="Choose which inbox columns stay visible"
+            title={copy.chooseInboxColumns}
           />
           {canMarkAllRead && (
             <>
@@ -1656,19 +1673,19 @@ export function Inbox() {
                 onClick={() => setShowMarkAllReadConfirm(true)}
                 disabled={markAllReadMutation.isPending}
               >
-                {markAllReadMutation.isPending ? "Marking…" : "Mark all as read"}
+                {markAllReadMutation.isPending ? copy.marking : copy.markAllAsRead}
               </Button>
               <Dialog open={showMarkAllReadConfirm} onOpenChange={setShowMarkAllReadConfirm}>
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
-                    <DialogTitle>Mark all as read?</DialogTitle>
+                    <DialogTitle>{copy.markAllAsReadTitle}</DialogTitle>
                     <DialogDescription>
-                      This will mark {unreadIssueIds.length} unread {unreadIssueIds.length === 1 ? "item" : "items"} as read.
+                      {formatMarkAllReadDescription(unreadIssueIds.length, locale)}
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setShowMarkAllReadConfirm(false)}>
-                      Cancel
+                      {copy.cancel}
                     </Button>
                     <Button
                       onClick={() => {
@@ -1676,7 +1693,7 @@ export function Inbox() {
                         markAllReadMutation.mutate(unreadIssueIds);
                       }}
                     >
-                      Mark all as read
+                      {copy.markAllAsRead}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -1691,20 +1708,20 @@ export function Inbox() {
         <div className="flex flex-wrap items-center gap-2">
           <Select
             value={allCategoryFilter}
-            onValueChange={(value) => setAllCategoryFilter(value as InboxCategoryFilter)}
-          >
-            <SelectTrigger className="h-8 w-[170px] text-xs">
-              <SelectValue placeholder="Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="everything">All categories</SelectItem>
-              <SelectItem value="issues_i_touched">My recent issues</SelectItem>
-              <SelectItem value="join_requests">Join requests</SelectItem>
-              <SelectItem value="approvals">Approvals</SelectItem>
-              <SelectItem value="failed_runs">Failed runs</SelectItem>
-              <SelectItem value="alerts">Alerts</SelectItem>
-            </SelectContent>
-          </Select>
+              onValueChange={(value) => setAllCategoryFilter(value as InboxCategoryFilter)}
+            >
+              <SelectTrigger className="h-8 w-[170px] text-xs">
+               <SelectValue placeholder={copy.category} />
+              </SelectTrigger>
+              <SelectContent>
+               <SelectItem value="everything">{copy.allCategories}</SelectItem>
+               <SelectItem value="issues_i_touched">{copy.myRecentIssues}</SelectItem>
+               <SelectItem value="join_requests">{copy.joinRequests}</SelectItem>
+               <SelectItem value="approvals">{copy.approvals}</SelectItem>
+               <SelectItem value="failed_runs">{copy.failedRuns}</SelectItem>
+               <SelectItem value="alerts">{copy.alerts}</SelectItem>
+              </SelectContent>
+            </Select>
 
           {showApprovalsCategory && (
             <Select
@@ -1712,13 +1729,13 @@ export function Inbox() {
               onValueChange={(value) => setAllApprovalFilter(value as InboxApprovalFilter)}
             >
               <SelectTrigger className="h-8 w-[170px] text-xs">
-                <SelectValue placeholder="Approval status" />
+                 <SelectValue placeholder={copy.approvalStatus} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All approval statuses</SelectItem>
-                <SelectItem value="actionable">Needs action</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-              </SelectContent>
+                 <SelectItem value="all">{copy.allApprovalStatuses}</SelectItem>
+                 <SelectItem value="actionable">{copy.needsAction}</SelectItem>
+                 <SelectItem value="resolved">{copy.resolved}</SelectItem>
+               </SelectContent>
             </Select>
           )}
         </div>
@@ -1734,17 +1751,7 @@ export function Inbox() {
       {allLoaded && visibleSections.length === 0 && (
         <EmptyState
           icon={searchQuery.trim() ? Search : InboxIcon}
-          message={
-            searchQuery.trim()
-              ? "No inbox items match your search."
-              : tab === "mine"
-              ? "Inbox zero."
-              : tab === "unread"
-              ? "No new inbox items."
-              : tab === "recent"
-                ? "No recent inbox items."
-                : "No inbox items match these filters."
-          }
+          message={inboxEmptyMessage(tab, Boolean(searchQuery.trim()), locale)}
         />
       )}
 
@@ -1837,7 +1844,7 @@ export function Inbox() {
                       }
                       titleSuffix={hasChildren && !isExpanded && depth === 0 ? (
                         <span className="ml-1.5 text-xs text-muted-foreground">
-                          ({childCount} sub-task{childCount !== 1 ? "s" : ""})
+                          {formatIssueSubtaskCount(childCount, locale)}
                         </span>
                       ) : undefined}
                       mobileMeta={issueActivityText(issue).toLowerCase()}
@@ -1924,7 +1931,7 @@ export function Inbox() {
                         <div key={`today-divider-${group.key}-${index}`} className="my-2 flex items-center gap-3 px-4">
                           <div className="flex-1 border-t border-zinc-600" />
                           <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                            Earlier
+                            {copy.earlier}
                           </span>
                         </div>,
                       );
@@ -2144,16 +2151,14 @@ export function Inbox() {
                   >
                     <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
                     <span className="text-sm">
-                      Budget at{" "}
-                      <span className="font-medium">{dashboard!.costs.monthUtilizationPercent}%</span>{" "}
-                      utilization this month
+                      {formatBudgetAlert(dashboard!.costs.monthUtilizationPercent, locale)}
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismissAlert("alert:budget")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label="Dismiss"
+                    aria-label={copy.dismiss}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>

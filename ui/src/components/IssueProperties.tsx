@@ -8,11 +8,22 @@ import { authApi } from "../api/auth";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildExecutionPolicy, stageParticipantValues } from "../lib/issue-execution-policy";
+import {
+  copiedActionLabel,
+  formatIssueExecutionStateLabel,
+  getIssuesCopy,
+  issueAssignToRequesterLabel,
+  issueDeleteLabelTitle,
+  issueExecutionRunNowLabel,
+  issueParticipantNoneLabel,
+  issueParticipantSearchPlaceholder,
+} from "../lib/issues-copy";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { Identity } from "./Identity";
@@ -24,6 +35,8 @@ import { User, Hexagon, ArrowUpRight, Tag, Plus, Trash2, GitBranch, FolderOpen, 
 import { AgentIcon } from "./AgentIconPicker";
 
 function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.ComponentType<{ className?: string }> }) {
+  const { locale } = useLocale();
+  const copy = getIssuesCopy(locale);
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timerRef.current), []);
@@ -46,7 +59,7 @@ function TruncatedCopyable({ value, icon: Icon }: { value: string; icon: React.C
         type="button"
         className="shrink-0 p-0.5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
         onClick={handleCopy}
-        title={copied ? "Copied!" : "Copy"}
+        title={copiedActionLabel(copied, locale)}
       >
         {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
       </button>
@@ -159,6 +172,8 @@ export function IssueProperties({
   inline,
 }: IssuePropertiesProps) {
   const { selectedCompanyId } = useCompany();
+  const { locale } = useLocale();
+  const copy = getIssuesCopy(locale);
   const queryClient = useQueryClient();
   const companyId = issue.companyId ?? selectedCompanyId;
   const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -248,7 +263,7 @@ export function IssueProperties({
   };
 
   const projectName = (id: string | null) => {
-    if (!id) return id?.slice(0, 8) ?? "None";
+    if (!id) return id?.slice(0, 8) ?? copy.none;
     const project = orderedProjects.find((p) => p.id === id);
     return project?.name ?? id.slice(0, 8);
   };
@@ -299,16 +314,16 @@ export function IssueProperties({
       return agentName(value.slice("agent:".length)) ?? value.slice("agent:".length, "agent:".length + 8);
     }
     if (value.startsWith("user:")) {
-      return userLabel(value.slice("user:".length)) ?? "User";
+      return userLabel(value.slice("user:".length)) ?? copy.userFallback;
     }
     return value;
   };
   const reviewerTrigger = reviewerValues.length > 0
     ? <span className="text-sm truncate">{reviewerValues.map((value) => executionParticipantLabel(value)).join(", ")}</span>
-    : <span className="text-sm text-muted-foreground">None</span>;
+    : <span className="text-sm text-muted-foreground">{copy.none}</span>;
   const approverTrigger = approverValues.length > 0
     ? <span className="text-sm truncate">{approverValues.map((value) => executionParticipantLabel(value)).join(", ")}</span>
-    : <span className="text-sm text-muted-foreground">None</span>;
+    : <span className="text-sm text-muted-foreground">{copy.none}</span>;
   const nextRunnableExecutionStage = (() => {
     if (issue.executionState?.status === "changes_requested" && issue.executionState.currentStageType) {
       return issue.executionState.currentStageType;
@@ -325,23 +340,24 @@ export function IssueProperties({
         className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
         onClick={() => onUpdate({ status: "in_review" })}
       >
-        {stageType === "review" ? "Run review now" : "Run approval now"}
+        {issueExecutionRunNowLabel(stageType, locale)}
       </button>
     </PropertyRow>
   );
   const currentExecutionLabel = (() => {
     if (!issue.executionState?.currentStageType) return null;
-    const stageLabel = issue.executionState.currentStageType === "review" ? "Review" : "Approval";
     const participant = issue.executionState.currentParticipant;
     const participantLabel = participant
       ? (participant.type === "agent"
         ? agentName(participant.agentId ?? null)
         : userLabel(participant.userId ?? null))
       : null;
-    if (issue.executionState.status === "changes_requested") {
-      return `${stageLabel} requested changes${participantLabel ? ` by ${participantLabel}` : ""}`;
-    }
-    return `${stageLabel} pending${participantLabel ? ` with ${participantLabel}` : ""}`;
+    return formatIssueExecutionStateLabel({
+      stage: issue.executionState.currentStageType,
+      status: issue.executionState.status === "changes_requested" ? "changes_requested" : "pending",
+      participantLabel,
+      locale,
+    });
   })();
 
   const labelsTrigger = (issue.labels ?? []).length > 0 ? (
@@ -366,7 +382,7 @@ export function IssueProperties({
   ) : (
     <>
       <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">No labels</span>
+      <span className="text-sm text-muted-foreground">{copy.noLabels}</span>
     </>
   );
 
@@ -374,7 +390,7 @@ export function IssueProperties({
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search labels..."
+        placeholder={copy.searchLabels}
         value={labelSearch}
         onChange={(e) => setLabelSearch(e.target.value)}
         autoFocus={!inline}
@@ -403,7 +419,7 @@ export function IssueProperties({
                   type="button"
                   className="p-1 text-muted-foreground hover:text-destructive rounded"
                   onClick={() => deleteLabel.mutate(label.id)}
-                  title={`Delete ${label.name}`}
+                  title={issueDeleteLabelTitle(label.name, locale)}
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
@@ -421,7 +437,7 @@ export function IssueProperties({
           />
           <input
             className="flex-1 px-2 py-1.5 text-xs bg-transparent outline-none rounded placeholder:text-muted-foreground/50"
-            placeholder="New label"
+            placeholder={copy.newLabel}
             value={newLabelName}
             onChange={(e) => setNewLabelName(e.target.value)}
           />
@@ -437,7 +453,7 @@ export function IssueProperties({
           }
         >
           <Plus className="h-3 w-3" />
-          {createLabel.isPending ? "Creating…" : "Create label"}
+          {createLabel.isPending ? copy.creating : copy.createLabel}
         </button>
       </div>
     </>
@@ -453,7 +469,7 @@ export function IssueProperties({
   ) : (
     <>
       <User className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">Unassigned</span>
+      <span className="text-sm text-muted-foreground">{copy.unassignedIssue}</span>
     </>
   );
 
@@ -461,7 +477,7 @@ export function IssueProperties({
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search assignees..."
+        placeholder={copy.searchAssignees}
         value={assigneeSearch}
         onChange={(e) => setAssigneeSearch(e.target.value)}
         autoFocus={!inline}
@@ -474,7 +490,7 @@ export function IssueProperties({
           )}
           onClick={() => { onUpdate({ assigneeAgentId: null, assigneeUserId: null }); setAssigneeOpen(false); }}
         >
-          No assignee
+          {copy.noAssignee}
         </button>
         {currentUserId && (
           <button
@@ -488,7 +504,7 @@ export function IssueProperties({
             }}
           >
             <User className="h-3 w-3 shrink-0 text-muted-foreground" />
-            Assign to me
+            {copy.assignToMe}
           </button>
         )}
         {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
@@ -503,7 +519,7 @@ export function IssueProperties({
             }}
           >
             <User className="h-3 w-3 shrink-0 text-muted-foreground" />
-            {creatorUserLabel ? `Assign to ${creatorUserLabel}` : "Assign to requester"}
+            {issueAssignToRequesterLabel(creatorUserLabel, locale)}
           </button>
         )}
         {sortedAgents
@@ -539,7 +555,7 @@ export function IssueProperties({
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder={`Search ${stageType === "review" ? "reviewers" : "approvers"}...`}
+        placeholder={issueParticipantSearchPlaceholder(stageType, locale)}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         autoFocus={!inline}
@@ -552,7 +568,7 @@ export function IssueProperties({
           )}
           onClick={onClear}
         >
-          No {stageType === "review" ? "reviewers" : "approvers"}
+          {issueParticipantNoneLabel(stageType, locale)}
         </button>
         {currentUserId && (
           <button
@@ -563,7 +579,7 @@ export function IssueProperties({
             onClick={() => toggleExecutionParticipant(stageType, `user:${currentUserId}`)}
           >
             <User className="h-3 w-3 shrink-0 text-muted-foreground" />
-            Assign to me
+            {copy.assignToMe}
           </button>
         )}
         {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
@@ -575,7 +591,7 @@ export function IssueProperties({
             onClick={() => toggleExecutionParticipant(stageType, `user:${issue.createdByUserId}`)}
           >
             <User className="h-3 w-3 shrink-0 text-muted-foreground" />
-            {creatorUserLabel ? creatorUserLabel : "Requester"}
+            {creatorUserLabel ? creatorUserLabel : copy.requester}
           </button>
         )}
         {sortedAgents
@@ -614,7 +630,7 @@ export function IssueProperties({
   ) : (
     <>
       <Hexagon className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">No project</span>
+      <span className="text-sm text-muted-foreground">{copy.noProject}</span>
     </>
   );
 
@@ -622,7 +638,7 @@ export function IssueProperties({
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search projects..."
+        placeholder={copy.searchProjects}
         value={projectSearch}
         onChange={(e) => setProjectSearch(e.target.value)}
         autoFocus={!inline}
@@ -644,7 +660,7 @@ export function IssueProperties({
             setProjectOpen(false);
           }}
         >
-          No project
+          {copy.noProject}
         </button>
         {orderedProjects
           .filter((p) => {
@@ -697,7 +713,7 @@ export function IssueProperties({
       )}
     </div>
   ) : (
-    <span className="text-sm text-muted-foreground">No blockers</span>
+    <span className="text-sm text-muted-foreground">{copy.noBlockers}</span>
   );
 
   const blockingIssues = issue.blocks ?? [];
@@ -728,7 +744,7 @@ export function IssueProperties({
     <>
       <input
         className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search issues..."
+        placeholder={copy.searchIssueBlockers}
         value={blockedBySearch}
         onChange={(e) => setBlockedBySearch(e.target.value)}
         autoFocus={!inline}
@@ -741,7 +757,7 @@ export function IssueProperties({
           )}
           onClick={() => onUpdate({ blockedByIssueIds: [] })}
         >
-          No blockers
+          {copy.noBlockers}
         </button>
         {blockerOptions.map((candidate) => {
           const selected = blockedByIds.includes(candidate.id);
@@ -767,9 +783,9 @@ export function IssueProperties({
   );
 
   return (
-    <div className="space-y-4">
+      <div className="space-y-4">
       <div className="space-y-1">
-        <PropertyRow label="Status">
+        <PropertyRow label={copy.status}>
           <StatusIcon
             status={issue.status}
             onChange={(status) => onUpdate({ status })}
@@ -777,7 +793,7 @@ export function IssueProperties({
           />
         </PropertyRow>
 
-        <PropertyRow label="Priority">
+        <PropertyRow label={copy.priority}>
           <PriorityIcon
             priority={issue.priority}
             onChange={(priority) => onUpdate({ priority })}
@@ -787,7 +803,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Labels"
+          label={copy.labels}
           open={labelsOpen}
           onOpenChange={(open) => { setLabelsOpen(open); if (!open) setLabelSearch(""); }}
           triggerContent={labelsTrigger}
@@ -799,7 +815,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Assignee"
+          label={copy.assignee}
           open={assigneeOpen}
           onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
@@ -819,7 +835,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Project"
+          label={copy.project}
           open={projectOpen}
           onOpenChange={(open) => { setProjectOpen(open); if (!open) setProjectSearch(""); }}
           triggerContent={projectTrigger}
@@ -840,7 +856,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Blocked by"
+          label={copy.blockedBy}
           open={blockedByOpen}
           onOpenChange={(open) => {
             setBlockedByOpen(open);
@@ -853,7 +869,7 @@ export function IssueProperties({
           {blockedByContent}
         </PropertyPicker>
 
-        <PropertyRow label="Blocking">
+        <PropertyRow label={copy.blocking}>
           {blockingIssues.length > 0 ? (
             <div className="flex flex-wrap gap-1">
               {blockingIssues.map((relation) => (
@@ -869,7 +885,7 @@ export function IssueProperties({
           ) : null}
         </PropertyRow>
 
-        <PropertyRow label="Sub-issues">
+        <PropertyRow label={copy.subIssues}>
           <div className="flex flex-wrap items-center gap-1.5">
             {childIssues.length > 0
               ? childIssues.map((child) => (
@@ -889,7 +905,7 @@ export function IssueProperties({
                 onClick={onAddSubIssue}
               >
                 <Plus className="h-3 w-3" />
-                Add sub-issue
+                {copy.addSubIssue}
               </button>
             ) : null}
           </div>
@@ -897,7 +913,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Reviewers"
+          label={copy.reviewers}
           open={reviewersOpen}
           onOpenChange={(open) => { setReviewersOpen(open); if (!open) setReviewerSearch(""); }}
           triggerContent={reviewerTrigger}
@@ -916,7 +932,7 @@ export function IssueProperties({
 
         <PropertyPicker
           inline={inline}
-          label="Approvers"
+          label={copy.approvers}
           open={approversOpen}
           onOpenChange={(open) => { setApproversOpen(open); if (!open) setApproverSearch(""); }}
           triggerContent={approverTrigger}
@@ -934,13 +950,13 @@ export function IssueProperties({
         {nextRunnableExecutionStage === "approval" && approverValues.length > 0 ? runExecutionButton("approval") : null}
 
         {currentExecutionLabel && (
-          <PropertyRow label="Execution">
+          <PropertyRow label={copy.execution}>
             <span className="text-sm">{currentExecutionLabel}</span>
           </PropertyRow>
         )}
 
         {issue.parentId && (
-          <PropertyRow label="Parent">
+          <PropertyRow label={copy.parent}>
             <Link
               to={`/issues/${issue.ancestors?.[0]?.identifier ?? issue.parentId}`}
               className="text-sm hover:underline"
@@ -950,7 +966,7 @@ export function IssueProperties({
           </PropertyRow>
         )}
         {issue.requestDepth > 0 && (
-          <PropertyRow label="Depth">
+          <PropertyRow label={copy.depth}>
             <span className="text-sm font-mono">{issue.requestDepth}</span>
           </PropertyRow>
         )}
@@ -961,7 +977,7 @@ export function IssueProperties({
           <Separator />
           <div className="space-y-1">
             {issue.currentExecutionWorkspace?.branchName && (
-              <PropertyRow label="Branch">
+              <PropertyRow label={copy.branch}>
                 <TruncatedCopyable
                   value={issue.currentExecutionWorkspace.branchName}
                   icon={GitBranch}
@@ -969,7 +985,7 @@ export function IssueProperties({
               </PropertyRow>
             )}
             {issue.currentExecutionWorkspace?.cwd && (
-              <PropertyRow label="Folder">
+              <PropertyRow label={copy.folder}>
                 <TruncatedCopyable
                   value={issue.currentExecutionWorkspace.cwd}
                   icon={FolderOpen}
@@ -984,7 +1000,7 @@ export function IssueProperties({
 
       <div className="space-y-1">
         {(issue.createdByAgentId || issue.createdByUserId) && (
-          <PropertyRow label="Created by">
+          <PropertyRow label={copy.createdBy}>
             {issue.createdByAgentId ? (
               <Link
                 to={`/agents/${issue.createdByAgentId}`}
@@ -995,25 +1011,25 @@ export function IssueProperties({
             ) : (
               <>
                 <User className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-sm">{creatorUserLabel ?? "User"}</span>
+                <span className="text-sm">{creatorUserLabel ?? copy.userFallback}</span>
               </>
             )}
           </PropertyRow>
         )}
         {issue.startedAt && (
-          <PropertyRow label="Started">
+          <PropertyRow label={copy.started}>
             <span className="text-sm">{formatDate(issue.startedAt)}</span>
           </PropertyRow>
         )}
         {issue.completedAt && (
-          <PropertyRow label="Completed">
+          <PropertyRow label={copy.completed}>
             <span className="text-sm">{formatDate(issue.completedAt)}</span>
           </PropertyRow>
         )}
-        <PropertyRow label="Created">
+        <PropertyRow label={copy.created}>
           <span className="text-sm">{formatDate(issue.createdAt)}</span>
         </PropertyRow>
-        <PropertyRow label="Updated">
+        <PropertyRow label={copy.updated}>
           <span className="text-sm">{timeAgo(issue.updatedAt)}</span>
         </PropertyRow>
       </div>
