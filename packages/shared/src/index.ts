@@ -161,6 +161,10 @@ export type {
   FeedbackTraceBundleCaptureStatus,
   FeedbackTraceBundleFile,
   FeedbackTraceBundle,
+  PaperclipCurrencyCode,
+  PaperclipCurrencyPreference,
+  PaperclipUiLocale,
+  PaperclipUiLocalePreference,
   CompanySkillSourceType,
   CompanySkillTrustLevel,
   CompanySkillCompatibility,
@@ -372,11 +376,16 @@ export {
 } from "./types/feedback.js";
 
 export {
-  DAILY_RETENTION_PRESETS,
-  WEEKLY_RETENTION_PRESETS,
-  MONTHLY_RETENTION_PRESETS,
-  DEFAULT_BACKUP_RETENTION,
-} from "./types/instance.js";
+  DEFAULT_PAPERCLIP_CURRENCY_PREFERENCE,
+  DEFAULT_PAPERCLIP_TIME_ZONE_PREFERENCE,
+  DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
+  PAPERCLIP_CURRENCY_CODES,
+  PAPERCLIP_CURRENCY_PREFERENCES,
+  PAPERCLIP_UI_LOCALES,
+  PAPERCLIP_UI_LOCALE_PREFERENCES,
+  resolvePaperclipCurrencyCode,
+} from "./types/locale.js";
+export { DAILY_RETENTION_PRESETS, WEEKLY_RETENTION_PRESETS, MONTHLY_RETENTION_PRESETS, DEFAULT_BACKUP_RETENTION } from "./types/instance.js";
 
 export {
   getClosedIsolatedExecutionWorkspaceMessage,
@@ -390,6 +399,9 @@ export {
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,
   type PatchInstanceExperimentalSettings,
+  paperclipCurrencyPreferenceSchema,
+  paperclipTimeZonePreferenceSchema,
+  paperclipUiLocalePreferenceSchema,
 } from "./validators/index.js";
 
 export {

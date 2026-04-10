@@ -7,6 +7,11 @@ import {
   DEFAULT_BACKUP_RETENTION,
 } from "../types/instance.js";
 import { feedbackDataSharingPreferenceSchema } from "./feedback.js";
+import {
+  paperclipCurrencyPreferenceSchema,
+  paperclipTimeZonePreferenceSchema,
+  paperclipUiLocalePreferenceSchema,
+} from "./locale.js";
 
 function presetSchema<T extends readonly number[]>(presets: T, label: string) {
   return z.number().refine(
@@ -27,6 +32,9 @@ export const instanceGeneralSettingsSchema = z.object({
   feedbackDataSharingPreference: feedbackDataSharingPreferenceSchema.default(
     DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   ),
+  locale: paperclipUiLocalePreferenceSchema,
+  timeZone: paperclipTimeZonePreferenceSchema,
+  currencyCode: paperclipCurrencyPreferenceSchema,
   backupRetention: backupRetentionPolicySchema.default(DEFAULT_BACKUP_RETENTION),
 }).strict();
 

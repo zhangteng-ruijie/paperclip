@@ -8,6 +8,11 @@ export {
   type InstanceExperimentalSettings,
   type PatchInstanceExperimentalSettings,
 } from "./instance.js";
+export {
+  paperclipCurrencyPreferenceSchema,
+  paperclipTimeZonePreferenceSchema,
+  paperclipUiLocalePreferenceSchema,
+} from "./locale.js";
 
 export {
   upsertBudgetPolicySchema,
