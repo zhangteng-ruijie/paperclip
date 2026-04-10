@@ -75,3 +75,59 @@ test('renderPrBody includes replay status, translated files, validation results,
   assert.match(body, /docs\/start\/quickstart-zh-cn\.md/);
   assert.match(body, /legacyCta/);
 });
+
+test('renderPrBody surfaces translation fallback failures without blocking the PR body', () => {
+  const body = renderPrBody({
+    branchName: 'bot-upgrade/abc123def456',
+    status: 'replayed',
+    upstreamRef: 'upstream/v1.2.3',
+    maintenanceRef: 'origin/zh-enterprise',
+    commits: ['c1'],
+    diagnostics: {
+      conflicts: [],
+    },
+    translationSummary: {
+      mode: 'review-only',
+      reason: 'translator-error',
+      translatedFiles: [],
+      translatedEntryCount: 0,
+      failures: [
+        {
+          resourcePath: 'ui/src/lib/inbox-copy.ts',
+          message: 'Translation request failed: 502',
+        },
+      ],
+    },
+    validationSummary: {
+      status: 'passed',
+      uiTypecheck: {
+        status: 'passed',
+        summary: 'UI typecheck passed.',
+      },
+      serverTypecheck: {
+        status: 'passed',
+        summary: 'Server typecheck passed.',
+      },
+      checkI18n: {
+        status: 'passed',
+        summary: 'check:i18n passed.',
+      },
+    },
+    localizationSummary: {
+      manualReviewItems: [
+        {
+          type: 'copy-missing',
+          path: 'ui/src/lib/inbox-copy.ts',
+          key: 'helper',
+          english: 'Read more',
+        },
+      ],
+    },
+  });
+
+  assert.match(body, /## Auto-translated files/);
+  assert.match(body, /- none \(review-only\)/);
+  assert.match(body, /- translation mode reason: `translator-error`/);
+  assert.match(body, /translation failure: `ui\/src\/lib\/inbox-copy\.ts` — Translation request failed: 502/);
+  assert.match(body, /missing zh-CN key: `ui\/src\/lib\/inbox-copy\.ts` → `helper`/);
+});

@@ -31,7 +31,7 @@ function createRunMock(responses) {
   return { calls, run };
 }
 
-test('runUpstreamSync dry-run prepares a bot branch name without replaying commits', async () => {
+test('runUpstreamSync dry-run replays the candidate branch without marking it ready for PR', async () => {
   const { sandboxRoot, sandbox } = createSandbox(`dry-run-${Date.now()}`);
   const previousCwd = process.cwd();
   process.chdir(sandbox);
@@ -41,6 +41,10 @@ test('runUpstreamSync dry-run prepares a bot branch name without replaying commi
     '{"command":"git","args":["merge-base","origin/master","HEAD"]}': 'base-sha\n',
     '{"command":"git","args":["rev-list","--reverse","base-sha..HEAD"]}': 'c3\nc2\nc1\n',
     '{"command":"git","args":["rev-parse","--short=12","origin/master"]}': { stdout: 'abc123def456\n' },
+    '{"command":"git","args":["checkout","-B","bot-upgrade/abc123def456","origin/master"]}': '',
+    '{"command":"git","args":["cherry-pick","c3"]}': '',
+    '{"command":"git","args":["cherry-pick","c2"]}': '',
+    '{"command":"git","args":["cherry-pick","c1"]}': '',
   });
 
   try {
@@ -73,7 +77,7 @@ test('runUpstreamSync dry-run prepares a bot branch name without replaying commi
 
     assert.equal(result.status, 'dry-run');
     assert.equal(result.branchName, 'bot-upgrade/abc123def456');
-    assert.equal(result.validationStatus, 'not-run');
+    assert.equal(result.validationStatus, 'passed');
     assert.equal(result.readyForPr, false);
     assert.equal(result.validationLogPath, 'reports/upstream-sync-validation-log.json');
     assert.deepEqual(result.commits, ['c3', 'c2', 'c1']);
@@ -83,16 +87,19 @@ test('runUpstreamSync dry-run prepares a bot branch name without replaying commi
     assert.equal(fs.existsSync(path.join(sandbox, result.validationLogPath)), true);
     const report = JSON.parse(fs.readFileSync(path.join(sandbox, result.reportPath), 'utf8'));
     assert.equal(report.branchName, 'bot-upgrade/abc123def456');
-    assert.equal(report.validationSummary.status, 'not-run');
-    assert.equal(report.validationSummary.reason, 'dry-run');
+    assert.equal(report.validationSummary.status, 'passed');
     assert.equal(report.readyForPr, false);
     assert.equal(report.validationLogPath, 'reports/upstream-sync-validation-log.json');
-    assert.match(fs.readFileSync(path.join(sandbox, result.prBodyPath), 'utf8'), /overall: `not-run`/);
-    assert.equal(validationCallCount, 0);
+    assert.match(fs.readFileSync(path.join(sandbox, result.prBodyPath), 'utf8'), /overall: `passed`/);
+    assert.equal(validationCallCount, 1);
     assert.deepEqual(calls, [
       { command: 'git', args: ['merge-base', 'origin/master', 'HEAD'] },
       { command: 'git', args: ['rev-list', '--reverse', 'base-sha..HEAD'] },
       { command: 'git', args: ['rev-parse', '--short=12', 'origin/master'] },
+      { command: 'git', args: ['checkout', '-B', 'bot-upgrade/abc123def456', 'origin/master'] },
+      { command: 'git', args: ['cherry-pick', 'c3'] },
+      { command: 'git', args: ['cherry-pick', 'c2'] },
+      { command: 'git', args: ['cherry-pick', 'c1'] },
     ]);
   } finally {
     process.chdir(previousCwd);

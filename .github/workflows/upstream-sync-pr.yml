@@ -57,21 +57,9 @@ jobs:
           git fetch --no-tags origin zh-enterprise:refs/remotes/origin/zh-enterprise
 
       - name: Regenerate upstream sync report artifacts
+        id: regenerate
         continue-on-error: true
         run: pnpm sync:upstream -- --dry-run --maintenance-ref HEAD
-
-      - name: Run upstream sync PR validation suite
-        run: |
-          node --input-type=module <<'NODE'
-          import { runValidationSuite } from './scripts/upstream-sync/lib/validation.mjs';
-
-          const summary = await runValidationSuite({
-            artifactPath: 'reports/upstream-sync-validation-log.json',
-          });
-
-          console.log(`validation status: ${summary.status}`);
-          process.exitCode = summary.status === 'passed' ? 0 : 1;
-          NODE
 
       - name: Upload upstream sync PR artifacts
         uses: actions/upload-artifact@v4
@@ -87,20 +75,29 @@ jobs:
 
       - name: Write upstream sync PR summary
         if: always()
+        env:
+          REGENERATE_OUTCOME: ${{ steps.regenerate.outcome }}
         run: |
           {
             echo "## Upstream Sync PR Validation"
             echo "- branch: \`${{ github.head_ref }}\`"
+            echo "- regenerate: \`${REGENERATE_OUTCOME:-unknown}\`"
             if [ -f reports/upstream-sync-validation-log.json ]; then
-              node --input-type=module <<'NODE'
-              import fs from 'node:fs';
-              const summary = JSON.parse(fs.readFileSync('reports/upstream-sync-validation-log.json', 'utf8'));
-              process.stdout.write(`- overall: \`${summary.status}\`\n`);
-              process.stdout.write(`- ui typecheck: \`${summary.uiTypecheck?.status ?? 'not-run'}\`\n`);
-              process.stdout.write(`- server typecheck: \`${summary.serverTypecheck?.status ?? 'not-run'}\`\n`);
-              process.stdout.write(`- check:i18n: \`${summary.checkI18n?.status ?? 'not-run'}\`\n`);
-              NODE
+              node --input-type=module -e 'import fs from "node:fs"; const summary = JSON.parse(fs.readFileSync("reports/upstream-sync-validation-log.json", "utf8")); process.stdout.write(`- overall: \`${summary.status}\`\n`); process.stdout.write(`- ui typecheck: \`${summary.uiTypecheck?.status ?? "not-run"}\`\n`); process.stdout.write(`- server typecheck: \`${summary.serverTypecheck?.status ?? "not-run"}\`\n`); process.stdout.write(`- check:i18n: \`${summary.checkI18n?.status ?? "not-run"}\`\n`);'
             else
               echo "- validation log: not generated"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when upstream sync PR regeneration breaks
+        if: always()
+        env:
+          REGENERATE_OUTCOME: ${{ steps.regenerate.outcome }}
+        run: |
+          echo "upstream-sync regenerate outcome: ${REGENERATE_OUTCOME:-<empty>}"
+          if [ "$REGENERATE_OUTCOME" = "success" ]; then
+            exit 0
+          fi
+
+          echo "Dry-run upstream-sync regeneration failed. See uploaded artifacts for details."
+          exit 1
