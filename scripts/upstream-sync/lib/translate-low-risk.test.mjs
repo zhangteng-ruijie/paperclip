@@ -151,6 +151,88 @@ test('scanAndMaybeTranslateLowRisk falls back to review-only mode when LLM confi
   }
 });
 
+test('scanAndMaybeTranslateLowRisk keeps dry-run read-only even with complete LLM config', async () => {
+  const { sandboxRoot, sandbox } = createSandbox(`translate-dry-run-${Date.now()}`);
+  await writeFixtureFiles(sandbox);
+
+  const { calls, run } = createRunMock({
+    '{"command":"git","args":["show","origin/master:ui/src/lib/inbox-copy.ts"]}': baselineSource,
+    '{"command":"git","args":["show","origin/master:docs/start/quickstart.md"]}': '# Quickstart\n\nUse `paperclipai run`.\n',
+  });
+
+  let translatorCalls = 0;
+
+  try {
+    const result = await scanAndMaybeTranslateLowRisk({
+      config: {
+        upstreamRef: 'origin/master',
+        dryRun: true,
+        llmApiBase: 'https://example.invalid/v1',
+        llmApiKey: 'secret',
+        llmModel: 'gpt-test',
+      },
+      cwd: sandbox,
+      run,
+      manifest: {
+        autoTranslationTargets: ['ui/src/lib/inbox-copy.ts'],
+        reviewOnlyPaths: [
+          {
+            englishPath: 'docs/start/quickstart.md',
+            chinesePath: 'docs/start/quickstart-zh-cn.md',
+          },
+        ],
+      },
+      translateEntries: async () => {
+        translatorCalls += 1;
+        return {
+          title: '收件箱概览',
+        };
+      },
+    });
+
+    assert.equal(result.translationSummary.mode, 'review-only');
+    assert.equal(result.translationSummary.reason, 'dry-run');
+    assert.equal(result.translationSummary.translatedEntryCount, 0);
+    assert.deepEqual(result.translationSummary.translatedFiles, []);
+    assert.equal(translatorCalls, 0);
+    assert.match(fs.readFileSync(path.join(sandbox, 'ui', 'src', 'lib', 'inbox-copy.ts'), 'utf8'), /title: '收件箱'/);
+    assert.deepEqual(calls, [
+      { command: 'git', args: ['show', 'origin/master:ui/src/lib/inbox-copy.ts'] },
+      { command: 'git', args: ['show', 'origin/master:docs/start/quickstart.md'] },
+    ]);
+    assert.deepEqual(result.localizationSummary.manualReviewItems, [
+      {
+        type: 'copy-changed',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'title',
+        english: 'Inbox overview',
+        chinese: '收件箱',
+      },
+      {
+        type: 'copy-missing',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'helper',
+        english: 'Read more',
+      },
+      {
+        type: 'copy-stale',
+        path: 'ui/src/lib/inbox-copy.ts',
+        key: 'orphaned',
+        chinese: '旧字段',
+        baselineEnglish: undefined,
+      },
+      {
+        type: 'markdown-review',
+        path: 'docs/start/quickstart-zh-cn.md',
+        sourcePath: 'docs/start/quickstart.md',
+        reason: 'english-changed',
+      },
+    ]);
+  } finally {
+    fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
 test('scanAndMaybeTranslateLowRisk updates low-risk copy files with injected translations', async () => {
   const { sandboxRoot, sandbox } = createSandbox(`translate-apply-${Date.now()}`);
   await writeFixtureFiles(sandbox);
@@ -230,6 +312,41 @@ test('scanAndMaybeTranslateLowRisk updates low-risk copy files with injected tra
         reason: 'english-changed',
       },
     ]);
+  } finally {
+    fs.rmSync(sandboxRoot, { recursive: true, force: true });
+  }
+});
+
+test('scanAndMaybeTranslateLowRisk fails fast when upstream baseline lookup fails for a real git error', async () => {
+  const { sandboxRoot, sandbox } = createSandbox(`translate-invalid-ref-${Date.now()}`);
+  await writeFixtureFiles(sandbox);
+
+  const invalidRefError = new Error('fatal: invalid object name definitely-not-a-real-ref');
+  invalidRefError.stderr = 'fatal: invalid object name definitely-not-a-real-ref\n';
+
+  const { run } = createRunMock({
+    '{"command":"git","args":["show","definitely-not-a-real-ref:ui/src/lib/inbox-copy.ts"]}': invalidRefError,
+  });
+
+  try {
+    await assert.rejects(
+      scanAndMaybeTranslateLowRisk({
+        config: {
+          upstreamRef: 'definitely-not-a-real-ref',
+          dryRun: false,
+          llmApiBase: undefined,
+          llmApiKey: undefined,
+          llmModel: undefined,
+        },
+        cwd: sandbox,
+        run,
+        manifest: {
+          autoTranslationTargets: ['ui/src/lib/inbox-copy.ts'],
+          reviewOnlyPaths: [],
+        },
+      }),
+      /invalid object name/u,
+    );
   } finally {
     fs.rmSync(sandboxRoot, { recursive: true, force: true });
   }

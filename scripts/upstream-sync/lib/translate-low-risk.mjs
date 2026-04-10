@@ -70,12 +70,244 @@ async function readWorkspaceFile(cwd, filePath) {
   }
 }
 
+function isMissingGitPathError(error) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const message = [
+    'message' in error && typeof error.message === 'string' ? error.message : '',
+    'stderr' in error && typeof error.stderr === 'string' ? error.stderr : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return /exists on disk, but not in/u.test(message) || /path .* does not exist in/u.test(message);
+}
+
 async function readGitFile(run, ref, filePath) {
   try {
     return await runGit(run, ['show', `${ref}:${filePath}`]);
-  } catch {
+  } catch (error) {
+    if (isMissingGitPathError(error)) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function buildFileSummary(diff) {
+  return {
+    ...diff,
+    translatedKeys: [],
+    autoTranslated: false,
+  };
+}
+
+function createEmptyBaselineEntries() {
+  return {
+    english: {},
+    chinese: {},
+  };
+}
+
+function resolveBaselineEntries(baselineSource) {
+  return baselineSource ? extractCopyEntries(baselineSource) : createEmptyBaselineEntries();
+}
+
+function createChangedEntry(entry) {
+  return {
+    key: entry.key,
+    english: entry.english,
+    previousEnglish: entry.baselineEnglish,
+    previousChinese: entry.chinese,
+    kind: 'changed',
+  };
+}
+
+function createMissingEntry(entry) {
+  return {
+    key: entry.key,
+    english: entry.english,
+    kind: 'missing',
+  };
+}
+
+function collectPendingTranslations(diff) {
+  return [
+    ...diff.missing.map(createMissingEntry),
+    ...diff.changed.map(createChangedEntry),
+  ];
+}
+
+async function translateCopyFile({
+  config,
+  resourcePath,
+  currentSource,
+  run,
+}) {
+  const baselineSource = await readGitFile(run, config.upstreamRef, resourcePath);
+  const { english, chinese } = extractCopyEntries(currentSource);
+  const baselineEntries = resolveBaselineEntries(baselineSource);
+  const diff = diffCopyResource({
+    resourcePath,
+    baselineEnglish: baselineEntries.english,
+    english,
+    chinese,
+  });
+
+  const fileSummary = buildFileSummary(diff);
+  const pendingTranslations = collectPendingTranslations(diff);
+
+  return {
+    baselineEntries,
+    chinese,
+    diff,
+    english,
+    fileSummary,
+    pendingTranslations,
+  };
+}
+
+async function writeTranslatedCopyFile({ chinese, cwd, currentSource, fileSummary, pendingTranslations, resourcePath, translateEntries, translatedEntries, translatedFiles, translatedKeysByFile, baselineEntries, english }) {
+  const translations = await translateEntries({
+    resourcePath,
+    entries: pendingTranslations,
+    english,
+    chinese,
+    baselineEnglish: baselineEntries.english,
+  });
+
+  const nextChinese = { ...chinese };
+  const translatedKeys = [];
+
+  for (const entry of pendingTranslations) {
+    const translatedValue = translations?.[entry.key];
+    if (!hasValue(translatedValue)) {
+      continue;
+    }
+
+    nextChinese[entry.key] = translatedValue;
+    translatedKeys.push(entry.key);
+    translatedEntries.push({
+      resourcePath,
+      key: entry.key,
+      english: entry.english,
+      chinese: translatedValue,
+    });
+  }
+
+  if (translatedKeys.length === 0) {
+    return fileSummary;
+  }
+
+  const updatedSource = replaceChineseCopyEntries(currentSource, nextChinese);
+  await writeFile(path.join(cwd, resourcePath), updatedSource, 'utf8');
+  fileSummary.autoTranslated = true;
+  fileSummary.translatedKeys = translatedKeys;
+  translatedKeysByFile.set(resourcePath, new Set(translatedKeys));
+  translatedFiles.push(resourcePath);
+
+  return fileSummary;
+}
+
+function createMarkdownPairSummary({ baselineEnglish, chineseSource, englishPath, englishSource, chinesePath }) {
+  return diffMarkdownPair({
+    englishPath,
+    chinesePath,
+    baselineEnglish,
+    english: englishSource,
+    chinese: chineseSource,
+  });
+}
+
+async function scanMarkdownPair({ config, cwd, entry, run }) {
+  const englishSource = await readWorkspaceFile(cwd, entry.englishPath);
+  if (typeof englishSource !== 'string') {
     return undefined;
   }
+
+  const chineseSource = (await readWorkspaceFile(cwd, entry.chinesePath)) ?? '';
+  const baselineEnglish = (await readGitFile(run, config.upstreamRef, entry.englishPath)) ?? '';
+  return createMarkdownPairSummary({
+    baselineEnglish,
+    chineseSource,
+    englishPath: entry.englishPath,
+    englishSource,
+    chinesePath: entry.chinesePath,
+  });
+}
+
+function createTranslationSummary({ translatedEntries, translatedFiles, translationMode }) {
+  return {
+    ...translationMode,
+    translatedFiles,
+    translatedEntryCount: translatedEntries.length,
+    translatedEntries,
+  };
+}
+
+function createLocalizationSummary({ lowRiskFiles, markdownPairs, translationMode, translatedKeysByFile }) {
+  return {
+    lowRiskFiles,
+    markdownPairs,
+    manualReviewItems: buildManualReviewItems({
+      resourceDiff: lowRiskFiles,
+      markdownPairs,
+      translationEnabled: translationMode.enabled,
+      translatedKeysByFile,
+    }),
+  };
+}
+
+async function scanLowRiskCopyFile({
+  config,
+  cwd,
+  resourcePath,
+  run,
+  translateEntries,
+  translatedEntries,
+  translatedFiles,
+  translatedKeysByFile,
+  translationMode,
+}) {
+  const currentSource = await readWorkspaceFile(cwd, resourcePath);
+  if (typeof currentSource !== 'string') {
+    return undefined;
+  }
+
+  const {
+    baselineEntries,
+    chinese,
+    english,
+    fileSummary,
+    pendingTranslations,
+  } = await translateCopyFile({
+    config,
+    resourcePath,
+    currentSource,
+    run,
+  });
+
+  if (!translationMode.enabled || pendingTranslations.length === 0) {
+    return fileSummary;
+  }
+
+  return writeTranslatedCopyFile({
+    baselineEntries,
+    chinese,
+    cwd,
+    currentSource,
+    english,
+    fileSummary,
+    pendingTranslations,
+    resourcePath,
+    translateEntries,
+    translatedEntries,
+    translatedFiles,
+    translatedKeysByFile,
+  });
 }
 
 function getPropertyName(node) {
@@ -228,24 +460,6 @@ export function replaceChineseCopyEntries(sourceText, chineseEntries) {
   return `${sourceText.slice(0, match.chineseObject.getStart(sourceFile))}${replacementText}${sourceText.slice(match.chineseObject.getEnd())}`;
 }
 
-function formatChangedEntry(entry) {
-  return {
-    key: entry.key,
-    english: entry.english,
-    previousEnglish: entry.baselineEnglish,
-    previousChinese: entry.chinese,
-    kind: 'changed',
-  };
-}
-
-function formatMissingEntry(entry) {
-  return {
-    key: entry.key,
-    english: entry.english,
-    kind: 'missing',
-  };
-}
-
 function buildManualReviewItems({ resourceDiff, markdownPairs, translationEnabled, translatedKeysByFile }) {
   const reviewItems = [];
 
@@ -384,108 +598,45 @@ export async function scanAndMaybeTranslateLowRisk({
   const translatedKeysByFile = new Map();
 
   for (const resourcePath of manifest.autoTranslationTargets) {
-    const currentSource = await readWorkspaceFile(cwd, resourcePath);
-    if (typeof currentSource !== 'string') {
-      continue;
-    }
-
-    const baselineSource = (await readGitFile(run, config.upstreamRef, resourcePath)) ?? '';
-    const { english, chinese } = extractCopyEntries(currentSource);
-    const baselineEntries = baselineSource ? extractCopyEntries(baselineSource) : { english: {}, chinese: {} };
-    const diff = diffCopyResource({
+    const fileSummary = await scanLowRiskCopyFile({
+      config,
+      cwd,
       resourcePath,
-      baselineEnglish: baselineEntries.english,
-      english,
-      chinese,
+      run,
+      translateEntries,
+      translatedEntries,
+      translatedFiles,
+      translatedKeysByFile,
+      translationMode,
     });
-
-    const fileSummary = {
-      ...diff,
-      translatedKeys: [],
-      autoTranslated: false,
-    };
-
-    const pendingTranslations = [
-      ...diff.missing.map(formatMissingEntry),
-      ...diff.changed.map(formatChangedEntry),
-    ];
-
-    if (translationMode.enabled && pendingTranslations.length > 0) {
-      const translations = await translateEntries({
-        resourcePath,
-        entries: pendingTranslations,
-        english,
-        chinese,
-        baselineEnglish: baselineEntries.english,
-      });
-
-      const nextChinese = { ...chinese };
-      const translatedKeys = [];
-
-      for (const entry of pendingTranslations) {
-        const translatedValue = translations?.[entry.key];
-        if (!hasValue(translatedValue)) {
-          continue;
-        }
-
-        nextChinese[entry.key] = translatedValue;
-        translatedKeys.push(entry.key);
-        translatedEntries.push({
-          resourcePath,
-          key: entry.key,
-          english: entry.english,
-          chinese: translatedValue,
-        });
-      }
-
-      if (translatedKeys.length > 0) {
-        const updatedSource = replaceChineseCopyEntries(currentSource, nextChinese);
-        await writeFile(path.join(cwd, resourcePath), updatedSource, 'utf8');
-        fileSummary.autoTranslated = true;
-        fileSummary.translatedKeys = translatedKeys;
-        translatedKeysByFile.set(resourcePath, new Set(translatedKeys));
-        translatedFiles.push(resourcePath);
-      }
+    if (fileSummary) {
+      lowRiskFiles.push(fileSummary);
     }
-
-    lowRiskFiles.push(fileSummary);
   }
 
   for (const entry of manifest.reviewOnlyPaths) {
-    const englishSource = await readWorkspaceFile(cwd, entry.englishPath);
-    if (typeof englishSource !== 'string') {
-      continue;
+    const markdownPair = await scanMarkdownPair({
+      config,
+      cwd,
+      entry,
+      run,
+    });
+    if (markdownPair) {
+      markdownPairs.push(markdownPair);
     }
-
-    const chineseSource = (await readWorkspaceFile(cwd, entry.chinesePath)) ?? '';
-    const baselineEnglish = (await readGitFile(run, config.upstreamRef, entry.englishPath)) ?? '';
-    markdownPairs.push(diffMarkdownPair({
-      englishPath: entry.englishPath,
-      chinesePath: entry.chinesePath,
-      baselineEnglish,
-      english: englishSource,
-      chinese: chineseSource,
-    }));
   }
 
-  const localizationSummary = {
-    lowRiskFiles,
-    markdownPairs,
-    manualReviewItems: buildManualReviewItems({
-      resourceDiff: lowRiskFiles,
-      markdownPairs,
-      translationEnabled: translationMode.enabled,
-      translatedKeysByFile,
-    }),
-  };
-
   return {
-    localizationSummary,
-    translationSummary: {
-      ...translationMode,
-      translatedFiles,
-      translatedEntryCount: translatedEntries.length,
+    localizationSummary: createLocalizationSummary({
+      lowRiskFiles,
+      markdownPairs,
+      translatedKeysByFile,
+      translationMode,
+    }),
+    translationSummary: createTranslationSummary({
       translatedEntries,
-    },
+      translatedFiles,
+      translationMode,
+    }),
   };
 }
