@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -94,6 +95,16 @@ jobs:
           git config user.name "upstream-sync-bot"
           git config user.email "upstream-sync-bot@users.noreply.github.com"
 
+      - name: Require PR automation token
+        if: steps.sync.outputs.ready_for_pr == 'true'
+        env:
+          PR_AUTOMATION_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
+        run: |
+          if [ -z "$PR_AUTOMATION_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_BOT_TOKEN is required to push bot branches and trigger upstream-sync PR validation."
+            exit 1
+          fi
+
       - name: Commit low-risk translation edits
         if: steps.sync.outputs.ready_for_pr == 'true'
         run: |
@@ -111,7 +122,9 @@ jobs:
         if: steps.sync.outputs.ready_for_pr == 'true'
         env:
           BRANCH_NAME: ${{ steps.sync.outputs.branch_name }}
+          PUSH_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
         run: |
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch --no-tags origin "$BRANCH_NAME:refs/remotes/origin/$BRANCH_NAME" || true
           git push --force-with-lease origin "$BRANCH_NAME"
 
@@ -119,7 +132,7 @@ jobs:
         id: upsert-pr
         if: steps.sync.outputs.ready_for_pr == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
           REPO_OWNER: ${{ github.repository_owner }}
           BRANCH_NAME: ${{ steps.sync.outputs.branch_name }}
           PR_BODY_PATH: ${{ steps.sync.outputs.pr_body_path }}
