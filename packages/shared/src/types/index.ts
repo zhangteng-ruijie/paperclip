@@ -11,6 +11,12 @@ export type {
   FeedbackTraceBundleFile,
   FeedbackTraceBundle,
 } from "./feedback.js";
+export type {
+  PaperclipCurrencyCode,
+  PaperclipCurrencyPreference,
+  PaperclipUiLocale,
+  PaperclipUiLocalePreference,
+} from "./locale.js";
 export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
 export type {
   CompanySkillSourceType,

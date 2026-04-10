@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE } from "../types/feedback.js";
 import { feedbackDataSharingPreferenceSchema } from "./feedback.js";
+import {
+  paperclipCurrencyPreferenceSchema,
+  paperclipTimeZonePreferenceSchema,
+  paperclipUiLocalePreferenceSchema,
+} from "./locale.js";
 
 export const instanceGeneralSettingsSchema = z.object({
   censorUsernameInLogs: z.boolean().default(false),
@@ -8,6 +13,9 @@ export const instanceGeneralSettingsSchema = z.object({
   feedbackDataSharingPreference: feedbackDataSharingPreferenceSchema.default(
     DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   ),
+  locale: paperclipUiLocalePreferenceSchema,
+  timeZone: paperclipTimeZonePreferenceSchema,
+  currencyCode: paperclipCurrencyPreferenceSchema,
 }).strict();
 
 export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.partial();

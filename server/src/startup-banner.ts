@@ -3,6 +3,7 @@ import { resolvePaperclipConfigPath, resolvePaperclipEnvPath } from "./paths.js"
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 
 import { parse as parseEnvFileContents } from "dotenv";
+import { serverT } from "./localization.js";
 
 type UiMode = "none" | "static" | "vite-dev";
 
@@ -73,10 +74,10 @@ function resolveAgentJwtSecretStatus(
 } {
   const envValue = process.env.PAPERCLIP_AGENT_JWT_SECRET?.trim();
   if (envValue) {
-    return {
-      status: "pass",
-      message: "set",
-    };
+      return {
+        status: "pass",
+        message: serverT("startup.agentJwt.set"),
+      };
   }
 
   if (existsSync(envFilePath)) {
@@ -85,14 +86,14 @@ function resolveAgentJwtSecretStatus(
     if (fileValue) {
       return {
         status: "warn",
-        message: `found in ${envFilePath} but not loaded`,
+        message: serverT("startup.agentJwt.foundNotLoaded", { path: envFilePath }),
       };
     }
   }
 
   return {
     status: "warn",
-    message: "missing (run `pnpm paperclipai onboard`)",
+    message: serverT("startup.agentJwt.missing"),
   };
 }
 
@@ -107,31 +108,31 @@ export function printStartupBanner(opts: StartupBannerOptions): void {
 
   const dbMode =
     opts.db.mode === "embedded-postgres"
-      ? color("embedded-postgres", "green")
-      : color("external-postgres", "yellow");
+      ? color(serverT("startup.embeddedPostgres"), "green")
+      : color(serverT("startup.externalPostgres"), "yellow");
   const uiMode =
     opts.uiMode === "vite-dev"
-      ? color("vite-dev-middleware", "cyan")
+      ? color(serverT("startup.viteDev"), "cyan")
       : opts.uiMode === "static"
-        ? color("static-ui", "magenta")
-        : color("headless-api", "yellow");
+        ? color(serverT("startup.staticUi"), "magenta")
+        : color(serverT("startup.headlessApi"), "yellow");
 
   const portValue =
     opts.requestedPort === opts.listenPort
       ? `${opts.listenPort}`
-      : `${opts.listenPort} ${color(`(requested ${opts.requestedPort})`, "dim")}`;
+      : `${opts.listenPort} ${color(serverT("startup.requestedPort", { port: opts.requestedPort }), "dim")}`;
 
   const dbDetails =
     opts.db.mode === "embedded-postgres"
-      ? `${opts.db.dataDir} ${color(`(pg:${opts.db.port})`, "dim")}`
+      ? `${opts.db.dataDir} ${color(serverT("startup.dbPort", { port: opts.db.port }), "dim")}`
       : redactConnectionString(opts.db.connectionString);
 
   const heartbeat = opts.heartbeatSchedulerEnabled
     ? `enabled ${color(`(${opts.heartbeatSchedulerIntervalMs}ms)`, "dim")}`
-    : color("disabled", "yellow");
+    : color(serverT("startup.disabled"), "yellow");
   const dbBackup = opts.databaseBackupEnabled
     ? `enabled ${color(`(every ${opts.databaseBackupIntervalMinutes}m, keep ${opts.databaseBackupRetentionDays}d)`, "dim")}`
-    : color("disabled", "yellow");
+    : color(serverT("startup.disabled"), "yellow");
 
   const art = [
     color("██████╗  █████╗ ██████╗ ███████╗██████╗  ██████╗██╗     ██╗██████╗ ", "cyan"),
@@ -146,24 +147,24 @@ export function printStartupBanner(opts: StartupBannerOptions): void {
     "",
     ...art,
     color("  ───────────────────────────────────────────────────────", "blue"),
-    row("Mode", `${dbMode}  |  ${uiMode}`),
-    row("Deploy", `${opts.deploymentMode} (${opts.deploymentExposure})`),
-    row("Auth", opts.authReady ? color("ready", "green") : color("not-ready", "yellow")),
-    row("Server", portValue),
-    row("API", `${apiUrl} ${color(`(health: ${apiUrl}/health)`, "dim")}`),
-    row("UI", uiUrl),
-    row("Database", dbDetails),
-    row("Migrations", opts.migrationSummary),
+    row(serverT("startup.mode"), `${dbMode}  |  ${uiMode}`),
+    row(serverT("startup.deploy"), `${opts.deploymentMode} (${opts.deploymentExposure})`),
+    row(serverT("startup.auth"), opts.authReady ? color(serverT("startup.ready"), "green") : color(serverT("startup.notReady"), "yellow")),
+    row(serverT("startup.server"), portValue),
+    row(serverT("startup.api"), `${apiUrl} ${color(`(${serverT("startup.apiHealth", { url: `${apiUrl}/health` })})`, "dim")}`),
+    row(serverT("startup.ui"), uiUrl),
+    row(serverT("startup.database"), dbDetails),
+    row(serverT("startup.migrations"), opts.migrationSummary),
     row(
-      "Agent JWT",
+      serverT("startup.agentJwt"),
       agentJwtSecret.status === "pass"
         ? color(agentJwtSecret.message, "green")
         : color(agentJwtSecret.message, "yellow"),
     ),
-    row("Heartbeat", heartbeat),
-    row("DB Backup", dbBackup),
-    row("Backup Dir", opts.databaseBackupDir),
-    row("Config", configPath),
+    row(serverT("startup.heartbeat"), heartbeat),
+    row(serverT("startup.dbBackup"), dbBackup),
+    row(serverT("startup.backupDir"), opts.databaseBackupDir),
+    row(serverT("startup.config"), configPath),
     agentJwtSecret.status === "warn"
       ? color("  ───────────────────────────────────────────────────────", "yellow")
       : null,

@@ -15,6 +15,10 @@
   },
   "topbarLinks": [
     {
+      "name": "简体中文",
+      "url": "/start/quickstart-zh-cn"
+    },
+    {
       "name": "GitHub",
       "url": "https://github.com/paperclip-ai/paperclip"
     }

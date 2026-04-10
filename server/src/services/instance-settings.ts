@@ -1,6 +1,9 @@
 import type { Db } from "@paperclipai/db";
 import { companies, instanceSettings } from "@paperclipai/db";
 import {
+  DEFAULT_PAPERCLIP_CURRENCY_PREFERENCE,
+  DEFAULT_PAPERCLIP_TIME_ZONE_PREFERENCE,
+  DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
   DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -22,12 +25,18 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       keyboardShortcuts: parsed.data.keyboardShortcuts ?? false,
       feedbackDataSharingPreference:
         parsed.data.feedbackDataSharingPreference ?? DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
+      locale: parsed.data.locale ?? DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
+      timeZone: parsed.data.timeZone ?? DEFAULT_PAPERCLIP_TIME_ZONE_PREFERENCE,
+      currencyCode: parsed.data.currencyCode ?? DEFAULT_PAPERCLIP_CURRENCY_PREFERENCE,
     };
   }
   return {
     censorUsernameInLogs: false,
     keyboardShortcuts: false,
     feedbackDataSharingPreference: DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
+    locale: DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
+    timeZone: DEFAULT_PAPERCLIP_TIME_ZONE_PREFERENCE,
+    currencyCode: DEFAULT_PAPERCLIP_CURRENCY_PREFERENCE,
   };
 }
 
