@@ -1,5 +1,14 @@
+function readConfigValue(value) {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
 export function parseSyncConfig(env = process.env, argv = process.argv.slice(2)) {
-  const githubRepository = env.GITHUB_REPOSITORY;
+  const githubRepository = readConfigValue(env.GITHUB_REPOSITORY);
 
   if (!githubRepository) {
     throw new Error('GITHUB_REPOSITORY is required');
@@ -7,14 +16,14 @@ export function parseSyncConfig(env = process.env, argv = process.argv.slice(2))
 
   return {
     githubRepository,
-    baseBranch: env.BASE_BRANCH ?? 'zh-enterprise',
-    upstreamRemote: env.UPSTREAM_REMOTE ?? 'upstream',
-    upstreamRef: env.UPSTREAM_REF ?? 'upstream/master',
-    maintenanceRef: env.MAINTENANCE_REF ?? 'origin/zh-enterprise',
-    branchPrefix: env.BRANCH_PREFIX ?? 'bot-upgrade',
+    baseBranch: readConfigValue(env.BASE_BRANCH) ?? 'zh-enterprise',
+    upstreamRemote: readConfigValue(env.UPSTREAM_REMOTE) ?? 'upstream',
+    upstreamRef: readConfigValue(env.UPSTREAM_REF) ?? 'upstream/master',
+    maintenanceRef: readConfigValue(env.MAINTENANCE_REF) ?? 'origin/zh-enterprise',
+    branchPrefix: readConfigValue(env.BRANCH_PREFIX) ?? 'bot-upgrade',
     dryRun: argv.includes('--dry-run'),
-    llmApiBase: env.LLM_API_BASE,
-    llmApiKey: env.LLM_API_KEY,
-    llmModel: env.LLM_MODEL,
+    llmApiBase: readConfigValue(env.LLM_API_BASE),
+    llmApiKey: readConfigValue(env.LLM_API_KEY),
+    llmModel: readConfigValue(env.LLM_MODEL),
   };
 }
