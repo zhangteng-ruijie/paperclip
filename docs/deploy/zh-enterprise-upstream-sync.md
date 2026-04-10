@@ -27,15 +27,17 @@ The workflows never push directly to `zh-enterprise`.
 
 ### Required token assumptions
 
-No extra secret is required if the repository-level Actions token is allowed to write to the fork.
+Scheduled syncs that push `bot-upgrade/*` and create or update PRs require a write-capable token stored as:
 
-The workflows assume the default `github.token` can:
+- `UPSTREAM_SYNC_BOT_TOKEN`
+
+Use a GitHub App token or PAT that can:
 
 - push `bot-upgrade/*` branches to the fork repository
 - create and edit pull requests in that same fork
-- upload workflow artifacts
+- trigger downstream `pull_request` workflows after the bot PR is created or refreshed
 
-If your repository policy downgrades the default token to read-only, grant GitHub Actions read/write repository permissions or swap the workflow to a write-capable repo token.
+The default `github.token` is still enough for checkout and artifact upload, but it is **not** enough for the push/create-PR path if you expect `.github/workflows/upstream-sync-pr.yml` to run on the bot-created PR.
 
 ### Optional translation env vars
 
@@ -58,6 +60,7 @@ Each scheduled run:
 3. runs `pnpm sync:upstream`
 4. uploads the generated JSON report, PR body, and validation log
 5. if the CLI reports `ready_for_pr=true`, commits any remaining low-risk translation edits, pushes the bot branch, and creates or updates the PR
+   - this push/create step uses `UPSTREAM_SYNC_BOT_TOKEN`, not the default `github.token`
 
 `no-op` runs stay green. Conflict, orchestration, and validation-failed runs upload artifacts first and then fail the workflow so maintainers notice them.
 
