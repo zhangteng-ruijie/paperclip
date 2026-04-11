@@ -74,6 +74,8 @@ const companySettingsCopy = {
       "You also need to send a gateway URL that Paperclip can access. Check your config and include that URL.",
     invitePromptResolutionPrefix:
       "You MUST test Paperclip-to-gateway reachability, call:",
+    invitePromptResolutionSuffix:
+      "(using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it.",
     invitePromptOpenClawGatewayTitle: "This onboarding flow is for OpenClaw Gateway.",
     invitePromptOpenClawGatewayAdapter: 'Use `adapterType: "openclaw_gateway"`.',
     invitePromptOpenClawGatewayUrl:
@@ -180,6 +182,8 @@ const companySettingsCopy = {
       "你还需要提供一个 Paperclip 可访问的 gateway URL。请检查你的配置并填入该 URL。",
     invitePromptResolutionPrefix:
       "你必须测试 Paperclip 到 gateway 的连通性，请调用：",
+    invitePromptResolutionSuffix:
+      "（请使用上面验证可用的主机名）。不要假设你的 172.x 一定能从 Paperclip 访问到。请进行测试。",
     invitePromptOpenClawGatewayTitle: "此接入流程适用于 OpenClaw Gateway。",
     invitePromptOpenClawGatewayAdapter: '使用 `adapterType: "openclaw_gateway"`。',
     invitePromptOpenClawGatewayUrl:
@@ -285,7 +289,7 @@ export function formatOpenClawInvitePrompt({
         ].join("\n");
 
   const resolutionLine = resolutionTestUrl
-    ? `\n${copy.invitePromptResolutionPrefix} ${resolutionTestUrl}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it. `
+    ? `\n${copy.invitePromptResolutionPrefix} ${resolutionTestUrl}?url=<urlencoded-gateway-url> ${copy.invitePromptResolutionSuffix} `
     : "";
 
   const openClawGatewaySection = [
