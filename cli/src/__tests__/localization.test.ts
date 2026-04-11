@@ -22,5 +22,7 @@ describe("cli localization", () => {
     process.env.PAPERCLIP_LOCALE = "zh-CN";
     expect(resolveCliLocale()).toBe("zh-CN");
     expect(cliT("command.onboard.description")).toBe("交互式首次启动引导");
+    expect(cliT("command.onboard.bind")).toContain("网络可达性预设");
+    expect(cliT("command.run.bind")).toContain("onboarding");
   });
 });

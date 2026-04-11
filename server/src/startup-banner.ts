@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolvePaperclipConfigPath, resolvePaperclipEnvPath } from "./paths.js";
-import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
+import type { BindMode, DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 
 import { parse as parseEnvFileContents } from "dotenv";
 import { serverT } from "./localization.js";
@@ -19,6 +19,7 @@ type EmbeddedPostgresInfo = {
 };
 
 type StartupBannerOptions = {
+  bind: BindMode;
   host: string;
   deploymentMode: DeploymentMode;
   deploymentExposure: DeploymentExposure;
@@ -149,6 +150,7 @@ export function printStartupBanner(opts: StartupBannerOptions): void {
     color("  ───────────────────────────────────────────────────────", "blue"),
     row(serverT("startup.mode"), `${dbMode}  |  ${uiMode}`),
     row(serverT("startup.deploy"), `${opts.deploymentMode} (${opts.deploymentExposure})`),
+    row(serverT("startup.bind"), `${opts.bind} ${color(`(${opts.host})`, "dim")}`),
     row(serverT("startup.auth"), opts.authReady ? color(serverT("startup.ready"), "green") : color(serverT("startup.notReady"), "yellow")),
     row(serverT("startup.server"), portValue),
     row(serverT("startup.api"), `${apiUrl} ${color(`(${serverT("startup.apiHealth", { url: `${apiUrl}/health` })})`, "dim")}`),

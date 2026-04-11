@@ -106,9 +106,9 @@ function PropertyRow({
   valueClassName?: string;
 }) {
   return (
-    <div className={cn("flex gap-3 py-1.5", alignStart ? "items-start" : "items-center")}>
-      <div className="shrink-0 w-20">{label}</div>
-      <div className={cn("min-w-0 flex-1", alignStart ? "pt-0.5" : "flex items-center gap-1.5", valueClassName)}>
+    <div className={cn("flex gap-3 py-1.5 items-start")}>
+      <div className="shrink-0 w-20 mt-0.5">{label}</div>
+      <div className={cn("min-w-0 flex-1", alignStart ? "pt-0.5" : "flex items-center gap-1.5 flex-wrap", valueClassName)}>
         {children}
       </div>
     </div>
@@ -548,7 +548,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                   key={goal.id}
                   className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs"
                 >
-                  <Link to={`/goals/${goal.id}`} className="hover:underline max-w-[220px] truncate">
+                  <Link to={`/goals/${goal.id}`} className="hover:underline break-words min-w-0">
                     {goal.title}
                   </Link>
                   {(onUpdate || onFieldUpdate) && (
@@ -665,13 +665,13 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                       className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
                     >
                       <Github className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{formatRepoUrl(codebase.repoUrl)}</span>
+                      <span className="break-all min-w-0">{formatRepoUrl(codebase.repoUrl)}</span>
                       <ExternalLink className="h-3 w-3 shrink-0" />
                     </a>
                   ) : (
                     <div className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <Github className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{codebase.repoUrl}</span>
+                      <span className="break-all min-w-0">{codebase.repoUrl}</span>
                     </div>
                   )}
                   <div className="flex items-center gap-1">
@@ -720,7 +720,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{copy.codebase.localFolder}</div>
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0 space-y-1">
-                  <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                  <div className="min-w-0 break-all font-mono text-xs text-muted-foreground">
                     {codebase.effectiveLocalFolder}
                   </div>
                   {codebase.origin === "managed_checkout" && (

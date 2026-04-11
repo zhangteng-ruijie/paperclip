@@ -62,6 +62,7 @@ export function IssueRow({
     <Link
       to={createIssueDetailPath(issuePathId)}
       state={detailState}
+      disableIssueQuicklook
       data-inbox-issue-link
       onClickCapture={() => rememberIssueDetailLocationState(issuePathId, detailState)}
       className={cn(

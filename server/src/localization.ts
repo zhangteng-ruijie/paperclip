@@ -3,6 +3,7 @@ import type { PaperclipUiLocale } from "@paperclipai/shared";
 type ServerMessageKey =
   | "startup.mode"
   | "startup.deploy"
+  | "startup.bind"
   | "startup.auth"
   | "startup.server"
   | "startup.api"
@@ -33,6 +34,7 @@ const messages: Record<PaperclipUiLocale, Record<ServerMessageKey, string>> = {
   en: {
     "startup.mode": "Mode",
     "startup.deploy": "Deploy",
+    "startup.bind": "Bind",
     "startup.auth": "Auth",
     "startup.server": "Server",
     "startup.api": "API",
@@ -62,6 +64,7 @@ const messages: Record<PaperclipUiLocale, Record<ServerMessageKey, string>> = {
   "zh-CN": {
     "startup.mode": "模式",
     "startup.deploy": "部署",
+    "startup.bind": "绑定",
     "startup.auth": "认证",
     "startup.server": "服务",
     "startup.api": "API",

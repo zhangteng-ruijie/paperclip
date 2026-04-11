@@ -5,6 +5,7 @@ type CliMessageKey =
   | "option.config"
   | "option.dataDir"
   | "command.onboard.description"
+  | "command.onboard.bind"
   | "command.onboard.yes"
   | "command.onboard.run"
   | "command.doctor.description"
@@ -21,6 +22,7 @@ type CliMessageKey =
   | "command.allowedHostname.description"
   | "command.allowedHostname.argument"
   | "command.run.description"
+  | "command.run.bind"
   | "command.run.instance"
   | "command.run.repair"
   | "command.run.noRepair"
@@ -48,7 +50,8 @@ const messages: Record<PaperclipUiLocale, Record<CliMessageKey, string>> = {
     "option.config": "Path to config file",
     "option.dataDir": "Paperclip data directory root (isolates state from ~/.paperclip)",
     "command.onboard.description": "Interactive first-run setup wizard",
-    "command.onboard.yes": "Accept defaults (quickstart + start immediately)",
+    "command.onboard.bind": "Quickstart reachability preset (loopback, lan, tailnet)",
+    "command.onboard.yes": "Accept quickstart defaults (trusted local loopback unless --bind is set) and start immediately",
     "command.onboard.run": "Start Paperclip immediately after saving config",
     "command.doctor.description": "Run diagnostic checks on your Paperclip setup",
     "command.doctor.repair": "Attempt to repair issues automatically",
@@ -64,6 +67,7 @@ const messages: Record<PaperclipUiLocale, Record<CliMessageKey, string>> = {
     "command.allowedHostname.description": "Allow a hostname for authenticated/private mode access",
     "command.allowedHostname.argument": "Hostname to allow (for example dotta-macbook-pro)",
     "command.run.description": "Bootstrap local setup (onboard + doctor) and run Paperclip",
+    "command.run.bind": "On first run, use onboarding reachability preset (loopback, lan, tailnet)",
     "command.run.instance": "Local instance id (default: default)",
     "command.run.repair": "Attempt automatic repairs during doctor",
     "command.run.noRepair": "Disable automatic repairs during doctor",
@@ -90,7 +94,8 @@ const messages: Record<PaperclipUiLocale, Record<CliMessageKey, string>> = {
     "option.config": "配置文件路径",
     "option.dataDir": "Paperclip 数据目录根路径（用于隔离 ~/.paperclip 中的状态）",
     "command.onboard.description": "交互式首次启动引导",
-    "command.onboard.yes": "接受默认值（快速开始并立即启动）",
+    "command.onboard.bind": "快速启动网络可达性预设（loopback、lan、tailnet）",
+    "command.onboard.yes": "接受快速启动默认值（除非设置 --bind，否则使用受信任的本地回环地址）并立即启动",
     "command.onboard.run": "保存配置后立即启动 Paperclip",
     "command.doctor.description": "对当前 Paperclip 环境执行诊断检查",
     "command.doctor.repair": "尝试自动修复发现的问题",
@@ -106,6 +111,7 @@ const messages: Record<PaperclipUiLocale, Record<CliMessageKey, string>> = {
     "command.allowedHostname.description": "为 authenticated/private 模式放行一个主机名",
     "command.allowedHostname.argument": "需要放行的主机名（例如 dotta-macbook-pro）",
     "command.run.description": "完成本地初始化（onboard + doctor）并启动 Paperclip",
+    "command.run.bind": "首次运行时使用 onboarding 网络可达性预设（loopback、lan、tailnet）",
     "command.run.instance": "本地实例 ID（默认：default）",
     "command.run.repair": "在 doctor 过程中尝试自动修复",
     "command.run.noRepair": "关闭 doctor 阶段的自动修复",

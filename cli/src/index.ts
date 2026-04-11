@@ -50,6 +50,7 @@ program
   .description(cliT("command.onboard.description"))
   .option("-c, --config <path>", cliT("option.config"))
   .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
+  .option("--bind <mode>", cliT("command.onboard.bind"))
   .option("-y, --yes", cliT("command.onboard.yes"), false)
   .option("--run", cliT("command.onboard.run"), false)
   .action(onboard);
@@ -108,6 +109,7 @@ program
   .option("-c, --config <path>", cliT("option.config"))
   .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
   .option("-i, --instance <id>", cliT("command.run.instance"))
+  .option("--bind <mode>", cliT("command.run.bind"))
   .option("--repair", cliT("command.run.repair"), true)
   .option("--no-repair", cliT("command.run.noRepair"))
   .action(runCommand);

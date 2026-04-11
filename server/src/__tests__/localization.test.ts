@@ -22,6 +22,7 @@ describe("server localization", () => {
     process.env.PAPERCLIP_LOCALE = "zh-CN";
     expect(resolveServerLocale()).toBe("zh-CN");
     expect(serverT("startup.mode")).toBe("模式");
+    expect(serverT("startup.bind")).toBe("绑定");
     expect(serverT("startup.agentJwt.missing")).toContain("缺失");
   });
 });
