@@ -111,7 +111,7 @@ export function CommandPalette() {
       }}
       title={copy.commandPaletteTitle}
       description={copy.commandPaletteDescription}
-      closeLabel={locale === "zh-CN" ? "关闭" : "Close"}
+      closeLabel={copy.commandPaletteCloseLabel}
     >
       <CommandInput
         placeholder={copy.commandPaletteSearchPlaceholder}

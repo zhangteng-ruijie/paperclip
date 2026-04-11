@@ -22,6 +22,13 @@ describe("shell-copy", () => {
     expect(copy.commandPaletteDescription).toBe("搜索要执行的命令…");
     expect(copy.commandPaletteSearchPlaceholder).toBe("搜索任务、智能体、项目…");
     expect(copy.commandPaletteNoResults).toBe("没有找到结果。");
+    expect(copy.commandPaletteCloseLabel).toBe("关闭");
+  });
+
+  it("returns English shell labels for the command palette", () => {
+    const copy = getShellCopy("en");
+
+    expect(copy.commandPaletteCloseLabel).toBe("Close");
   });
 
   it("formats theme toggles and live counts by locale", () => {
