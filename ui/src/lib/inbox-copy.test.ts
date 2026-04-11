@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalStatusLabel,
   formatBudgetAlert,
+  formatAgentErrorSummaryTail,
   formatJoinRequestTitle,
   formatMarkAllReadDescription,
   formatRetryButton,
@@ -30,5 +31,8 @@ describe("inbox-copy", () => {
     expect(formatMarkAllReadDescription(2, "en")).toContain("2 unread items");
     expect(inboxEmptyMessage("recent", false, "zh-CN")).toBe("没有最近的收件箱项目。");
     expect(formatBudgetAlert(85, "en")).toBe("Budget at 85% utilization this month");
+    expect(formatAgentErrorSummaryTail(1, "en")).toBe("agent has errors");
+    expect(formatAgentErrorSummaryTail(3, "en")).toBe("agents have errors");
+    expect(formatAgentErrorSummaryTail(2, "zh-CN")).toBe("个 agent 出现错误");
   });
 });

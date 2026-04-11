@@ -44,6 +44,7 @@ import {
   formatMarkAllReadDescription,
   formatRetryButton,
   formatUpdatedAtLabel,
+  formatAgentErrorSummaryTail,
   getInboxCopy,
   inboxEmptyMessage,
 } from "../lib/inbox-copy";
@@ -2123,7 +2124,7 @@ export function Inbox() {
           {showSeparatorBefore("alerts") && <Separator />}
           <div>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Alerts
+              {copy.alerts}
             </h3>
             <div className="divide-y divide-border border border-border">
               {showAggregateAgentError && (
@@ -2135,14 +2136,14 @@ export function Inbox() {
                     <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
                     <span className="text-sm">
                       <span className="font-medium">{dashboard!.agents.error}</span>{" "}
-                      {dashboard!.agents.error === 1 ? "agent has" : "agents have"} errors
+                      {formatAgentErrorSummaryTail(dashboard!.agents.error, locale)}
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismissAlert("alert:agent-errors")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label="Dismiss"
+                    aria-label={copy.dismiss}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>

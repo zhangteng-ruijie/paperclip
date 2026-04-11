@@ -189,3 +189,10 @@ export function formatBudgetAlert(utilizationPercent: number, locale: InboxCopyL
   }
   return `Budget at ${utilizationPercent}% utilization this month`;
 }
+
+export function formatAgentErrorSummaryTail(errorCount: number, locale: InboxCopyLocale): string {
+  if (locale === "zh-CN") {
+    return "个 agent 出现错误";
+  }
+  return errorCount === 1 ? "agent has errors" : "agents have errors";
+}
