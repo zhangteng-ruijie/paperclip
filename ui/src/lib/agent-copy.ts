@@ -3,6 +3,17 @@ type AgentCopyLocale = string | null | undefined;
 const agentCopy = {
   en: {
     agents: "Agents",
+    selectCompany: "Select a company to view agents.",
+    all: "All",
+    active: "Active",
+    paused: "Paused",
+    error: "Error",
+    filters: "Filters",
+    showTerminated: "Show terminated",
+    newAgent: "New Agent",
+    createFirstAgent: "Create your first agent to get started.",
+    noAgentsMatch: "No agents match the selected filter.",
+    noOrgHierarchy: "No organizational hierarchy defined.",
     agent: "Agent",
     runs: "Runs",
     instructions: "Instructions",
@@ -109,6 +120,17 @@ const agentCopy = {
   },
   "zh-CN": {
     agents: "智能体",
+    selectCompany: "请选择一个公司以查看智能体。",
+    all: "全部",
+    active: "运行中",
+    paused: "已暂停",
+    error: "异常",
+    filters: "筛选",
+    showTerminated: "显示已终止",
+    newAgent: "新建智能体",
+    createFirstAgent: "创建你的第一个智能体。",
+    noAgentsMatch: "没有符合当前筛选条件的智能体。",
+    noOrgHierarchy: "尚未定义组织层级。",
     agent: "智能体",
     runs: "运行",
     instructions: "指令",
@@ -221,6 +243,10 @@ function resolveLocale(locale: AgentCopyLocale) {
 
 export function getAgentCopy(locale: AgentCopyLocale) {
   return agentCopy[resolveLocale(locale)];
+}
+
+export function formatAgentCount(count: number, locale: AgentCopyLocale) {
+  return locale === "zh-CN" ? `${count} 个智能体` : `${count} agent${count === 1 ? "" : "s"}`;
 }
 
 export function formatAgentMoreIssues(count: number, locale: AgentCopyLocale): string {

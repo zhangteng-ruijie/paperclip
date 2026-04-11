@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   agentInvocationSourceLabels,
+  formatAgentCount,
   formatAgentMoreIssues,
   getAgentCopy,
   thinkingEffortLabel,
@@ -17,6 +18,10 @@ describe("agent-copy", () => {
   });
 
   it("formats locale-aware agent helpers", () => {
+    expect(getAgentCopy("zh-CN").all).toBe("全部");
+    expect(getAgentCopy("zh-CN").filters).toBe("筛选");
+    expect(getAgentCopy("zh-CN").newAgent).toBe("新建智能体");
+    expect(formatAgentCount(5, "zh-CN")).toBe("5 个智能体");
     expect(formatAgentMoreIssues(3, "zh-CN")).toBe("还有 3 个任务");
     expect(agentInvocationSourceLabels("en").on_demand).toBe("On demand");
     expect(thinkingEffortLabel("xhigh", "zh-CN")).toBe("超高");
