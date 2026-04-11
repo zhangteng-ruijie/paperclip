@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formatFeedbackSharingStatus, getCompanySettingsCopy } from "./company-settings-copy";
+import {
+  formatFeedbackSharingStatus,
+  formatOpenClawInvitePrompt,
+  getCompanySettingsCopy,
+} from "./company-settings-copy";
 
 describe("company-settings-copy", () => {
   it("returns Chinese company settings labels", () => {
@@ -13,5 +17,19 @@ describe("company-settings-copy", () => {
 
   it("formats feedback sharing status", () => {
     expect(formatFeedbackSharingStatus({ locale: "zh-CN", enabledAt: null, enabledBy: null })).toBe("当前未启用共享。");
+  });
+
+  it("formats invite prompt copy in Chinese", () => {
+    const prompt = formatOpenClawInvitePrompt({
+      locale: "zh-CN",
+      onboardingTextUrl: "https://paperclip.example/api/invites/abc/onboarding.txt",
+      connectionCandidates: ["http://10.0.0.4:3100"],
+      testResolutionUrl: "https://paperclip.example/api/invites/abc/test-resolution",
+    });
+
+    expect(prompt).toContain("你受邀加入一个 Paperclip 组织。");
+    expect(prompt).toContain("- https://paperclip.example/api/invites/abc/onboarding.txt");
+    expect(prompt).toContain("此接入流程适用于 OpenClaw Gateway。");
+    expect(prompt).toContain("你必须测试 Paperclip 到 gateway 的连通性，请调用： https://paperclip.example/api/invites/abc/test-resolution?url=<urlencoded-gateway-url>");
   });
 });

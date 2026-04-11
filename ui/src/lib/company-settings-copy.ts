@@ -47,6 +47,51 @@ const companySettingsCopy = {
     generatingInvite: "Generating...",
     generateInvitePrompt: "Generate OpenClaw Invite Prompt",
     invitePromptTitle: "OpenClaw Invite Prompt",
+    invitePromptIntro: "You're invited to join a Paperclip organization.",
+    invitePromptUrlsHeading: "The URLs you should try are:",
+    invitePromptConnectivityHeading: "Connectivity guidance:",
+    invitePromptConnectivityBody:
+      "If you are running on a different machine than Paperclip, Paperclip must be reachable at one of the hostnames used above.",
+    invitePromptConnectivityVerify:
+      "Verify the hostname works from your runtime with: GET <base-url>/api/health",
+    invitePromptConnectivityNoCandidates:
+      "No candidate URLs are available. Ask your user to configure a reachable hostname in Paperclip, then retry.",
+    invitePromptSuggestedStepsHeading: "Suggested steps:",
+    invitePromptSuggestedSteps: [
+      "choose a hostname that resolves to the Paperclip host from your runtime",
+      "run: pnpm paperclipai allowed-hostname <host>",
+      "restart Paperclip",
+      "verify with: curl -fsS http://<host>:3100/api/health",
+      "regenerate this invite snippet",
+    ],
+    invitePromptReachableFallback:
+      "If none are reachable, ask your user to add a reachable hostname in Paperclip, restart, and retry.",
+    invitePromptReachableCommand: "Suggested command:",
+    invitePromptReachableVerify: "Then verify with: curl -fsS <base-url>/api/health",
+    invitePromptAgentName:
+      'For your "agentName", just use your own agent name (OpenClaw or whatever your name is) and send it directly.',
+    invitePromptGatewayUrl:
+      "You also need to send a gateway URL that Paperclip can access. Check your config and include that URL.",
+    invitePromptResolutionPrefix:
+      "You MUST test Paperclip-to-gateway reachability, call:",
+    invitePromptOpenClawGatewayTitle: "This onboarding flow is for OpenClaw Gateway.",
+    invitePromptOpenClawGatewayAdapter: 'Use `adapterType: "openclaw_gateway"`.',
+    invitePromptOpenClawGatewayUrl:
+      "Use `agentDefaultsPayload.url` as your `ws://` or `wss://` gateway URL.",
+    invitePromptOpenClawGatewayToken:
+      'Use `agentDefaultsPayload.headers["x-openclaw-token"]` with your gateway token.',
+    invitePromptOpenClawGatewayLegacyToken:
+      'Legacy accepted: `agentDefaultsPayload.headers["x-openclaw-auth"]`.',
+    invitePromptOpenClawGatewayDeviceAuth:
+      "Keep device auth enabled (recommended). If `devicePrivateKeyPem` is omitted, Paperclip will generate and persist one during join so pairing approvals remain stable.",
+    invitePromptOpenClawGatewayDisableDeviceAuth:
+      "Only use `disableDeviceAuth=true` for special environments where pairing cannot be completed.",
+    invitePromptOpenClawGatewayNoHooks:
+      "Do NOT use `/v1/responses` or `/hooks/*` in this join flow.",
+    invitePromptOpenClawGatewayPreStep:
+      'Before you do anything, please respond to your user that you understand the instructions and you\'re going to work on them. Then do the step above in another session called "paperclip-onboarding" and then tell your user when you\'re done. Update your user in intermediate steps along the way so they know what\'s going on.',
+    invitePromptOpenClawGatewayPostStep:
+      "Then after you've connected to Paperclip (exchanged keys etc.) you MUST review and follow the onboarding instructions in onboarding.txt they give you.",
     copied: "Copied",
     copySnippet: "Copy snippet",
     copiedSnippet: "Copied snippet",
@@ -109,6 +154,50 @@ const companySettingsCopy = {
     generatingInvite: "生成中...",
     generateInvitePrompt: "生成 OpenClaw 邀请提示词",
     invitePromptTitle: "OpenClaw 邀请提示词",
+    invitePromptIntro: "你受邀加入一个 Paperclip 组织。",
+    invitePromptUrlsHeading: "你应该尝试的 URL 如下：",
+    invitePromptConnectivityHeading: "连通性指导：",
+    invitePromptConnectivityBody:
+      "如果你运行的机器与 Paperclip 不同，Paperclip 必须可以通过上方使用的某个主机名访问到。",
+    invitePromptConnectivityVerify: "请在你的运行环境中用以下命令验证主机名可用：GET <base-url>/api/health",
+    invitePromptConnectivityNoCandidates:
+      "当前没有可用的候选 URL。请让用户在 Paperclip 中配置一个可访问的主机名，然后重试。",
+    invitePromptSuggestedStepsHeading: "建议步骤：",
+    invitePromptSuggestedSteps: [
+      "选择一个能从你的运行环境解析到 Paperclip 主机的主机名",
+      "运行：pnpm paperclipai allowed-hostname <host>",
+      "重启 Paperclip",
+      "使用以下命令验证：curl -fsS http://<host>:3100/api/health",
+      "重新生成此邀请片段",
+    ],
+    invitePromptReachableFallback:
+      "如果都无法访问，请让用户在 Paperclip 中添加一个可访问的主机名，重启后再重试。",
+    invitePromptReachableCommand: "建议命令：",
+    invitePromptReachableVerify: "然后用以下命令验证：curl -fsS <base-url>/api/health",
+    invitePromptAgentName:
+      '对于“agentName”，直接使用你自己的智能体名称（OpenClaw 或你的实际名称）即可。',
+    invitePromptGatewayUrl:
+      "你还需要提供一个 Paperclip 可访问的 gateway URL。请检查你的配置并填入该 URL。",
+    invitePromptResolutionPrefix:
+      "你必须测试 Paperclip 到 gateway 的连通性，请调用：",
+    invitePromptOpenClawGatewayTitle: "此接入流程适用于 OpenClaw Gateway。",
+    invitePromptOpenClawGatewayAdapter: '使用 `adapterType: "openclaw_gateway"`。',
+    invitePromptOpenClawGatewayUrl:
+      "将 `agentDefaultsPayload.url` 作为你的 `ws://` 或 `wss://` gateway URL。",
+    invitePromptOpenClawGatewayToken:
+      '使用 `agentDefaultsPayload.headers["x-openclaw-token"]` 携带你的 gateway token。',
+    invitePromptOpenClawGatewayLegacyToken:
+      '兼容旧字段：`agentDefaultsPayload.headers["x-openclaw-auth"]`。',
+    invitePromptOpenClawGatewayDeviceAuth:
+      "建议保持设备认证开启。如果省略 `devicePrivateKeyPem`，Paperclip 会在加入时自动生成并持久化，以便配对审批保持稳定。",
+    invitePromptOpenClawGatewayDisableDeviceAuth:
+      "仅在无法完成配对的特殊环境中使用 `disableDeviceAuth=true`。",
+    invitePromptOpenClawGatewayNoHooks:
+      "在此加入流程中不要使用 `/v1/responses` 或 `/hooks/*`。",
+    invitePromptOpenClawGatewayPreStep:
+      '在做任何事情之前，请先回复用户你已经理解这些指令，并且会按要求处理。然后在一个名为 "paperclip-onboarding" 的新会话中执行上面的步骤，完成后再告诉用户。过程中请保持阶段性更新，让用户知道进展。',
+    invitePromptOpenClawGatewayPostStep:
+      "当你连接到 Paperclip（完成密钥交换等）后，务必查看并遵循他们提供的 onboarding.txt 中的接入说明。",
     copied: "已复制",
     copySnippet: "复制片段",
     copiedSnippet: "已复制片段",
@@ -155,4 +244,142 @@ export function formatArchiveCompanyConfirmation(companyName: string, locale: Co
   return locale === "zh-CN"
     ? `确定要归档公司“${companyName}”吗？归档后它会从侧边栏中隐藏。`
     : `Archive company "${companyName}"? It will be hidden from the sidebar.`;
+}
+
+export function formatOpenClawInvitePrompt({
+  locale,
+  onboardingTextUrl,
+  connectionCandidates,
+  testResolutionUrl,
+}: {
+  locale: CompanySettingsCopyLocale;
+  onboardingTextUrl: string;
+  connectionCandidates?: string[] | null;
+  testResolutionUrl?: string | null;
+}) {
+  const copy = getCompanySettingsCopy(locale);
+  const candidateUrls = buildCandidateOnboardingUrls({
+    onboardingTextUrl,
+    connectionCandidates,
+  });
+  const resolutionTestUrl = buildResolutionTestUrl({
+    onboardingTextUrl,
+    testResolutionUrl,
+  });
+  const candidateList =
+    candidateUrls.length > 0
+      ? candidateUrls.map((url) => `- ${url}`).join("\n")
+      : copy.invitePromptConnectivityNoCandidates;
+
+  const connectivityBlock =
+    candidateUrls.length === 0
+      ? [
+          copy.invitePromptSuggestedStepsHeading,
+          ...copy.invitePromptSuggestedSteps.map((step) => `- ${step}`),
+        ].join("\n")
+      : [
+          copy.invitePromptReachableFallback,
+          copy.invitePromptReachableCommand,
+          `- pnpm paperclipai allowed-hostname <host>`,
+          copy.invitePromptReachableVerify,
+        ].join("\n");
+
+  const resolutionLine = resolutionTestUrl
+    ? `\n${copy.invitePromptResolutionPrefix} ${resolutionTestUrl}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it. `
+    : "";
+
+  const openClawGatewaySection = [
+    copy.invitePromptOpenClawGatewayTitle,
+    `- ${copy.invitePromptOpenClawGatewayAdapter}`,
+    `- ${copy.invitePromptOpenClawGatewayUrl}`,
+    `- ${copy.invitePromptOpenClawGatewayToken}`,
+    `- ${copy.invitePromptOpenClawGatewayLegacyToken}`,
+    `- ${copy.invitePromptOpenClawGatewayDeviceAuth}`,
+    `- ${copy.invitePromptOpenClawGatewayDisableDeviceAuth}`,
+    `- ${copy.invitePromptOpenClawGatewayNoHooks}`,
+    "",
+    copy.invitePromptOpenClawGatewayPreStep,
+    "",
+    copy.invitePromptOpenClawGatewayPostStep,
+  ].join("\n");
+
+  return [
+    copy.invitePromptIntro,
+    "",
+    copy.invitePromptUrlsHeading,
+    candidateList,
+    "",
+    copy.invitePromptConnectivityHeading,
+    copy.invitePromptConnectivityBody,
+    copy.invitePromptConnectivityVerify,
+    "",
+    connectivityBlock,
+    "",
+    copy.invitePromptAgentName,
+    copy.invitePromptGatewayUrl + resolutionLine,
+    "",
+    "---",
+    "",
+    openClawGatewaySection,
+    "",
+  ].join("\n");
+}
+
+function buildCandidateOnboardingUrls(input: {
+  onboardingTextUrl: string;
+  connectionCandidates?: string[] | null;
+}) {
+  const candidates = (input.connectionCandidates ?? [])
+    .map((candidate) => candidate.trim())
+    .filter(Boolean);
+  const urls = new Set<string>();
+  let onboardingUrl: URL | null = null;
+
+  try {
+    onboardingUrl = new URL(input.onboardingTextUrl);
+    urls.add(onboardingUrl.toString());
+  } catch {
+    const trimmed = input.onboardingTextUrl.trim();
+    if (trimmed) {
+      urls.add(trimmed);
+    }
+  }
+
+  if (!onboardingUrl) {
+    for (const candidate of candidates) {
+      urls.add(candidate);
+    }
+    return Array.from(urls);
+  }
+
+  const onboardingPath = `${onboardingUrl.pathname}${onboardingUrl.search}`;
+  for (const candidate of candidates) {
+    try {
+      const base = new URL(candidate);
+      urls.add(`${base.origin}${onboardingPath}`);
+    } catch {
+      urls.add(candidate);
+    }
+  }
+
+  return Array.from(urls);
+}
+
+function buildResolutionTestUrl(input: {
+  onboardingTextUrl: string;
+  testResolutionUrl?: string | null;
+}) {
+  const explicit = input.testResolutionUrl?.trim();
+  if (explicit) return explicit;
+
+  try {
+    const onboardingUrl = new URL(input.onboardingTextUrl);
+    const testPath = onboardingUrl.pathname.replace(
+      /\/onboarding\.txt$/,
+      "/test-resolution"
+    );
+    return `${onboardingUrl.origin}${testPath}`;
+  } catch {
+    return null;
+  }
 }
