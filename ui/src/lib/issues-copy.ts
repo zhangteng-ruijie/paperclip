@@ -236,7 +236,7 @@ export function issueColumnLabel(column: InboxIssueColumn, locale: IssuesCopyLoc
     workspace: copy.workspace,
     parent: copy.parentIssue,
     labels: copy.labels,
-    updated: locale === "zh-CN" ? "最后更新" : copy.updated,
+    updated: copy.updated,
   }[column];
 }
 

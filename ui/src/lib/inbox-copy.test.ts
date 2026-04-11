@@ -33,6 +33,6 @@ describe("inbox-copy", () => {
     expect(formatBudgetAlert(85, "en")).toBe("Budget at 85% utilization this month");
     expect(formatAgentErrorSummaryTail(1, "en")).toBe("agent has errors");
     expect(formatAgentErrorSummaryTail(3, "en")).toBe("agents have errors");
-    expect(formatAgentErrorSummaryTail(2, "zh-CN")).toBe("个 agent 出现错误");
+    expect(formatAgentErrorSummaryTail(2, "zh-CN")).toBe("个智能体出现错误");
   });
 });

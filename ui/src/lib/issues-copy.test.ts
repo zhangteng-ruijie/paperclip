@@ -59,7 +59,7 @@ describe("issues-copy", () => {
   });
 
   it("formats issue column copy", () => {
-    expect(issueColumnLabel("updated", "zh-CN")).toBe("最后更新");
+    expect(issueColumnLabel("updated", "zh-CN")).toBe("更新时间");
     expect(issueColumnDescription("workspace", "zh-CN")).toContain("工作区");
     expect(issueActivitySummaryLabel("2小时前", "zh-CN")).toBe("更新于 2小时前");
     expect(issueColumnsTriggerLabel("en")).toBe("Columns");
