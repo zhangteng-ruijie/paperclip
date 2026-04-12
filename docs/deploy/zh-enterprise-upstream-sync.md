@@ -1,0 +1,133 @@
+---
+title: zh-enterprise Upstream Sync
+summary: Scheduled upstream sync and PR automation for the Chinese enterprise fork
+---
+
+This workflow pair keeps a `zh-enterprise` fork close to `paperclipai/paperclip` without pushing directly to the long-lived maintenance branch.
+
+## Repository and remote model
+
+The automation assumes two Git remotes with different roles:
+
+- `origin`: your writable fork of Paperclip. GitHub Actions pushes `bot-upgrade/*` branches here and opens PRs here.
+- `upstream`: the official `paperclipai/paperclip` repository. The workflow only fetches from this remote.
+
+This split matters because the bot must be able to push upgrade branches somewhere safe, while `upstream` remains the read-only source of truth.
+
+## Long-lived branches
+
+Keep these branch roles stable:
+
+- `zh-enterprise`: the reviewed integration branch for the Chinese enterprise fork.
+- `bot-upgrade/*`: short-lived bot branches named from the upstream SHA. Reruns for the same upstream SHA reuse and refresh the same branch name.
+
+The workflows never push directly to `zh-enterprise`.
+
+## Token, secrets, and optional LLM configuration
+
+### Required token assumptions
+
+Scheduled syncs that push `bot-upgrade/*` and create or update PRs require a write-capable token stored as:
+
+- `UPSTREAM_SYNC_BOT_TOKEN`
+
+Use a GitHub App token or PAT that can:
+
+- push `bot-upgrade/*` branches to the fork repository
+- create and edit pull requests in that same fork
+- trigger downstream `pull_request` workflows after the bot PR is created or refreshed
+
+The default `github.token` is still enough for checkout and artifact upload, but it is **not** enough for the push/create-PR path if you expect `.github/workflows/upstream-sync-pr.yml` to run on the bot-created PR.
+
+### Optional translation env vars
+
+Low-risk translation writes stay optional. The workflow passes through these values when configured:
+
+- `LLM_API_BASE` (recommended as a repository variable)
+- `LLM_API_KEY` (recommended as a repository secret)
+- `LLM_MODEL` (recommended as a repository variable)
+
+If any of them are missing, upstream-sync still runs, but low-risk files stay in review-only mode instead of being auto-translated.
+
+## Scheduled sync behavior
+
+`.github/workflows/upstream-sync.yml` runs on a schedule and on `workflow_dispatch`.
+
+Each scheduled run:
+
+1. checks out the fork with full history
+2. fetches `upstream/master` and `origin/zh-enterprise`
+3. runs `pnpm sync:upstream`
+4. uploads the generated JSON report, PR body, and validation log
+5. if the CLI reports `ready_for_pr=true`, commits any remaining low-risk translation edits, pushes the bot branch, and creates or updates the PR
+   - this push/create step uses `UPSTREAM_SYNC_BOT_TOKEN`, not the default `github.token`
+
+`no-op` runs stay green. Conflict, orchestration, and validation-failed runs upload artifacts first and then fail the workflow so maintainers notice them.
+
+## Manual dry-run from GitHub Actions
+
+Use **Actions → Upstream Sync → Run workflow** and enable the `dry_run` input.
+
+Dry-run mode still fetches the refs, creates the candidate `bot-upgrade/*` branch locally, reapplies the maintenance changes, runs localization/validation, generates the report artifacts, and prints the workflow outputs, but it does not:
+
+- push `bot-upgrade/*`
+- commit translation edits
+- create or update a PR
+
+If `zh-enterprise` already contains a prior direct merge from upstream, the CLI automatically switches from commit replay to an overlay recovery strategy based on the last integrated upstream snapshot. This avoids re-replaying the full historical maintenance stack after that direct merge.
+
+This is the safest way to inspect what the next sync would do.
+
+## PR creation and update behavior
+
+When upstream-sync returns `ready_for_pr=true`:
+
+1. the workflow configures a bot git identity
+2. stages remaining working-tree changes
+3. excludes the generated `reports/` artifacts from the commit
+4. commits low-risk translation/file-generation edits when they exist
+5. pushes the bot branch to `origin`
+6. creates a new PR to `zh-enterprise`, or updates the existing open PR for the same branch
+
+The PR body always comes from the generated `pr_body_path` output.
+
+## PR validation workflow
+
+`.github/workflows/upstream-sync-pr.yml` runs on `pull_request` events that target `zh-enterprise`, but only executes for `bot-upgrade/*` source branches.
+
+It installs dependencies and lets the dry-run upstream-sync regeneration execute the same required checks used by the main workflow:
+
+- `pnpm --filter @paperclipai/ui typecheck`
+- `pnpm --filter @paperclipai/server typecheck`
+- `pnpm check:i18n`
+
+The workflow regenerates dry-run upstream-sync artifacts for the PR branch when possible, then uploads the report and validation log artifacts with `if: always()`.
+
+## Maintainer playbook
+
+### `no-op`
+
+No new maintenance commits were discovered. No action is required.
+
+### `conflict`
+
+A sync conflict blocked the bot branch. Download the artifacts, inspect the conflict diagnostics, resolve the replay or overlay manually on a fresh branch, and open/update the PR yourself.
+
+### `validation failure`
+
+The sync completed, but one of the required checks failed. Review the uploaded validation log and decide whether to:
+
+1. push a short-lived follow-up fix onto the current `bot-upgrade/*` branch without rerunning upstream-sync, or
+2. move the fix to a separate branch if you expect to rerun upstream-sync for the same upstream SHA
+
+Rerunning the discovery workflow for the same upstream SHA refreshes the bot branch, so do not treat `bot-upgrade/*` as a durable place for long-lived manual fixes.
+
+### successful ready PR
+
+Review the generated PR like any other upgrade PR, but merge it with **rebase** only. Do **not** use merge commits or squash merges for upstream-sync PRs, because the automation still works best when `zh-enterprise` stays mostly linear. Overlay recovery exists for prior direct upstream merges, but it is a repair path, not the steady-state workflow.
+
+Check the sync summary, low-risk translation edits, manual-review items, and validation output before rebasing into `zh-enterprise`.
+
+## Important note about low-risk translation edits
+
+Low-risk translation changes are not separate maintenance commits inside the upstream-sync CLI. The discovery workflow commits those remaining working-tree edits right before pushing the bot branch so the PR contains the translated files together with the generated sync result.

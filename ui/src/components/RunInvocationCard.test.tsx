@@ -35,4 +35,25 @@ describe("RunInvocationCard", () => {
     expect(html).not.toContain("ANTHROPIC_API_KEY");
     expect(html).not.toContain("triggeredBy");
   });
+
+  it("renders invocation chrome in Chinese when locale is zh-CN", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunInvocationCard
+          payload={{
+            adapterType: "claude_local",
+            cwd: "/tmp/workspace",
+            command: "claude",
+          }}
+          censorUsernameInLogs={false}
+          locale="zh-CN"
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("调用信息");
+    expect(html).toContain("适配器:");
+    expect(html).toContain("工作目录:");
+    expect(html).toContain("详细信息");
+  });
 });

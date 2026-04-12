@@ -4,6 +4,7 @@ import { buildPaperclipEnv } from "../adapters/utils.js";
 const ORIGINAL_PAPERCLIP_API_URL = process.env.PAPERCLIP_API_URL;
 const ORIGINAL_PAPERCLIP_LISTEN_HOST = process.env.PAPERCLIP_LISTEN_HOST;
 const ORIGINAL_PAPERCLIP_LISTEN_PORT = process.env.PAPERCLIP_LISTEN_PORT;
+const ORIGINAL_PAPERCLIP_LOCALE = process.env.PAPERCLIP_LOCALE;
 const ORIGINAL_HOST = process.env.HOST;
 const ORIGINAL_PORT = process.env.PORT;
 
@@ -16,6 +17,9 @@ afterEach(() => {
 
   if (ORIGINAL_PAPERCLIP_LISTEN_PORT === undefined) delete process.env.PAPERCLIP_LISTEN_PORT;
   else process.env.PAPERCLIP_LISTEN_PORT = ORIGINAL_PAPERCLIP_LISTEN_PORT;
+
+  if (ORIGINAL_PAPERCLIP_LOCALE === undefined) delete process.env.PAPERCLIP_LOCALE;
+  else process.env.PAPERCLIP_LOCALE = ORIGINAL_PAPERCLIP_LOCALE;
 
   if (ORIGINAL_HOST === undefined) delete process.env.HOST;
   else process.env.HOST = ORIGINAL_HOST;
@@ -54,5 +58,24 @@ describe("buildPaperclipEnv", () => {
     const env = buildPaperclipEnv({ id: "agent-1", companyId: "company-1" });
 
     expect(env.PAPERCLIP_API_URL).toBe("http://[::1]:3101");
+  });
+
+  it("includes PAPERCLIP_LOCALE when explicitly provided", () => {
+    delete process.env.PAPERCLIP_LOCALE;
+
+    const env = buildPaperclipEnv(
+      { id: "agent-1", companyId: "company-1" },
+      { locale: "zh-CN" },
+    );
+
+    expect(env.PAPERCLIP_LOCALE).toBe("zh-CN");
+  });
+
+  it("normalizes locale from process env when no override is provided", () => {
+    process.env.PAPERCLIP_LOCALE = "zh";
+
+    const env = buildPaperclipEnv({ id: "agent-1", companyId: "company-1" });
+
+    expect(env.PAPERCLIP_LOCALE).toBe("zh-CN");
   });
 });
