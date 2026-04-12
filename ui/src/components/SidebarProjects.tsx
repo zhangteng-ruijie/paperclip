@@ -21,6 +21,8 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, projectRouteRef } from "../lib/utils";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useLocale } from "../context/LocaleContext";
+import { getShellCopy } from "../lib/shell-copy";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import {
   Collapsible,
@@ -49,6 +51,8 @@ function SortableProjectItem({
   projectSidebarSlots: ProjectSidebarSlot[];
   setSidebarOpen: (open: boolean) => void;
 }) {
+  const { locale } = useLocale();
+  const copy = getShellCopy(locale);
   const {
     attributes,
     listeners,
@@ -91,7 +95,9 @@ function SortableProjectItem({
             style={{ backgroundColor: project.color ?? "#6366f1" }}
           />
           <span className="flex-1 truncate">{project.name}</span>
-          {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}
+          {project.pauseReason === "budget" ? (
+            <BudgetSidebarMarker title={copy.projectPausedByBudget} />
+          ) : null}
         </NavLink>
         {projectSidebarSlots.length > 0 && (
           <div className="ml-5 flex flex-col gap-0.5">
@@ -122,7 +128,9 @@ export function SidebarProjects() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { openNewProject } = useDialog();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const { locale } = useLocale();
   const location = useLocation();
+  const copy = getShellCopy(locale);
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
@@ -188,7 +196,7 @@ export function SidebarProjects() {
               )}
             />
             <span className="text-[10px] font-medium uppercase tracking-widest font-mono text-muted-foreground/60">
-              Projects
+              {copy.projects}
             </span>
           </CollapsibleTrigger>
           <button
@@ -197,7 +205,7 @@ export function SidebarProjects() {
               openNewProject();
             }}
             className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label="New project"
+            aria-label={copy.newProject}
           >
             <Plus className="h-3 w-3" />
           </button>

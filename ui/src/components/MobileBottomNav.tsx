@@ -10,7 +10,9 @@ import {
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
+import { useLocale } from "../context/LocaleContext";
 import { cn } from "../lib/utils";
+import { getShellCopy } from "../lib/shell-copy";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 
 interface MobileBottomNavProps {
@@ -38,23 +40,25 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   const location = useLocation();
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialog();
+  const { locale } = useLocale();
+  const copy = getShellCopy(locale);
   const inboxBadge = useInboxBadge(selectedCompanyId);
 
   const items = useMemo<MobileNavItem[]>(
     () => [
-      { type: "link", to: "/dashboard", label: "Home", icon: House },
-      { type: "link", to: "/issues", label: "Issues", icon: CircleDot },
-      { type: "action", label: "Create", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/agents/all", label: "Agents", icon: Users },
+      { type: "link", to: "/dashboard", label: copy.home, icon: House },
+      { type: "link", to: "/issues", label: copy.issues, icon: CircleDot },
+      { type: "action", label: copy.create, icon: SquarePen, onClick: () => openNewIssue() },
+      { type: "link", to: "/agents/all", label: copy.agents, icon: Users },
       {
         type: "link",
         to: "/inbox",
-        label: "Inbox",
+        label: copy.inbox,
         icon: Inbox,
         badge: inboxBadge.inbox,
       },
     ],
-    [openNewIssue, inboxBadge.inbox],
+    [copy.home, copy.issues, copy.create, copy.agents, copy.inbox, openNewIssue, inboxBadge.inbox],
   );
 
   return (
@@ -63,7 +67,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
         "fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 transition-transform duration-200 ease-out md:hidden pb-[env(safe-area-inset-bottom)]",
         visible ? "translate-y-0" : "translate-y-full",
       )}
-      aria-label="Mobile navigation"
+      aria-label={copy.mobileNavigation}
     >
       <div className="grid h-16 grid-cols-5 px-1">
         {items.map((item) => {

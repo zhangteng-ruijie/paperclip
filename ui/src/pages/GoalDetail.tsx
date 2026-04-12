@@ -8,6 +8,8 @@ import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useLocale } from "../context/LocaleContext";
+import { formatGoalTabLabel, getGoalCopy, goalLevelLabel } from "../lib/goal-copy";
 import { queryKeys } from "../lib/queryKeys";
 import { GoalProperties } from "../components/GoalProperties";
 import { GoalTree } from "../components/GoalTree";
@@ -30,6 +32,8 @@ export function GoalPropertiesToggleButton({
   panelVisible,
   onShowProperties,
 }: GoalPropertiesToggleButtonProps) {
+  const { locale } = useLocale();
+  const copy = getGoalCopy(locale);
   return (
     <Button
       variant="ghost"
@@ -39,7 +43,7 @@ export function GoalPropertiesToggleButton({
         panelVisible ? "opacity-0 pointer-events-none w-0 overflow-hidden" : "opacity-100",
       )}
       onClick={onShowProperties}
-      title="Show properties"
+      title={copy.showProperties}
     >
       <SlidersHorizontal className="h-4 w-4" />
     </Button>
@@ -52,6 +56,8 @@ export function GoalDetail() {
   const { openNewGoal } = useDialog();
   const { openPanel, closePanel, panelVisible, setPanelVisible } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
+  const copy = getGoalCopy(locale);
   const queryClient = useQueryClient();
 
   const {
@@ -99,7 +105,7 @@ export function GoalDetail() {
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!resolvedCompanyId) throw new Error("No company selected");
+      if (!resolvedCompanyId) throw new Error(copy.noCompanySelected);
       return assetsApi.uploadImage(
         resolvedCompanyId,
         file,
@@ -118,10 +124,10 @@ export function GoalDetail() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Goals", href: "/goals" },
-      { label: goal?.title ?? goalId ?? "Goal" }
+      { label: copy.goals, href: "/goals" },
+      { label: goal?.title ?? goalId ?? copy.goal }
     ]);
-  }, [setBreadcrumbs, goal, goalId]);
+  }, [setBreadcrumbs, goal, goalId, copy.goals, copy.goal]);
 
   useEffect(() => {
     if (goal) {
@@ -144,7 +150,7 @@ export function GoalDetail() {
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <span className="text-xs uppercase text-muted-foreground">
-            {goal.level}
+            {goalLevelLabel(goal.level, locale)}
           </span>
           <StatusBadge status={goal.status} />
           <div className="ml-auto">
@@ -167,7 +173,7 @@ export function GoalDetail() {
           onSave={(description) => updateGoal.mutate({ description })}
           as="p"
           className="text-sm text-muted-foreground"
-          placeholder="Add a description..."
+          placeholder={copy.descriptionPlaceholder}
           multiline
           imageUploadHandler={async (file) => {
             const asset = await uploadImage.mutateAsync(file);
@@ -179,10 +185,10 @@ export function GoalDetail() {
       <Tabs defaultValue="children">
         <TabsList>
           <TabsTrigger value="children">
-            Sub-Goals ({childGoals.length})
+            {formatGoalTabLabel("subGoals", childGoals.length, locale)}
           </TabsTrigger>
           <TabsTrigger value="projects">
-            Projects ({linkedProjects.length})
+            {formatGoalTabLabel("projects", linkedProjects.length, locale)}
           </TabsTrigger>
         </TabsList>
 
@@ -194,11 +200,11 @@ export function GoalDetail() {
               onClick={() => openNewGoal({ parentId: goalId })}
             >
               <Plus className="h-3.5 w-3.5 mr-1.5" />
-              Sub Goal
+              {copy.subGoal}
             </Button>
           </div>
           {childGoals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sub-goals.</p>
+            <p className="text-sm text-muted-foreground">{copy.noSubGoals}</p>
           ) : (
             <GoalTree goals={childGoals} goalLink={(g) => `/goals/${g.id}`} />
           )}
@@ -206,7 +212,7 @@ export function GoalDetail() {
 
         <TabsContent value="projects" className="mt-4">
           {linkedProjects.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No linked projects.</p>
+            <p className="text-sm text-muted-foreground">{copy.noLinkedProjects}</p>
           ) : (
             <div className="border border-border">
               {linkedProjects.map((project) => (

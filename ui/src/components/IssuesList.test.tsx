@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssuesList } from "./IssuesList";
+import { issueColumnsTriggerLabel } from "../lib/issues-copy";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const companyState = vi.hoisted(() => ({
@@ -301,7 +302,7 @@ describe("IssuesList", () => {
 
     await waitForAssertion(() => {
       const columnsButton = Array.from(document.body.querySelectorAll("button")).find(
-        (button) => button.getAttribute("title") === "Columns",
+        (button) => button.getAttribute("title") === issueColumnsTriggerLabel("en"),
       );
       expect(columnsButton).not.toBeUndefined();
       expect(container.textContent).toContain("PAP-9");
