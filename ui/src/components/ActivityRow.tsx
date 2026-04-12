@@ -1,7 +1,9 @@
 import { Link } from "@/lib/router";
+import { useLocale } from "../context/LocaleContext";
 import { Identity } from "./Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
+import { localizedActorLabel } from "../lib/actor-labels";
 import { formatActivityVerb } from "../lib/activity-format";
 import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@paperclipai/shared";
 
@@ -25,6 +27,7 @@ interface ActivityRowProps {
 }
 
 export function ActivityRow({ event, agentMap, entityNameMap, entityTitleMap, className }: ActivityRowProps) {
+  const { locale } = useLocale();
   const verb = formatActivityVerb(event.action, event.details, { agentMap });
 
   const isHeartbeatEvent = event.entityType === "heartbeat_run";
@@ -43,7 +46,13 @@ export function ActivityRow({ event, agentMap, entityNameMap, entityTitleMap, cl
     : entityLink(event.entityType, event.entityId, name);
 
   const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
-  const actorName = actor?.name ?? (event.actorType === "system" ? "System" : event.actorType === "user" ? "Board" : event.actorId || "Unknown");
+  const actorName = actor?.name ?? (
+    event.actorType === "system"
+      ? localizedActorLabel("system", locale)
+      : event.actorType === "user"
+        ? localizedActorLabel("board", locale)
+        : event.actorId || localizedActorLabel("unknown", locale)
+  );
 
   const inner = (
     <div className="flex gap-3">

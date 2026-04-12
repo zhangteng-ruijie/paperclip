@@ -2,25 +2,32 @@ import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { deriveAgentUrlKey, deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "@paperclipai/shared";
 import type { BillingType, FinanceDirection, FinanceEventKind } from "@paperclipai/shared";
+import {
+  formatLocalizedCurrency,
+  formatLocalizedDate,
+  formatLocalizedRelativeTime,
+  formatLocalizedTime,
+  getRuntimeLocaleConfig,
+} from "./runtime-locale";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatLocalizedCurrency(cents / 100);
 }
 
-export function formatDate(date: Date | string): string {
-  return new Date(date).toLocaleDateString("en-US", {
+export function formatDate(date: Date | string | number): string {
+  return formatLocalizedDate(date, {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
-export function formatDateTime(date: Date | string): string {
-  return new Date(date).toLocaleString("en-US", {
+export function formatDateTime(date: Date | string | number): string {
+  return formatLocalizedDate(date, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -29,25 +36,36 @@ export function formatDateTime(date: Date | string): string {
   });
 }
 
-export function formatShortDate(date: Date | string): string {
-  return new Date(date).toLocaleString("en-US", {
+export function formatShortDate(date: Date | string | number): string {
+  return formatLocalizedDate(date, {
     month: "short",
     day: "numeric",
   });
 }
 
-export function relativeTime(date: Date | string): string {
-  const now = Date.now();
-  const then = new Date(date).getTime();
-  const diffSec = Math.round((now - then) / 1000);
-  if (diffSec < 60) return "just now";
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  return formatDate(date);
+export function relativeTime(date: Date | string | number): string {
+  return formatLocalizedRelativeTime(date);
+}
+
+export function formatTime(
+  date: Date | string | number,
+  options: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+  },
+): string {
+  return formatLocalizedTime(date, options);
+}
+
+export function formatDateWithOptions(
+  date: Date | string | number,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  return formatLocalizedDate(date, options);
+}
+
+export function currentTimeZone(): string {
+  return getRuntimeLocaleConfig().timeZone;
 }
 
 export function formatTokens(n: number): string {

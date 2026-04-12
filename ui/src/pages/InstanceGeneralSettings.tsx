@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PatchInstanceGeneralSettings, BackupRetentionPolicy } from "@paperclipai/shared";
+import type {
+  BackupRetentionPolicy,
+  PaperclipCurrencyPreference,
+  PaperclipUiLocalePreference,
+} from "@paperclipai/shared";
 import {
   DAILY_RETENTION_PRESETS,
   WEEKLY_RETENTION_PRESETS,
@@ -12,16 +16,27 @@ import { authApi } from "@/api/auth";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { Button } from "../components/ui/button";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useLocale } from "../context/LocaleContext";
+import {
+  formatRetentionDays,
+  formatRetentionMonths,
+  formatRetentionWeeks,
+  getInstanceAdminCopy,
+} from "../lib/instance-admin-copy";
 import { queryKeys } from "../lib/queryKeys";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "../lib/utils";
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
+const TIME_ZONE_OPTIONS = ["system", "Asia/Shanghai", "UTC"] as const;
 
 export function InstanceGeneralSettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { t, locale, timeZone, currencyCode } = useLocale();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
+  const adminCopy = getInstanceAdminCopy(locale);
 
   const signOutMutation = useMutation({
     mutationFn: () => authApi.signOut(),
@@ -29,16 +44,16 @@ export function InstanceGeneralSettings() {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
     },
     onError: (error) => {
-      setActionError(error instanceof Error ? error.message : "Failed to sign out.");
+      setActionError(error instanceof Error ? error.message : t("common.failedSignOut"));
     },
   });
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Instance Settings" },
-      { label: "General" },
+      { label: t("settings.general.instanceTitle") },
+      { label: t("settings.general.title") },
     ]);
-  }, [setBreadcrumbs]);
+  }, [setBreadcrumbs, t]);
 
   const generalQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings,
@@ -52,12 +67,12 @@ export function InstanceGeneralSettings() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
     },
     onError: (error) => {
-      setActionError(error instanceof Error ? error.message : "Failed to update general settings.");
+      setActionError(error instanceof Error ? error.message : t("common.failedUpdateGeneralSettings"));
     },
   });
 
   if (generalQuery.isLoading) {
-    return <div className="text-sm text-muted-foreground">Loading general settings...</div>;
+    return <div className="text-sm text-muted-foreground">{t("common.loadingGeneralSettings")}</div>;
   }
 
   if (generalQuery.error) {
@@ -65,7 +80,7 @@ export function InstanceGeneralSettings() {
       <div className="text-sm text-destructive">
         {generalQuery.error instanceof Error
           ? generalQuery.error.message
-          : "Failed to load general settings."}
+          : t("common.failedLoadGeneralSettings")}
       </div>
     );
   }
@@ -74,16 +89,19 @@ export function InstanceGeneralSettings() {
   const keyboardShortcuts = generalQuery.data?.keyboardShortcuts === true;
   const feedbackDataSharingPreference = generalQuery.data?.feedbackDataSharingPreference ?? "prompt";
   const backupRetention: BackupRetentionPolicy = generalQuery.data?.backupRetention ?? DEFAULT_BACKUP_RETENTION;
+  const selectedLocale = generalQuery.data?.locale ?? "system";
+  const selectedTimeZone = generalQuery.data?.timeZone ?? "system";
+  const selectedCurrency = generalQuery.data?.currencyCode ?? "default";
 
   return (
     <div className="max-w-4xl space-y-6">
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">General</h1>
+          <h1 className="text-lg font-semibold">{t("settings.general.title")}</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Configure instance-wide defaults that affect how operator-visible logs are displayed.
+          {t("settings.general.description")}
         </p>
       </div>
 
@@ -93,21 +111,98 @@ export function InstanceGeneralSettings() {
         </div>
       )}
 
+      <section className="grid gap-4 rounded-xl border border-border bg-card p-5 lg:grid-cols-3">
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold">{t("settings.general.languageTitle")}</h2>
+          <p className="text-sm text-muted-foreground">{t("settings.general.languageDescription")}</p>
+          <Select
+            value={selectedLocale}
+            onValueChange={(value) =>
+              updateGeneralMutation.mutate({ locale: value as PaperclipUiLocalePreference })
+            }
+            disabled={updateGeneralMutation.isPending}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="system">{t("settings.general.locale.system")}</SelectItem>
+              <SelectItem value="en">{t("settings.general.locale.en")}</SelectItem>
+              <SelectItem value="zh-CN">{t("settings.general.locale.zh-CN")}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("settings.general.languageHelp")}</p>
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold">{t("settings.general.timeZoneTitle")}</h2>
+          <p className="text-sm text-muted-foreground">{t("settings.general.timeZoneDescription")}</p>
+          <Select
+            value={selectedTimeZone}
+            onValueChange={(value) => updateGeneralMutation.mutate({ timeZone: value })}
+            disabled={updateGeneralMutation.isPending}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TIME_ZONE_OPTIONS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value === "system" ? t("settings.general.timeZone.system") : value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("settings.general.timeZoneHelp")}</p>
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold">{t("settings.general.currencyTitle")}</h2>
+          <p className="text-sm text-muted-foreground">{t("settings.general.currencyDescription")}</p>
+          <Select
+            value={selectedCurrency}
+            onValueChange={(value) =>
+              updateGeneralMutation.mutate({ currencyCode: value as PaperclipCurrencyPreference })
+            }
+            disabled={updateGeneralMutation.isPending}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">{t("settings.general.currency.default")}</SelectItem>
+              <SelectItem value="USD">{t("settings.general.currency.USD")}</SelectItem>
+              <SelectItem value="CNY">{t("settings.general.currency.CNY")}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("settings.general.currencyHelp")}</p>
+        </div>
+
+        <div className="rounded-lg border border-border/70 bg-accent/20 px-3 py-2 text-sm text-muted-foreground lg:col-span-3">
+          <div className="font-medium text-foreground">{t("settings.general.preview")}</div>
+          <div className="mt-1">
+            {t("settings.general.previewValue", {
+              locale,
+              timeZone,
+              currency: currencyCode,
+            })}
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">Censor username in logs</h2>
+            <h2 className="text-sm font-semibold">{t("settings.general.censorTitle")}</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Hide the username segment in home-directory paths and similar operator-visible log output. Standalone
-              username mentions outside of paths are not yet masked in the live transcript view. This is off by
-              default.
+              {t("settings.general.censorDescription")}
             </p>
           </div>
           <ToggleSwitch
             checked={censorUsernameInLogs}
             onCheckedChange={() => updateGeneralMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
             disabled={updateGeneralMutation.isPending}
-            aria-label="Toggle username log censoring"
+            aria-label={adminCopy.general.toggleCensorAria}
           />
         </div>
       </section>
@@ -115,17 +210,16 @@ export function InstanceGeneralSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">Keyboard shortcuts</h2>
+            <h2 className="text-sm font-semibold">{t("settings.general.keyboardTitle")}</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Enable app keyboard shortcuts, including inbox navigation and global shortcuts like creating issues or
-              toggling panels. This is off by default.
+              {t("settings.general.keyboardDescription")}
             </p>
           </div>
           <ToggleSwitch
             checked={keyboardShortcuts}
             onCheckedChange={() => updateGeneralMutation.mutate({ keyboardShortcuts: !keyboardShortcuts })}
             disabled={updateGeneralMutation.isPending}
-            aria-label="Toggle keyboard shortcuts"
+            aria-label={adminCopy.general.toggleKeyboardAria}
           />
         </div>
       </section>
@@ -133,16 +227,14 @@ export function InstanceGeneralSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="space-y-5">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">Backup retention</h2>
+            <h2 className="text-sm font-semibold">{adminCopy.general.backupRetention}</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Configure how long to keep automatic database backups at each tier. Daily backups
-              are kept in full, then thinned to one per week and one per month. Backups are
-              compressed with gzip.
+              {adminCopy.general.backupRetentionDescription}
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Daily</h3>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{adminCopy.general.daily}</h3>
             <div className="flex flex-wrap gap-2">
               {DAILY_RETENTION_PRESETS.map((days) => {
                 const active = backupRetention.dailyDays === days;
@@ -157,25 +249,24 @@ export function InstanceGeneralSettings() {
                         ? "border-foreground bg-accent text-foreground"
                         : "border-border bg-background hover:bg-accent/50",
                     )}
-                    onClick={() =>
-                      updateGeneralMutation.mutate({
-                        backupRetention: { ...backupRetention, dailyDays: days },
-                      })
-                    }
-                  >
-                    <div className="text-sm font-medium">{days} days</div>
-                  </button>
-                );
+                      onClick={() =>
+                        updateGeneralMutation.mutate({
+                          backupRetention: { ...backupRetention, dailyDays: days },
+                        })
+                      }
+                    >
+                      <div className="text-sm font-medium">{formatRetentionDays(days, locale)}</div>
+                    </button>
+                  );
               })}
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Weekly</h3>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{adminCopy.general.weekly}</h3>
             <div className="flex flex-wrap gap-2">
               {WEEKLY_RETENTION_PRESETS.map((weeks) => {
                 const active = backupRetention.weeklyWeeks === weeks;
-                const label = weeks === 1 ? "1 week" : `${weeks} weeks`;
                 return (
                   <button
                     key={weeks}
@@ -187,25 +278,24 @@ export function InstanceGeneralSettings() {
                         ? "border-foreground bg-accent text-foreground"
                         : "border-border bg-background hover:bg-accent/50",
                     )}
-                    onClick={() =>
-                      updateGeneralMutation.mutate({
-                        backupRetention: { ...backupRetention, weeklyWeeks: weeks },
-                      })
-                    }
-                  >
-                    <div className="text-sm font-medium">{label}</div>
-                  </button>
-                );
+                      onClick={() =>
+                        updateGeneralMutation.mutate({
+                          backupRetention: { ...backupRetention, weeklyWeeks: weeks },
+                        })
+                      }
+                    >
+                      <div className="text-sm font-medium">{formatRetentionWeeks(weeks, locale)}</div>
+                    </button>
+                  );
               })}
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Monthly</h3>
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{adminCopy.general.monthly}</h3>
             <div className="flex flex-wrap gap-2">
               {MONTHLY_RETENTION_PRESETS.map((months) => {
                 const active = backupRetention.monthlyMonths === months;
-                const label = months === 1 ? "1 month" : `${months} months`;
                 return (
                   <button
                     key={months}
@@ -217,15 +307,15 @@ export function InstanceGeneralSettings() {
                         ? "border-foreground bg-accent text-foreground"
                         : "border-border bg-background hover:bg-accent/50",
                     )}
-                    onClick={() =>
-                      updateGeneralMutation.mutate({
-                        backupRetention: { ...backupRetention, monthlyMonths: months },
-                      })
-                    }
-                  >
-                    <div className="text-sm font-medium">{label}</div>
-                  </button>
-                );
+                      onClick={() =>
+                        updateGeneralMutation.mutate({
+                          backupRetention: { ...backupRetention, monthlyMonths: months },
+                        })
+                      }
+                    >
+                      <div className="text-sm font-medium">{formatRetentionMonths(months, locale)}</div>
+                    </button>
+                  );
               })}
             </div>
           </div>
@@ -235,10 +325,9 @@ export function InstanceGeneralSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">AI feedback sharing</h2>
+            <h2 className="text-sm font-semibold">{t("settings.general.feedbackTitle")}</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Control whether thumbs up and thumbs down votes can send the voted AI output to
-              Paperclip Labs. Votes are always saved locally.
+              {t("settings.general.feedbackDescription")}
             </p>
             {FEEDBACK_TERMS_URL ? (
               <a
@@ -247,27 +336,26 @@ export function InstanceGeneralSettings() {
                 rel="noreferrer"
                 className="inline-flex text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
               >
-                Read our terms of service
+                {t("settings.general.feedbackTerms")}
               </a>
             ) : null}
           </div>
           {feedbackDataSharingPreference === "prompt" ? (
             <div className="rounded-lg border border-border/70 bg-accent/20 px-3 py-2 text-sm text-muted-foreground">
-              No default is saved yet. The next thumbs up or thumbs down choice will ask once and
-              then save the answer here.
+              {t("settings.general.feedbackPromptNotice")}
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
             {[
               {
                 value: "allowed",
-                label: "Always allow",
-                description: "Share voted AI outputs automatically.",
+                label: t("settings.general.feedbackAllowed"),
+                description: t("settings.general.feedbackAllowedDescription"),
               },
               {
                 value: "not_allowed",
-                label: "Don't allow",
-                description: "Keep voted AI outputs local only.",
+                label: t("settings.general.feedbackNotAllowed"),
+                description: t("settings.general.feedbackNotAllowedDescription"),
               },
             ].map((option) => {
               const active = feedbackDataSharingPreference === option.value;
@@ -299,11 +387,7 @@ export function InstanceGeneralSettings() {
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            To retest the first-use prompt in local dev, remove the{" "}
-            <code>feedbackDataSharingPreference</code> key from the{" "}
-            <code>instance_settings.general</code> JSON row for this instance, or set it back to{" "}
-            <code>"prompt"</code>. Unset and <code>"prompt"</code> both mean no default has been
-            chosen yet.
+            {t("settings.general.feedbackResetNote")}
           </p>
         </div>
       </section>
@@ -311,9 +395,9 @@ export function InstanceGeneralSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">Sign out</h2>
+            <h2 className="text-sm font-semibold">{t("settings.general.signOutTitle")}</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Sign out of this Paperclip instance. You will be redirected to the login page.
+              {t("settings.general.signOutDescription")}
             </p>
           </div>
           <Button
@@ -323,7 +407,7 @@ export function InstanceGeneralSettings() {
             onClick={() => signOutMutation.mutate()}
           >
             <LogOut className="size-4" />
-            {signOutMutation.isPending ? "Signing out..." : "Sign out"}
+            {signOutMutation.isPending ? t("settings.general.signingOut") : t("settings.general.signOut")}
           </Button>
         </div>
       </section>

@@ -4,8 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { agentUrl } from "../lib/utils";
+import { getOrgChartCopy, orgRoleLabel, translateOrgAdapterLabel, translateOrgCopy } from "../lib/org-chart-copy";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -133,6 +135,8 @@ const defaultDotColor = "#a3a3a3";
 export function OrgChart() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
+  const copy = getOrgChartCopy(locale);
   const navigate = useNavigate();
 
   const { data: orgTree, isLoading } = useQuery({
@@ -154,8 +158,8 @@ export function OrgChart() {
   }, [agents]);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Org Chart" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: copy.orgChart }]);
+  }, [setBreadcrumbs, copy]);
 
   // Layout computation
   const layout = useMemo(() => layoutForest(orgTree ?? []), [orgTree]);
@@ -247,7 +251,7 @@ export function OrgChart() {
   }, [zoom, pan]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Network} message="Select a company to view the org chart." />;
+    return <EmptyState icon={Network} message={copy.selectCompany} />;
   }
 
   if (isLoading) {
@@ -255,7 +259,7 @@ export function OrgChart() {
   }
 
   if (orgTree && orgTree.length === 0) {
-    return <EmptyState icon={Network} message="No organizational hierarchy defined." />;
+    return <EmptyState icon={Network} message={copy.noHierarchy} />;
   }
 
   return (
@@ -264,13 +268,13 @@ export function OrgChart() {
       <Link to="/company/import">
         <Button variant="outline" size="sm">
           <Upload className="mr-1.5 h-3.5 w-3.5" />
-          Import company
+          {copy.importCompany}
         </Button>
       </Link>
       <Link to="/company/export">
         <Button variant="outline" size="sm">
           <Download className="mr-1.5 h-3.5 w-3.5" />
-          Export company
+          {copy.exportCompany}
         </Button>
       </Link>
     </div>
@@ -299,7 +303,7 @@ export function OrgChart() {
             }
             setZoom(newZoom);
           }}
-          aria-label="Zoom in"
+          aria-label={copy.zoomIn}
         >
           +
         </button>
@@ -316,7 +320,7 @@ export function OrgChart() {
             }
             setZoom(newZoom);
           }}
-          aria-label="Zoom out"
+          aria-label={copy.zoomOut}
         >
           &minus;
         </button>
@@ -334,10 +338,10 @@ export function OrgChart() {
             setZoom(fitZoom);
             setPan({ x: (cW - chartW) / 2, y: (cH - chartH) / 2 });
           }}
-          title="Fit to screen"
-          aria-label="Fit chart to screen"
+          title={copy.fitToScreen}
+          aria-label={copy.fitChartToScreen}
         >
-          Fit
+          {copy.fit}
         </button>
       </div>
 
@@ -412,16 +416,16 @@ export function OrgChart() {
                     {node.name}
                   </span>
                   <span className="text-[11px] text-muted-foreground leading-tight mt-0.5">
-                    {agent?.title ?? roleLabel(node.role)}
+                    {translateOrgCopy(agent?.title ?? orgRoleLabel(node.role, roleLabels, locale), locale)}
                   </span>
                   {agent && (
                     <span className="text-[10px] text-muted-foreground/60 font-mono leading-tight mt-1">
-                      {getAdapterLabel(agent.adapterType)}
+                      {translateOrgAdapterLabel(getAdapterLabel(agent.adapterType), locale)}
                     </span>
                   )}
                   {agent && agent.capabilities && (
                     <span className="text-[10px] text-muted-foreground/80 leading-tight mt-1 line-clamp-2">
-                      {agent.capabilities}
+                      {translateOrgCopy(agent.capabilities, locale)}
                     </span>
                   )}
                 </div>
@@ -436,7 +440,3 @@ export function OrgChart() {
 }
 
 const roleLabels: Record<string, string> = AGENT_ROLE_LABELS;
-
-function roleLabel(role: string): string {
-  return roleLabels[role] ?? role;
-}

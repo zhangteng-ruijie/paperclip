@@ -521,7 +521,19 @@ export function buildInvocationEnvForLogs(
   return redactEnvForLogs(merged);
 }
 
-export function buildPaperclipEnv(agent: { id: string; companyId: string }): Record<string, string> {
+export function resolvePaperclipLocale(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.toLowerCase().startsWith("zh")) return "zh-CN";
+  if (trimmed.toLowerCase().startsWith("en")) return "en";
+  return trimmed;
+}
+
+export function buildPaperclipEnv(
+  agent: { id: string; companyId: string },
+  options: { locale?: string | null } = {},
+): Record<string, string> {
   const resolveHostForUrl = (rawHost: string): string => {
     const host = rawHost.trim();
     if (!host || host === "0.0.0.0" || host === "::") return "localhost";
@@ -532,6 +544,10 @@ export function buildPaperclipEnv(agent: { id: string; companyId: string }): Rec
     PAPERCLIP_AGENT_ID: agent.id,
     PAPERCLIP_COMPANY_ID: agent.companyId,
   };
+  const locale = resolvePaperclipLocale(options.locale ?? process.env.PAPERCLIP_LOCALE);
+  if (locale) {
+    vars.PAPERCLIP_LOCALE = locale;
+  }
   const runtimeHost = resolveHostForUrl(
     process.env.PAPERCLIP_LISTEN_HOST ?? process.env.HOST ?? "localhost",
   );
