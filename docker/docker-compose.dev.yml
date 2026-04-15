@@ -1,0 +1,106 @@
+# Development environment with hot reload
+# Usage:
+#   docker compose -f docker-compose.dev.yml up              # Quick dev (no DB)
+#   docker compose -f docker-compose.dev.yml --profile full up  # Full stack with DB
+
+services:
+  # Quick dev mode - single service with embedded PGlite or external DB
+  paperclip-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    init: true
+    tty: true
+    stdin_open: true
+    ports:
+      - "${PAPERCLIP_PORT:-3100}:3100"
+      - "${VITE_PORT:-5173}:5173"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3100"
+      PAPERCLIP_HOME: "/paperclip"
+      SERVE_UI: "true"
+      DATABASE_URL: "${DATABASE_URL:-}"  # Set to use external Postgres, or leave empty for embedded
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      NODE_ENV: "development"
+    volumes:
+      - paperclip-data:/paperclip
+      - ../server:/app/server
+      - ../ui:/app/ui
+      - ../packages:/app/packages
+      - ../cli:/app/cli
+      - ../scripts:/app/scripts
+    profiles:
+      - dev
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Full stack mode - Postgres + Server with hot reload
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: paperclip
+      POSTGRES_PASSWORD: paperclip
+      POSTGRES_DB: paperclip
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    profiles:
+      - full
+
+  server-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    init: true
+    tty: true
+    stdin_open: true
+    ports:
+      - "${PAPERCLIP_PORT:-3100}:3100"
+      - "${VITE_PORT:-5173}:5173"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3100"
+      PAPERCLIP_HOME: "/paperclip"
+      SERVE_UI: "true"
+      DATABASE_URL: "postgres://paperclip:paperclip@db:5432/paperclip"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      NODE_ENV: "development"
+    volumes:
+      - paperclip-data:/paperclip
+      - ../server:/app/server
+      - ../ui:/app/ui
+      - ../packages:/app/packages
+      - ../cli:/app/cli
+      - ../scripts:/app/scripts
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - full
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:
+  paperclip-data:

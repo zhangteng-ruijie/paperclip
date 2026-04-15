@@ -1,18 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { Clock3, Cpu, FlaskConical, Puzzle, Settings, SlidersHorizontal } from "lucide-react";
 import { NavLink } from "@/lib/router";
-import { pluginsApi } from "@/api/plugins";
-import { queryKeys } from "@/lib/queryKeys";
+import { Clock3, Cpu, FlaskConical, Settings, SlidersHorizontal } from "lucide-react";
 import { SIDEBAR_SCROLL_RESET_STATE } from "@/lib/navigation-scroll";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { useLocale } from "@/context/LocaleContext";
 
 export function InstanceSidebar() {
   const { t } = useLocale();
-  const { data: plugins } = useQuery({
-    queryKey: queryKeys.plugins.all,
-    queryFn: () => pluginsApi.list(),
-  });
 
   return (
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
@@ -28,29 +21,7 @@ export function InstanceSidebar() {
           <SidebarNavItem to="/instance/settings/general" label={t("instance.sidebar.general")} icon={SlidersHorizontal} end />
           <SidebarNavItem to="/instance/settings/heartbeats" label={t("instance.sidebar.heartbeats")} icon={Clock3} end />
           <SidebarNavItem to="/instance/settings/experimental" label={t("instance.sidebar.experimental")} icon={FlaskConical} />
-          <SidebarNavItem to="/instance/settings/plugins" label={t("instance.sidebar.plugins")} icon={Puzzle} />
           <SidebarNavItem to="/instance/settings/adapters" label={t("instance.sidebar.adapters")} icon={Cpu} />
-          {(plugins ?? []).length > 0 ? (
-            <div className="ml-4 mt-1 flex flex-col gap-0.5 border-l border-border/70 pl-3">
-              {(plugins ?? []).map((plugin) => (
-                <NavLink
-                  key={plugin.id}
-                  to={`/instance/settings/plugins/${plugin.id}`}
-                  state={SIDEBAR_SCROLL_RESET_STATE}
-                  className={({ isActive }) =>
-                    [
-                      "rounded-md px-2 py-1.5 text-xs transition-colors",
-                      isActive
-                        ? "bg-accent text-foreground"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                    ].join(" ")
-                  }
-                >
-                  {plugin.manifestJson.displayName ?? plugin.packageName}
-                </NavLink>
-              ))}
-            </div>
-          ) : null}
         </div>
       </nav>
     </aside>
