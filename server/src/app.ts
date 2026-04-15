@@ -135,6 +135,11 @@ export async function createApp(
   });
   if (opts.betterAuthHandler) {
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
+  } else {
+    // Fallback for local_trusted mode - sign-out is a no-op
+    app.post("/api/auth/sign-out", (_req, res) => {
+      res.json({ ok: true });
+    });
   }
   app.use(llmRoutes(db));
 
