@@ -144,13 +144,13 @@ describe("NewAgentDialog", () => {
     await flush();
     await flush();
 
-    expect(container.textContent).toContain("添加新 Agent");
-    expect(container.textContent).toContain("建议由 CEO 来完成 Agent 初始配置");
-    expect(container.textContent).toContain("让 CEO 创建新 Agent");
+    expect(container.textContent).toContain("添加新智能体");
+    expect(container.textContent).toContain("建议由 CEO 来完成智能体初始配置");
+    expect(container.textContent).toContain("让 CEO 创建新智能体");
     expect(container.textContent).toContain("我想自己做高级配置");
 
     const askCeoButton = Array.from(container.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("让 CEO 创建新 Agent"),
+      button.textContent?.includes("让 CEO 创建新智能体"),
     );
 
     expect(askCeoButton).toBeTruthy();
@@ -161,8 +161,8 @@ describe("NewAgentDialog", () => {
 
     expect(dialogState.openNewIssue).toHaveBeenCalledWith({
       assigneeAgentId: "agent-ceo",
-      title: "创建一个新的 Agent",
-      description: "请在这里说明你想创建什么样的 Agent",
+      title: "创建一个新的智能体",
+      description: "请在这里说明你想创建什么样的智能体",
     });
 
     act(() => {

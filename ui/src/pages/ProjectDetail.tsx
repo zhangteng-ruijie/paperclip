@@ -12,19 +12,21 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
-import { useToast } from "../context/ToastContext";
+import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
-import { CopyText } from "../components/CopyText";
 import { InlineEditor } from "../components/InlineEditor";
 import { StatusBadge, formatStatusLabel } from "../components/StatusBadge";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { ExecutionWorkspaceCloseDialog } from "../components/ExecutionWorkspaceCloseDialog";
+import { CopyText } from "../components/CopyText";
+import { IssuesQuicklook } from "../components/IssuesQuicklook";
 import { IssuesList } from "../components/IssuesList";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
+import { ProjectWorkspaceSummaryCard } from "../components/ProjectWorkspaceSummaryCard";
 import { buildProjectWorkspaceSummaries } from "../lib/project-workspaces-tab";
 import { formatExecutionWorkspaceCloseActionLabel } from "../lib/execution-workspace-copy";
 import { getProjectCopy } from "../lib/project-copy";
@@ -35,7 +37,6 @@ import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { Copy, FolderOpen, GitBranch, Loader2, Play, Square } from "lucide-react";
-import { IssuesQuicklook } from "../components/IssuesQuicklook";
 
 /* ── Top-level tab types ── */
 
@@ -219,7 +220,7 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
       projects={projects}
       liveIssueIds={liveIssueIds}
       projectId={projectId}
-      viewStateKey={`paperclip:project-view:${projectId}`}
+      viewStateKey="paperclip:project-issues-view"
       onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
     />
   );
@@ -293,7 +294,6 @@ function ProjectWorkspacesContent({
         key={summary.key}
         className="border-b border-border px-4 py-3 last:border-b-0"
       >
-        {/* Header row: name + actions */}
         <div className="flex items-center gap-3">
           <Link
             to={workspaceHref}
@@ -360,7 +360,6 @@ function ProjectWorkspacesContent({
           </div>
         </div>
 
-        {/* Metadata lines: branch, folder */}
         <div className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
           {summary.branchName ? (
             <div className="flex items-center gap-1.5">
@@ -393,7 +392,6 @@ function ProjectWorkspacesContent({
           ) : null}
         </div>
 
-        {/* Issues */}
         {summary.issues.length > 0 ? (
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span className="font-medium text-muted-foreground/70">{copy.workspaces.issues}</span>
@@ -417,12 +415,21 @@ function ProjectWorkspacesContent({
       </div>
     );
   };
-
   return (
     <>
       <div className="space-y-4">
         <div className="overflow-hidden rounded-xl border border-border bg-card">
-          {activeSummaries.map(renderSummaryRow)}
+          {activeSummaries.map((summary) => (
+            <ProjectWorkspaceSummaryCard
+              key={summary.key}
+              projectRef={projectRef}
+              summary={summary}
+              runtimeActionKey={runtimeActionKey}
+              runtimeActionPending={controlWorkspaceRuntime.isPending}
+              onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
+              onCloseWorkspace={(input) => setClosingWorkspace(input)}
+            />
+          ))}
         </div>
         {cleanupFailedSummaries.length > 0 ? (
           <div className="space-y-2">
@@ -430,7 +437,17 @@ function ProjectWorkspacesContent({
               {copy.workspaces.cleanupAttentionNeeded}
             </div>
             <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/5">
-              {cleanupFailedSummaries.map(renderSummaryRow)}
+              {cleanupFailedSummaries.map((summary) => (
+                <ProjectWorkspaceSummaryCard
+                  key={summary.key}
+                  projectRef={projectRef}
+                  summary={summary}
+                  runtimeActionKey={runtimeActionKey}
+                  runtimeActionPending={controlWorkspaceRuntime.isPending}
+                  onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
+                  onCloseWorkspace={(input) => setClosingWorkspace(input)}
+                />
+              ))}
             </div>
           </div>
         ) : null}
@@ -469,7 +486,7 @@ export function ProjectDetail() {
   const copy = getProjectCopy(locale);
   const { closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { pushToast } = useToast();
+  const { pushToast } = useToastActions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
