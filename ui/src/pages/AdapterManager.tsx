@@ -38,7 +38,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { useToast } from "@/context/ToastContext";
+import { useToastActions } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 import { ChoosePathButton } from "@/components/PathInstructionsModal";
 import { invalidateDynamicParser } from "@/adapters/dynamic-loader";
@@ -271,7 +271,7 @@ export function AdapterManager() {
   const { locale } = useLocale();
   const copy = getInstanceAdminCopy(locale);
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
+  const { pushToast } = useToastActions();
 
   const [installPackage, setInstallPackage] = useState("");
   const [installVersion, setInstallVersion] = useState("");
@@ -625,6 +625,12 @@ export function AdapterManager() {
                   modelsCount: 0,
                   loaded: true,
                   disabled: virtual.menuDisabled,
+                  capabilities: {
+                    supportsInstructionsBundle: false,
+                    supportsSkills: false,
+                    supportsLocalAgentJwt: false,
+                    requiresMaterializedRuntimeSkills: false,
+                  },
                 }}
                 canRemove={false}
                 onToggle={(type, disabled) => toggleMutation.mutate({ type, disabled })}
