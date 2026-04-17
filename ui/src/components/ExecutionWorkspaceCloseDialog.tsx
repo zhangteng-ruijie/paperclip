@@ -3,7 +3,7 @@ import type { ExecutionWorkspace } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { Loader2 } from "lucide-react";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
-import { useToast } from "../context/ToastContext";
+import { useToastActions } from "../context/ToastContext";
 import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { formatStatusLabel } from "./StatusBadge";
@@ -55,7 +55,7 @@ export function ExecutionWorkspaceCloseDialog({
   onClosed,
 }: ExecutionWorkspaceCloseDialogProps) {
   const queryClient = useQueryClient();
-  const { pushToast } = useToast();
+  const { pushToast } = useToastActions();
   const { locale } = useLocale();
   const copy = getExecutionWorkspaceCopy(locale);
   const actionLabel = formatExecutionWorkspaceCloseActionLabel(currentStatus, locale);

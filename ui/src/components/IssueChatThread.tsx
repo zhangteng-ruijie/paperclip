@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,8 +38,10 @@ import { useLocale } from "../context/LocaleContext";
 import {
   buildIssueChatMessages,
   formatDurationWords,
+  stabilizeThreadMessages,
   type IssueChatComment,
   type IssueChatLinkedRun,
+  type StableThreadMessageCacheEntry,
   type IssueChatTranscriptEntry,
   type SegmentTiming,
 } from "../lib/issue-chat-messages";
@@ -66,6 +69,11 @@ import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { AgentIcon } from "./AgentIconPicker";
 import { restoreSubmittedCommentDraft } from "../lib/comment-submit-draft";
+import {
+  captureComposerViewportSnapshot,
+  restoreComposerViewportSnapshot,
+  shouldPreserveComposerViewport,
+} from "../lib/issue-chat-scroll";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { localizedActorLabel, runtimeActorLabel } from "../lib/actor-labels";
 import {
@@ -91,7 +99,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getRuntimeLocaleConfig } from "../lib/runtime-locale";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, Search, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 
 interface IssueChatMessageContext {
   feedbackVoteByTargetId: Map<string, FeedbackVoteValue>;
@@ -99,12 +107,16 @@ interface IssueChatMessageContext {
   feedbackTermsUrl: string | null;
   agentMap?: Map<string, Agent>;
   currentUserId?: string | null;
+  activeRunIds: ReadonlySet<string>;
   onVote?: (
     commentId: string,
     vote: FeedbackVoteValue,
     options?: { allowSharing?: boolean; reason?: string },
   ) => Promise<void>;
+  onStopRun?: (runId: string) => Promise<void>;
+  stoppingRunId?: string | null;
   onInterruptQueued?: (runId: string) => Promise<void>;
+  onCancelQueued?: (commentId: string) => void;
   interruptingQueuedRunId?: string | null;
   onImageClick?: (src: string) => void;
 }
@@ -113,6 +125,7 @@ const IssueChatCtx = createContext<IssueChatMessageContext>({
   feedbackVoteByTargetId: new Map(),
   feedbackDataSharingPreference: "prompt",
   feedbackTermsUrl: null,
+  activeRunIds: new Set<string>(),
 });
 
 export function resolveAssistantMessageFoldedState(args: {
@@ -134,6 +147,17 @@ export function resolveAssistantMessageFoldedState(args: {
   if (!isFoldable) return false;
   if (!previousIsFoldable) return true;
   return currentFolded;
+}
+
+export function canStopIssueChatRun(args: {
+  runId: string | null;
+  runStatus: string | null;
+  activeRunIds: ReadonlySet<string>;
+}) {
+  const { runId, runStatus, activeRunIds } = args;
+  if (!runId) return false;
+  if (activeRunIds.has(runId)) return true;
+  return runStatus === "queued" || runStatus === "running";
 }
 
 function findCoTSegmentIndex(
@@ -173,6 +197,7 @@ interface CommentReassignment {
 
 export interface IssueChatComposerHandle {
   focus: () => void;
+  restoreDraft: (submittedBody: string) => void;
 }
 
 interface IssueChatComposerProps {
@@ -210,6 +235,7 @@ interface IssueChatThreadProps {
   ) => Promise<void>;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
   onCancelRun?: () => Promise<void>;
+  onStopRun?: (runId: string) => Promise<void>;
   imageUploadHandler?: (file: File) => Promise<string>;
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
@@ -228,7 +254,9 @@ interface IssueChatThreadProps {
   hasOutputForRun?: (runId: string) => boolean;
   includeSucceededRunsWithoutOutput?: boolean;
   onInterruptQueued?: (runId: string) => Promise<void>;
+  onCancelQueued?: (commentId: string) => void;
   interruptingQueuedRunId?: string | null;
+  stoppingRunId?: string | null;
   onImageClick?: (src: string) => void;
   composerRef?: Ref<IssueChatComposerHandle>;
 }
@@ -421,6 +449,11 @@ function parseReassignment(target: string): PaperclipIssueRuntimeReassignment | 
     return assigneeUserId ? { assigneeAgentId: null, assigneeUserId } : null;
   }
   return null;
+}
+
+function shouldImplicitlyReopenComment(issueStatus: string | undefined, assigneeValue: string) {
+  const isClosed = issueStatus === "done" || issueStatus === "cancelled";
+  return isClosed && assigneeValue.startsWith("agent:");
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -865,12 +898,13 @@ function IssueChatToolPart({
 }
 
 function IssueChatUserMessage() {
-  const { onInterruptQueued, interruptingQueuedRunId } = useContext(IssueChatCtx);
+  const { onInterruptQueued, onCancelQueued, interruptingQueuedRunId } = useContext(IssueChatCtx);
   const { locale } = useLocale();
   const copy = getIssueChatCopy(locale);
   const message = useMessage();
   const custom = message.metadata.custom as Record<string, unknown>;
   const anchorId = typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  const commentId = typeof custom.commentId === "string" ? custom.commentId : message.id;
   const queued = custom.queueState === "queued" || custom.clientStatus === "queued";
   const pending = custom.clientStatus === "pending";
   const queueTargetRunId = typeof custom.queueTargetRunId === "string" ? custom.queueTargetRunId : null;
@@ -882,7 +916,7 @@ function IssueChatUserMessage() {
         <div className="flex min-w-0 max-w-[85%] flex-col items-end">
           <div
             className={cn(
-              "min-w-0 break-all rounded-2xl px-4 py-2.5",
+              "min-w-0 max-w-full overflow-hidden break-all rounded-2xl px-4 py-2.5",
               queued
                 ? "bg-amber-50/80 dark:bg-amber-500/10"
                 : "bg-muted",
@@ -905,10 +939,20 @@ function IssueChatUserMessage() {
                     {interruptingQueuedRunId === queueTargetRunId ? copy.interrupting : copy.interrupt}
                   </Button>
                 ) : null}
+                {onCancelQueued ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 border-amber-300 px-2 text-[11px] text-amber-900 hover:bg-amber-100/80 hover:text-amber-950 dark:border-amber-500/40 dark:text-amber-100 dark:hover:bg-amber-500/10"
+                    onClick={() => onCancelQueued(commentId)}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {pending ? <div className="mb-1 text-xs text-muted-foreground">{copy.sending}</div> : null}
-            <div className="space-y-3">
+            <div className="min-w-0 max-w-full space-y-3">
               <MessagePrimitive.Parts
                 components={{
                   Text: ({ text }) => <IssueChatTextPart text={text} />,
@@ -967,6 +1011,9 @@ function IssueChatAssistantMessage() {
     feedbackTermsUrl,
     onVote,
     agentMap,
+    activeRunIds,
+    onStopRun,
+    stoppingRunId,
   } = useContext(IssueChatCtx);
   const { locale } = useLocale();
   const copy = getIssueChatCopy(locale);
@@ -981,6 +1028,7 @@ function IssueChatAssistantMessage() {
   const authorAgentId = typeof custom.authorAgentId === "string" ? custom.authorAgentId : null;
   const runId = typeof custom.runId === "string" ? custom.runId : null;
   const runAgentId = typeof custom.runAgentId === "string" ? custom.runAgentId : null;
+  const runStatus = typeof custom.runStatus === "string" ? custom.runStatus : null;
   const agentId = authorAgentId ?? runAgentId;
   const agentIcon = agentId ? agentMap?.get(agentId)?.icon : undefined;
   const commentId = typeof custom.commentId === "string" ? custom.commentId : null;
@@ -990,6 +1038,7 @@ function IssueChatAssistantMessage() {
   const waitingText = typeof custom.waitingText === "string" ? custom.waitingText : "";
   const isRunning = message.role === "assistant" && message.status?.type === "running";
   const runHref = runId && runAgentId ? `/agents/${runAgentId}/runs/${runId}` : null;
+  const canStopRun = canStopIssueChatRun({ runId, runStatus, activeRunIds });
   const chainOfThoughtLabel = typeof custom.chainOfThoughtLabel === "string" ? custom.chainOfThoughtLabel : null;
   const hasCoT = message.content.some((p) => p.type === "reasoning" || p.type === "tool-call");
   const isFoldable = !isRunning && !!chainOfThoughtLabel;
@@ -1155,6 +1204,18 @@ function IssueChatAssistantMessage() {
                       <Copy className="mr-2 h-3.5 w-3.5" />
                         {copy.copyMessage}
                     </DropdownMenuItem>
+                    {canStopRun && onStopRun && runId ? (
+                      <DropdownMenuItem
+                        disabled={stoppingRunId === runId}
+                        className="text-red-700 focus:text-red-800 dark:text-red-300 dark:focus:text-red-200"
+                        onSelect={() => {
+                          void onStopRun(runId);
+                        }}
+                      >
+                        <Square className="mr-2 h-3.5 w-3.5 fill-current" />
+                        {stoppingRunId === runId ? "Stopping…" : "Stop run"}
+                      </DropdownMenuItem>
+                    ) : null}
                     {runHref ? (
                       <DropdownMenuItem asChild>
                         <Link to={runHref} target="_blank" rel="noreferrer noopener">
@@ -1549,7 +1610,6 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
   const copy = getIssueChatCopy(locale);
   const issuesCopy = getIssuesCopy(locale);
   const [body, setBody] = useState("");
-  const [reopen, setReopen] = useState(issueStatus === "done" || issueStatus === "cancelled");
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
@@ -1558,6 +1618,23 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function queueViewportRestore(snapshot: ReturnType<typeof captureComposerViewportSnapshot>) {
+    if (!snapshot) return;
+    requestAnimationFrame(() => {
+      restoreComposerViewportSnapshot(snapshot, composerContainerRef.current);
+    });
+  }
+
+  function focusComposer() {
+    if (typeof composerContainerRef.current?.scrollIntoView === "function") {
+      composerContainerRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+    requestAnimationFrame(() => {
+      window.scrollBy({ top: COMPOSER_FOCUS_SCROLL_PADDING_PX, behavior: "smooth" });
+      editorRef.current?.focus();
+    });
+  }
 
   useEffect(() => {
     if (!draftKey) return;
@@ -1583,12 +1660,15 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
   }, [effectiveSuggestedAssigneeValue]);
 
   useImperativeHandle(forwardedRef, () => ({
-    focus: () => {
-      composerContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-      requestAnimationFrame(() => {
-        window.scrollBy({ top: COMPOSER_FOCUS_SCROLL_PADDING_PX, behavior: "smooth" });
-        editorRef.current?.focus();
-      });
+    focus: focusComposer,
+    restoreDraft: (submittedBody: string) => {
+      setBody((current) =>
+        restoreSubmittedCommentDraft({
+          currentBody: current,
+          submittedBody,
+        }),
+      );
+      focusComposer();
     },
   }), []);
 
@@ -1598,12 +1678,17 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
 
     const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
     const reassignment = hasReassignment ? parseReassignment(reassignTarget) : undefined;
+    const reopen = shouldImplicitlyReopenComment(
+      issueStatus,
+      hasReassignment ? reassignTarget : currentAssigneeValue,
+    ) ? true : undefined;
     const submittedBody = trimmed;
+    const viewportSnapshot = captureComposerViewportSnapshot(composerContainerRef.current);
 
     setSubmitting(true);
     setBody("");
     try {
-      await api.thread().append({
+      const appendPromise = api.thread().append({
         role: "user",
         content: [{ type: "text", text: submittedBody }],
         metadata: { custom: {} },
@@ -1615,8 +1700,9 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
           },
         },
       });
+      queueViewportRestore(viewportSnapshot);
+      await appendPromise;
       if (draftKey) clearDraft(draftKey);
-      setReopen(issueStatus === "done" || issueStatus === "cancelled");
       setReassignTarget(effectiveSuggestedAssigneeValue);
     } catch {
       setBody((current) =>
@@ -1627,6 +1713,7 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
       );
     } finally {
       setSubmitting(false);
+      queueViewportRestore(viewportSnapshot);
     }
   }
 
@@ -1699,15 +1786,6 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
           </div>
         ) : null}
 
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={reopen}
-            onChange={(event) => setReopen(event.target.checked)}
-            className="rounded border-border"
-          />
-          {copy.reopen}
-        </label>
 
         {enableReassign && reassignOptions.length > 0 ? (
           <InlineEntitySelector
@@ -1773,6 +1851,7 @@ export function IssueChatThread({
   onVote,
   onAdd,
   onCancelRun,
+  onStopRun,
   imageUploadHandler,
   onAttachImage,
   draftKey,
@@ -1791,7 +1870,9 @@ export function IssueChatThread({
   hasOutputForRun: hasOutputForRunOverride,
   includeSucceededRunsWithoutOutput = false,
   onInterruptQueued,
+  onCancelQueued,
   interruptingQueuedRunId = null,
+  stoppingRunId = null,
   onImageClick,
   composerRef,
 }: IssueChatThreadProps) {
@@ -1800,6 +1881,9 @@ export function IssueChatThread({
   const location = useLocation();
   const hasScrolledRef = useRef(false);
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
+  const composerViewportAnchorRef = useRef<HTMLDivElement | null>(null);
+  const composerViewportSnapshotRef = useRef<ReturnType<typeof captureComposerViewportSnapshot>>(null);
+  const preserveComposerViewportRef = useRef(false);
   const displayLiveRuns = useMemo(() => {
     const deduped = new Map<string, LiveRunForIssue>();
     for (const run of liveRuns) {
@@ -1828,14 +1912,22 @@ export function IssueChatThread({
       activeRun,
     });
   }, [activeRun, displayLiveRuns, linkedRuns]);
+  const activeRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of displayLiveRuns) {
+      if (run.status === "queued" || run.status === "running") {
+        ids.add(run.id);
+      }
+    }
+    return ids;
+  }, [displayLiveRuns]);
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
     runs: enableLiveTranscriptPolling ? transcriptRuns : [],
     companyId,
   });
   const resolvedTranscriptByRun = transcriptsByRunId ?? transcriptByRun;
   const resolvedHasOutputForRun = hasOutputForRunOverride ?? hasOutputForRun;
-
-  const messages = useMemo(
+  const rawMessages = useMemo(
     () =>
       buildIssueChatMessages({
         comments,
@@ -1866,6 +1958,18 @@ export function IssueChatThread({
       currentUserId,
     ],
   );
+  const stableMessagesRef = useRef<readonly import("@assistant-ui/react").ThreadMessage[]>([]);
+  const stableMessageCacheRef = useRef<Map<string, StableThreadMessageCacheEntry>>(new Map());
+  const messages = useMemo(() => {
+    const stabilized = stabilizeThreadMessages(
+      rawMessages,
+      stableMessagesRef.current,
+      stableMessageCacheRef.current,
+    );
+    stableMessagesRef.current = stabilized.messages;
+    stableMessageCacheRef.current = stabilized.cache;
+    return stabilized.messages;
+  }, [rawMessages]);
 
   const isRunning = displayLiveRuns.some((run) => run.status === "queued" || run.status === "running");
   const feedbackVoteByTargetId = useMemo(() => {
@@ -1883,6 +1987,19 @@ export function IssueChatThread({
     onSend: ({ body, reopen, reassignment }) => onAdd(body, reopen, reassignment),
     onCancel: onCancelRun,
   });
+
+  useLayoutEffect(() => {
+    const composerElement = composerViewportAnchorRef.current;
+    if (preserveComposerViewportRef.current) {
+      restoreComposerViewportSnapshot(
+        composerViewportSnapshotRef.current,
+        composerElement,
+      );
+    }
+
+    composerViewportSnapshotRef.current = captureComposerViewportSnapshot(composerElement);
+    preserveComposerViewportRef.current = shouldPreserveComposerViewport(composerElement);
+  }, [messages]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -1906,8 +2023,12 @@ export function IssueChatThread({
       feedbackTermsUrl,
       agentMap,
       currentUserId,
+      activeRunIds,
       onVote,
+      onStopRun,
+      stoppingRunId,
       onInterruptQueued,
+      onCancelQueued,
       interruptingQueuedRunId,
       onImageClick,
     }),
@@ -1917,8 +2038,12 @@ export function IssueChatThread({
       feedbackTermsUrl,
       agentMap,
       currentUserId,
+      activeRunIds,
       onVote,
+      onStopRun,
+      stoppingRunId,
       onInterruptQueued,
+      onCancelQueued,
       interruptingQueuedRunId,
       onImageClick,
     ],
@@ -1984,20 +2109,22 @@ export function IssueChatThread({
         </IssueChatErrorBoundary>
 
         {showComposer ? (
-          <IssueChatComposer
-            ref={composerRef}
-            onImageUpload={imageUploadHandler}
-            onAttachImage={onAttachImage}
-            draftKey={draftKey}
-            enableReassign={enableReassign}
-            reassignOptions={reassignOptions}
-            currentAssigneeValue={currentAssigneeValue}
-            suggestedAssigneeValue={suggestedAssigneeValue}
-            mentions={mentions}
-            agentMap={agentMap}
-            composerDisabledReason={composerDisabledReason}
-            issueStatus={issueStatus}
-          />
+          <div ref={composerViewportAnchorRef}>
+            <IssueChatComposer
+              ref={composerRef}
+              onImageUpload={imageUploadHandler}
+              onAttachImage={onAttachImage}
+              draftKey={draftKey}
+              enableReassign={enableReassign}
+              reassignOptions={reassignOptions}
+              currentAssigneeValue={currentAssigneeValue}
+              suggestedAssigneeValue={suggestedAssigneeValue}
+              mentions={mentions}
+              agentMap={agentMap}
+              composerDisabledReason={composerDisabledReason}
+              issueStatus={issueStatus}
+            />
+          </div>
         ) : null}
       </div>
       </IssueChatCtx.Provider>

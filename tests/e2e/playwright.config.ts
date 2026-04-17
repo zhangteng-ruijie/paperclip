@@ -1,9 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { defineConfig } from "@playwright/test";
 
 // Use port 3100 to reuse the already-running dev server.
 // Set PAPERCLIP_E2E_PORT to a different port to start a dedicated test server.
 const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3100);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const PAPERCLIP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-e2e-home-"));
 
 export default defineConfig({
   testDir: ".",
@@ -22,23 +26,27 @@ export default defineConfig({
       use: { browserName: "chromium" },
     },
   ],
-  // When PAPERCLIP_E2E_PORT is set, start a dedicated test server.
-  // Otherwise, reuse the already-running dev server on that port.
-  webServer: process.env.PAPERCLIP_E2E_PORT
-    ? {
-        command: `pnpm paperclipai run`,
-        url: `${BASE_URL}/api/health`,
-        reuseExistingServer: false,
-        timeout: 120_000,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          PORT: String(PORT),
-          PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
-        },
-      }
-    : undefined,
+  // The webServer directive bootstraps a throwaway instance and then starts it.
+  // `onboard --yes --run` works in a non-interactive temp PAPERCLIP_HOME.
+  webServer: {
+    command: `pnpm paperclipai onboard --yes --run`,
+    url: `${BASE_URL}/api/health`,
+    // Always boot a dedicated throwaway instance for e2e so browser tests
+    // never attach to the developer's active Paperclip home/server.
+    reuseExistingServer: false,
+    timeout: 120_000,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      PAPERCLIP_HOME,
+      PAPERCLIP_INSTANCE_ID: "playwright-e2e",
+      PAPERCLIP_BIND: "loopback",
+      PAPERCLIP_DEPLOYMENT_MODE: "local_trusted",
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private",
+    },
+  },
   outputDir: "./test-results",
   reporter: [["list"], ["html", { open: "never", outputFolder: "./playwright-report" }]],
 });

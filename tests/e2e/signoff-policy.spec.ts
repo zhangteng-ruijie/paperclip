@@ -43,6 +43,12 @@ interface TestContext {
   issueIds: string[];
 }
 
+interface IssueRunLockState {
+  assigneeAgentId: string | null;
+  checkoutRunId: string | null;
+  executionRunId: string | null;
+}
+
 /** Create an authenticated APIRequestContext for an agent (token set, no run ID yet). */
 async function createAgentRequest(token: string): Promise<APIRequestContext> {
   return pwRequest.newContext({
@@ -57,6 +63,17 @@ async function invokeHeartbeat(board: APIRequestContext, agentId: string): Promi
   expect(res.ok()).toBe(true);
   const run = await res.json();
   return run.id;
+}
+
+async function getIssueRunLockState(board: APIRequestContext, issueId: string): Promise<IssueRunLockState> {
+  const res = await board.get(`${BASE_URL}/api/issues/${issueId}`);
+  expect(res.ok()).toBe(true);
+  const issue = await res.json();
+  return {
+    assigneeAgentId: issue.assigneeAgentId ?? null,
+    checkoutRunId: issue.checkoutRunId ?? null,
+    executionRunId: issue.executionRunId ?? null,
+  };
 }
 
 /** PATCH an issue as an agent with a fresh heartbeat run ID. */
@@ -89,6 +106,17 @@ async function agentCheckoutAndPatch(
     data: { agentId: agent.agentId, expectedStatuses },
   });
   if (!checkoutRes.ok()) {
+    if (checkoutRes.status() === 409) {
+      const issueRunLock = await getIssueRunLockState(board, issueId);
+      const lockedRunId = issueRunLock.checkoutRunId ?? issueRunLock.executionRunId;
+      const res = await agent.request.patch(`${BASE_URL}/api/issues/${issueId}`, {
+        headers: { "X-Paperclip-Run-Id": lockedRunId ?? runId },
+        data: patchData,
+      });
+      if (res.ok() && issueRunLock.assigneeAgentId === agent.agentId) {
+        return res;
+      }
+    }
     // If agent checkout fails (e.g. run expired), fall back to board checkout
     // then PATCH with the agent's identity
     const boardCheckout = await board.post(`${BASE_URL}/api/issues/${issueId}/checkout`, {

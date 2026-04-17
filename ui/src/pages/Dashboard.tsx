@@ -36,6 +36,8 @@ import {
   getDashboardCopy,
 } from "../lib/dashboard-copy";
 
+const DASHBOARD_HEARTBEAT_RUN_LIMIT = 100;
+
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -87,8 +89,8 @@ export function Dashboard() {
   });
 
   const { data: runs } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!),
+    queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", DASHBOARD_HEARTBEAT_RUN_LIMIT],
+    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, DASHBOARD_HEARTBEAT_RUN_LIMIT),
     enabled: !!selectedCompanyId,
   });
 
