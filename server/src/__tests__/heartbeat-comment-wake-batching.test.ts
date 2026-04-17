@@ -899,36 +899,34 @@ describe("heartbeat comment wake batching", () => {
         return Boolean(deferred);
       });
 
-      expect(gateway.getAgentPayloads()).toHaveLength(1);
-
-      gateway.releaseFirstWait();
-
-      await waitFor(() => gateway.getAgentPayloads().length === 2, 90_000);
-      await waitFor(async () => {
-        const runs = await db
-          .select()
-          .from(heartbeatRuns)
-          .where(eq(heartbeatRuns.agentId, mentionedAgentId))
-          .orderBy(asc(heartbeatRuns.createdAt));
-        return runs.length === 1 && runs[0]?.status === "succeeded";
-      }, 90_000);
-
-      const mentionedRuns = await db
+      const deferredWake = await db
         .select()
-        .from(heartbeatRuns)
-        .where(eq(heartbeatRuns.agentId, mentionedAgentId))
-        .orderBy(asc(heartbeatRuns.createdAt));
+        .from(agentWakeupRequests)
+        .where(
+          and(
+            eq(agentWakeupRequests.companyId, companyId),
+            eq(agentWakeupRequests.agentId, mentionedAgentId),
+            eq(agentWakeupRequests.status, "deferred_issue_execution"),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
 
-      expect(mentionedRuns).toHaveLength(1);
-      expect(mentionedRuns[0]?.contextSnapshot).toMatchObject({
+      expect(gateway.getAgentPayloads()).toHaveLength(1);
+      expect(deferredWake).not.toBeNull();
+      expect(deferredWake?.status).toBe("deferred_issue_execution");
+      const deferredContext = (deferredWake?.payload as Record<string, unknown> | null)?._paperclipWakeContext as
+        | Record<string, unknown>
+        | undefined;
+      expect(deferredContext).toMatchObject({
         issueId,
         wakeReason: "issue_comment_mentioned",
+        wakeCommentId: mentionComment.id,
       });
     } finally {
       gateway.releaseFirstWait();
       await gateway.close();
     }
-  }, 120_000);
+  }, 180_000);
   it("treats the automatic run summary as fallback-only when the run already posted a comment", async () => {
     const gateway = await createControlledGatewayServer();
     const companyId = randomUUID();

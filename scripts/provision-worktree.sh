@@ -31,10 +31,19 @@ source_env_path="$(dirname "$source_config_path")/.env"
 
 mkdir -p "$paperclip_dir"
 
+workspace_has_paperclipai_script() {
+  [[ -f "$worktree_cwd/package.json" ]] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  node -e '
+    const pkg = require(process.argv[1]);
+    process.exit(typeof pkg?.scripts?.paperclipai === "string" && pkg.scripts.paperclipai.trim().length > 0 ? 0 : 1);
+  ' "$worktree_cwd/package.json" >/dev/null 2>&1
+}
+
 run_paperclipai_command() {
   local command_args=("$@")
-  if command -v pnpm >/dev/null 2>&1 && pnpm paperclipai --help >/dev/null 2>&1; then
-    pnpm paperclipai "${command_args[@]}"
+  if command -v pnpm >/dev/null 2>&1 && workspace_has_paperclipai_script && pnpm run --silent paperclipai --help >/dev/null 2>&1; then
+    pnpm run --silent paperclipai "${command_args[@]}"
     return 0
   fi
 
@@ -45,26 +54,17 @@ run_paperclipai_command() {
     return 0
   fi
 
-  if command -v paperclipai >/dev/null 2>&1; then
-    paperclipai "${command_args[@]}"
-    return 0
-  fi
-
   return 1
 }
 
 paperclipai_command_available() {
-  if command -v pnpm >/dev/null 2>&1 && pnpm paperclipai --help >/dev/null 2>&1; then
+  if command -v pnpm >/dev/null 2>&1 && workspace_has_paperclipai_script && pnpm run --silent paperclipai --help >/dev/null 2>&1; then
     return 0
   fi
 
   local base_cli_tsx_path="$base_cwd/cli/node_modules/tsx/dist/cli.mjs"
   local base_cli_entry_path="$base_cwd/cli/src/index.ts"
   if command -v node >/dev/null 2>&1 && [[ -f "$base_cli_tsx_path" ]] && [[ -f "$base_cli_entry_path" ]]; then
-    return 0
-  fi
-
-  if command -v paperclipai >/dev/null 2>&1; then
     return 0
   fi
 
