@@ -15,6 +15,7 @@ This company should feel like a real operating business, not a loose pile of pro
 - the org chart is complete on day one
 - every imported agent defaults to local Hermes execution
 - all automatic heartbeats stay off by default
+- company-facing names and prompts are authored in Chinese
 
 The immediate success target is not "every agent autonomously runs perfectly on first import."  
 The immediate success target is:
@@ -61,6 +62,7 @@ The company is a `business-unit` organization with one product core and two surr
 - Secondary engine: content acquisition
 - Secondary engine: brand growth
 - Coordination model: shared operations layer under COO
+- Operator language: Simplified Chinese
 
 ### 3.2 Why this shape was chosen
 
@@ -282,6 +284,13 @@ These map closely to an `agency-agents` file and mostly keep the original body w
 - `project-management/project-management-jira-workflow-steward.md`
 - `design/design-brand-guardian.md`
 
+For these roles, "light normalization" includes Chinese localization:
+
+- translate role names and titles into natural Chinese
+- rewrite the instruction body into concise Chinese operator language
+- preserve the original responsibility boundaries
+- drop decorative English persona phrasing when it does not help Paperclip execution
+
 ### 7.2 Hand-authored management wrappers
 
 These are intentionally authored as Paperclip-first managers instead of pretending a perfect one-to-one source file already exists:
@@ -299,6 +308,8 @@ These are intentionally authored as Paperclip-first managers instead of pretendi
 - Marketing Analyst
 
 These wrappers are necessary because the source repository is strongest at specialist roles, while Paperclip needs explicit managers who understand delegation, governance, and org-aware routing.
+
+These wrappers should be authored directly in Chinese from the start instead of being translated later.
 
 ## 8. Portable Package Shape
 
@@ -327,6 +338,35 @@ Important format choices:
 - keep business identity in markdown frontmatter + body
 - keep Paperclip runtime details in `.paperclip.yaml`
 - avoid absolute local paths and secret values
+- keep slugs, folder names, and machine-facing references in stable ASCII
+
+## 8.1 Chinese-first authoring rules
+
+The user wants the imported company to feel native in Chinese, so the generated package should keep a strict split between machine identifiers and operator-facing language.
+
+Keep these in English / ASCII for stability:
+
+- folder names
+- file names
+- agent and team slugs
+- machine-facing references such as `reportsTo` targets and team paths
+
+Write these in Chinese:
+
+- company name
+- team names
+- agent `name`
+- agent `title`
+- capability descriptions
+- `AGENTS.md` body instructions
+- company and team descriptive copy shown to operators
+
+The source repository is mostly English. We should not blindly paste it. Instead:
+
+1. translate the role into natural Chinese
+2. keep the operating intent of the source agent
+3. rewrite the body so it sounds like a Chinese operator would actually configure it
+4. remove tool/runtime assumptions that do not belong in the Paperclip company package
 
 ## 9. `.paperclip.yaml` Design
 
