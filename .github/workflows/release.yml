@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   verify_canary:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'paperclipai/paperclip'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -63,7 +63,7 @@ jobs:
         run: pnpm build
 
   publish_canary:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'paperclipai/paperclip'
     needs: verify_canary
     runs-on: ubuntu-latest
     timeout-minutes: 45
