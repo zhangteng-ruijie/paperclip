@@ -521,7 +521,7 @@ describe("IssuesList", () => {
     );
 
     await waitForAssertion(() => {
-      expect(container.textContent).toContain("Todo");
+      expect(container.textContent).toContain("To Do");
       expect(container.textContent).toContain("Done");
       expect(container.textContent).toContain("Alpha");
       expect(container.textContent).toContain("Beta");

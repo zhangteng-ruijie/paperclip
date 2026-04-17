@@ -371,7 +371,7 @@ export function IssueFiltersPopover({
                       checked={state.hideRoutineExecutions}
                       onCheckedChange={(checked) => onChange({ hideRoutineExecutions: checked === true })}
                     />
-                    <span className="text-sm">{copy.showRoutineRuns}</span>
+                    <span className="text-sm">{locale === "zh-CN" ? "隐藏例行任务运行" : "Hide routine runs"}</span>
                   </label>
                 </div>
               ) : null}

@@ -26,6 +26,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProjectWorkspaceSummaryCard } from "../components/ProjectWorkspaceSummaryCard";
 import { buildProjectWorkspaceSummaries } from "../lib/project-workspaces-tab";
+import { getProjectCopy } from "../lib/project-copy";
 import { projectRouteRef } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";

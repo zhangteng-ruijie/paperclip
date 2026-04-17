@@ -697,7 +697,7 @@ export function IssuesList({
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Button size="sm" variant="outline" onClick={() => openCreateIssueDialog()}>
             <Plus className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">{copy.newIssue}</span>
+            <span className="hidden sm:inline">{createIssueLabel ? createButtonLabel : copy.newIssue}</span>
           </Button>
           <IssueSearchInput
             value={issueSearch}
@@ -840,8 +840,8 @@ export function IssuesList({
         <EmptyState
           icon={CircleDot}
           message={copy.noIssuesMatch}
-          action={copy.createIssue}
-          onAction={() => openNewIssue(newIssueDefaults())}
+          action={createIssueLabel ? createActionLabel : copy.createIssue}
+          onAction={() => openCreateIssueDialog()}
         />
       )}
 
