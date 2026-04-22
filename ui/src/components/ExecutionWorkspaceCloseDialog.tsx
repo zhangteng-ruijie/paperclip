@@ -101,7 +101,7 @@ export function ExecutionWorkspaceCloseDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => {
       if (!closeWorkspace.isPending) onOpenChange(nextOpen);
     }}>
-      <DialogContent className="max-h-[85vh] overflow-x-hidden overflow-y-auto p-4 sm:max-w-2xl sm:p-6 [&>*]:min-w-0">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{actionLabel}</DialogTitle>
           <DialogDescription className="break-words text-xs sm:text-sm">
@@ -119,8 +119,8 @@ export function ExecutionWorkspaceCloseDialog({
             {readinessQuery.error instanceof Error ? readinessQuery.error.message : copy.failedToInspectReadiness}
           </div>
         ) : readiness ? (
-          <div className="min-w-0 space-y-3 sm:space-y-4">
-            <div className={`rounded-xl border px-3 py-2.5 text-xs sm:px-4 sm:py-3 sm:text-sm ${readinessTone(readiness.state)}`}>
+          <div className="space-y-4">
+            <div className={`rounded-xl border px-4 py-3 text-sm ${readinessTone(readiness.state)}`}>
               <div className="font-medium">
                 {formatExecutionWorkspaceReadinessLabel(readiness.state, locale)}
               </div>
@@ -134,7 +134,7 @@ export function ExecutionWorkspaceCloseDialog({
                 <h3 className="text-xs font-medium sm:text-sm">{copy.blockingIssues}</h3>
                 <div className="space-y-1.5 sm:space-y-2">
                   {blockingIssues.map((issue) => (
-                    <div key={issue.id} className="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    <div key={issue.id} className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
                       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                         <Link to={issueUrl(issue)} className="min-w-0 break-words font-medium hover:underline">
                           {issue.identifier ?? issue.id} · {issue.title}
@@ -214,7 +214,7 @@ export function ExecutionWorkspaceCloseDialog({
                 <h3 className="text-xs font-medium sm:text-sm">{copy.otherLinkedIssues}</h3>
                 <div className="space-y-1.5 sm:space-y-2">
                   {otherLinkedIssues.map((issue) => (
-                    <div key={issue.id} className="rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    <div key={issue.id} className="rounded-xl border border-border bg-background px-4 py-3 text-sm">
                       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                         <Link to={issueUrl(issue)} className="min-w-0 break-words font-medium hover:underline">
                           {issue.identifier ?? issue.id} · {issue.title}
@@ -232,7 +232,7 @@ export function ExecutionWorkspaceCloseDialog({
                 <h3 className="text-xs font-medium sm:text-sm">{copy.attachedRuntimeServices}</h3>
                 <div className="space-y-1.5 sm:space-y-2">
                   {readiness.runtimeServices.map((service) => (
-                    <div key={service.id} className="rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    <div key={service.id} className="rounded-xl border border-border bg-background px-4 py-3 text-sm">
                       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                         <span className="font-medium">{service.serviceName}</span>
                         <span className="text-xs text-muted-foreground">

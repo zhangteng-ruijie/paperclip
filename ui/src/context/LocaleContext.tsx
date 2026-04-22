@@ -778,7 +778,7 @@ const LocaleContext = createContext<LocaleContextValue>({
   locale: "en",
   timeZone: "UTC",
   currencyCode: "USD",
-  t: (key) => messages.en[key],
+  t: (key, values) => interpolate(messages.en[key], values),
 });
 
 function interpolate(template: string, values?: Record<string, string | number>) {

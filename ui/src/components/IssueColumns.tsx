@@ -195,6 +195,8 @@ export function InboxIssueTrailingColumns({
   workspaceId,
   workspaceName,
   assigneeName,
+  assigneeUserName,
+  assigneeUserAvatarUrl,
   currentUserId,
   parentIdentifier,
   parentTitle,
@@ -208,6 +210,8 @@ export function InboxIssueTrailingColumns({
   workspaceId?: string | null;
   workspaceName: string | null;
   assigneeName: string | null;
+  assigneeUserName?: string | null;
+  assigneeUserAvatarUrl?: string | null;
   currentUserId: string | null;
   parentIdentifier: string | null;
   parentTitle: string | null;
@@ -217,7 +221,7 @@ export function InboxIssueTrailingColumns({
   const { locale } = useLocale();
   const copy = getIssuesCopy(locale);
   const activityText = timeAgo(issue.lastActivityAt ?? issue.lastExternalCommentAt ?? issue.updatedAt);
-  const userLabel = formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? copy.userFallback;
+  const userLabel = assigneeUserName ?? formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? copy.userFallback;
 
   return (
     <span
@@ -244,8 +248,13 @@ export function InboxIssueTrailingColumns({
 
           if (issue.assigneeUserId) {
             return (
-              <span key={column} className="min-w-0 truncate text-xs font-medium text-muted-foreground">
-                {userLabel}
+              <span key={column} className="min-w-0 text-xs text-foreground">
+                <Identity
+                  name={userLabel}
+                  avatarUrl={assigneeUserAvatarUrl}
+                  size="sm"
+                  className="min-w-0"
+                />
               </span>
             );
           }
