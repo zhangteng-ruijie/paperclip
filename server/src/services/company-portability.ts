@@ -31,6 +31,7 @@ import type {
   RoutineVariable,
 } from "@paperclipai/shared";
 import {
+  AGENT_ROLES,
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   PROJECT_STATUSES,
@@ -1310,6 +1311,26 @@ function normalizeInclude(input?: Partial<CompanyPortabilityInclude>): CompanyPo
   };
 }
 
+/**
+ * Check whether a file path attempts to escape its intended root via
+ * `..` segments. Returns true if any `..` segment would escape above
+ * the starting directory.
+ */
+function hasPathTraversalSegments(input: string): boolean {
+  const normalized = input.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const segments = normalized.split("/").filter(Boolean);
+  let depth = 0;
+  for (const segment of segments) {
+    if (segment === "..") {
+      if (depth <= 0) return true; // would escape root
+      depth--;
+    } else if (segment !== ".") {
+      depth++;
+    }
+  }
+  return false;
+}
+
 function normalizePortablePath(input: string) {
   const normalized = input.replace(/\\/g, "/").replace(/^\.\/+/, "");
   const parts: string[] = [];
@@ -2332,9 +2353,30 @@ function readAgentSkillRefs(frontmatter: Record<string, unknown>) {
 
 function buildManifestFromPackageFiles(
   files: Record<string, CompanyPortabilityFileEntry>,
-  opts?: { sourceLabel?: { companyId: string; companyName: string } | null },
+  opts?: { sourceLabel?: { companyId: string; companyName: string } | null; originalKeys?: string[] },
 ): ResolvedSource {
+  const warnings: string[] = [];
+
+  // Detect and warn about file paths that attempt directory traversal
+  // Use originalKeys when available (before normalizeFileMap stripped ".." segments)
+  const keysToCheck = opts?.originalKeys ?? Object.keys(files);
+  const traversalPaths = keysToCheck.filter(hasPathTraversalSegments);
+  for (const rawPath of traversalPaths) {
+    warnings.push(`File path "${rawPath}" contains directory traversal segments (..) which were stripped for safety.`);
+  }
+
   const normalizedFiles = normalizeFileMap(files);
+
+  // Validate base64-encoded binary file entries
+  for (const [filePath, content] of Object.entries(normalizedFiles)) {
+    if (isPortableBinaryFile(content)) {
+      const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+      if (!base64Regex.test(content.data)) {
+        warnings.push(`Binary file "${filePath}" contains invalid base64 data and may fail to decode on import.`);
+      }
+    }
+  }
+
   const companyPath = typeof normalizedFiles["COMPANY.md"] === "string"
     ? normalizedFiles["COMPANY.md"]
     : undefined;
@@ -2442,7 +2484,6 @@ function buildManifestFromPackageFiles(
     envInputs: [],
   };
 
-  const warnings: string[] = [];
   if (manifest.company?.logoPath && !normalizedFiles[manifest.company.logoPath]) {
     warnings.push(`Referenced company logo file is missing from package: ${manifest.company.logoPath}`);
   }
@@ -2492,6 +2533,12 @@ function buildManifestFromPackageFiles(
 
     if (frontmatter.kind && frontmatter.kind !== "agent") {
       warnings.push(`Agent markdown ${agentPath} does not declare kind: agent in frontmatter.`);
+    }
+
+    // Validate agent role against known roles
+    const agentRole = asString(extension.role) ?? asString(frontmatter.role);
+    if (agentRole && !AGENT_ROLES.includes(agentRole as (typeof AGENT_ROLES)[number])) {
+      warnings.push(`Agent ${slug} has unrecognized role "${agentRole}". It will be treated as a custom role.`);
     }
   }
 
@@ -2658,8 +2705,8 @@ function buildManifestFromPackageFiles(
       recurring,
       routine: routineExtension,
       legacyRecurrence,
-      status: asString(extension.status) ?? asString(routineExtensionRaw.status),
-      priority: asString(extension.priority) ?? asString(routineExtensionRaw.priority),
+      status: asString(extension.status) ?? asString(routineExtensionRaw.status) ?? asString(frontmatter.status),
+      priority: asString(extension.priority) ?? asString(routineExtensionRaw.priority) ?? asString(frontmatter.priority),
       labelIds: Array.isArray(extension.labelIds)
         ? extension.labelIds.filter((entry): entry is string => typeof entry === "string")
         : [],
@@ -2674,6 +2721,16 @@ function buildManifestFromPackageFiles(
     });
     if (frontmatter.kind && frontmatter.kind !== "task") {
       warnings.push(`Task markdown ${taskPath} does not declare kind: task in frontmatter.`);
+    }
+
+    // Validate issue status and priority against known values
+    const issueStatus = asString(extension.status) ?? asString(routineExtensionRaw.status) ?? asString(frontmatter.status);
+    if (issueStatus && !ISSUE_STATUSES.includes(issueStatus as (typeof ISSUE_STATUSES)[number])) {
+      warnings.push(`Task ${slug} has unrecognized status "${issueStatus}".`);
+    }
+    const issuePriority = asString(extension.priority) ?? asString(routineExtensionRaw.priority) ?? asString(frontmatter.priority);
+    if (issuePriority && !ISSUE_PRIORITIES.includes(issuePriority as (typeof ISSUE_PRIORITIES)[number])) {
+      warnings.push(`Task ${slug} has unrecognized priority "${issuePriority}".`);
     }
   }
 
@@ -2842,8 +2899,10 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
 
   async function resolveSource(source: CompanyPortabilityPreview["source"]): Promise<ResolvedSource> {
     if (source.type === "inline") {
+      const originalKeys = Object.keys(source.files);
       return buildManifestFromPackageFiles(
         normalizeFileMap(source.files, source.rootPath),
+        { originalKeys },
       );
     }
 
@@ -3609,6 +3668,94 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
 
     if (include.agents && selectedAgents.length === 0) {
       warnings.push("No agents selected for import.");
+    }
+
+    // Cross-reference validation: agent slugs, project slugs, skill refs
+    const agentSlugSet = new Set(manifest.agents.map((a) => a.slug));
+    const projectSlugSet = new Set(manifest.projects.map((p) => p.slug));
+    const skillKeySet = new Set(manifest.skills.map((s) => s.key));
+
+    // Duplicate agent slug detection
+    const seenAgentSlugs = new Set<string>();
+    for (const agent of manifest.agents) {
+      if (seenAgentSlugs.has(agent.slug)) {
+        errors.push(`Duplicate agent slug "${agent.slug}" in manifest.`);
+      }
+      seenAgentSlugs.add(agent.slug);
+    }
+
+    // Duplicate project slug detection
+    const seenProjectSlugs = new Set<string>();
+    for (const project of manifest.projects) {
+      if (seenProjectSlugs.has(project.slug)) {
+        errors.push(`Duplicate project slug "${project.slug}" in manifest.`);
+      }
+      seenProjectSlugs.add(project.slug);
+    }
+
+    // Duplicate issue slug detection
+    const seenIssueSlugs = new Set<string>();
+    for (const issue of manifest.issues) {
+      if (seenIssueSlugs.has(issue.slug)) {
+        errors.push(`Duplicate issue slug "${issue.slug}" in manifest.`);
+      }
+      seenIssueSlugs.add(issue.slug);
+    }
+
+    // Agent role validation
+    for (const agent of manifest.agents) {
+      if (agent.role && !AGENT_ROLES.includes(agent.role as any)) {
+        warnings.push(`Agent "${agent.slug}" has unrecognized role "${agent.role}".`);
+      }
+    }
+
+    // Agent reportsToSlug validation
+    for (const agent of manifest.agents) {
+      if (agent.reportsToSlug && !agentSlugSet.has(agent.reportsToSlug)) {
+        errors.push(`Agent "${agent.slug}" references non-existent manager "${agent.reportsToSlug}" in reportsTo.`);
+      }
+    }
+
+    // Issue status/priority validation
+    for (const issue of manifest.issues) {
+      if (issue.status && !ISSUE_STATUSES.includes(issue.status as any)) {
+        warnings.push(`Issue "${issue.slug}" has unrecognized status "${issue.status}".`);
+      }
+      if (issue.priority && !ISSUE_PRIORITIES.includes(issue.priority as any)) {
+        warnings.push(`Issue "${issue.slug}" has unrecognized priority "${issue.priority}".`);
+      }
+    }
+
+    // Issue projectSlug validation (error when project not in package)
+    if (include.issues) {
+      for (const issue of manifest.issues) {
+        if (issue.projectSlug && !projectSlugSet.has(issue.projectSlug)) {
+          errors.push(`Issue "${issue.slug}" references non-existent project "${issue.projectSlug}".`);
+        }
+      }
+    }
+
+    // Issue assigneeAgentSlug validation (error when agent not in selected agents)
+    if (include.issues && include.agents) {
+      const selectedAgentSlugSet = new Set(selectedAgents.map((a) => a.slug));
+      for (const issue of manifest.issues) {
+        if (issue.assigneeAgentSlug && !selectedAgentSlugSet.has(issue.assigneeAgentSlug)) {
+          errors.push(`Issue "${issue.slug}" references non-existent assignee "${issue.assigneeAgentSlug}".`);
+        }
+      }
+    }
+
+    // Project leadAgentSlug validation
+    if (include.projects && include.agents) {
+      const selectedAgentSlugSet = new Set(selectedAgents.map((a) => a.slug));
+      for (const project of manifest.projects) {
+        if (project.leadAgentSlug && !selectedAgentSlugSet.has(project.leadAgentSlug)) {
+          warnings.push(`Project "${project.slug}" references non-existent lead agent "${project.leadAgentSlug}".`);
+        }
+        if (project.ownerAgentSlug && !selectedAgentSlugSet.has(project.ownerAgentSlug)) {
+          warnings.push(`Project "${project.slug}" references non-existent owner agent "${project.ownerAgentSlug}".`);
+        }
+      }
     }
 
     const availableSkillKeys = new Set(source.manifest.skills.map((skill) => skill.key));

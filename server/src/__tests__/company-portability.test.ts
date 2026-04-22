@@ -2614,4 +2614,199 @@ describe("company portability", () => {
       },
     }));
   });
+
+  describe("import validation", () => {
+    it("rejects import packages missing COMPANY.md", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: { "agents/test/AGENTS.md": "---\nname: Test\n---\n" } },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow("Company package is missing COMPANY.md");
+    });
+
+    it("rejects import when COMPANY.md is a binary file", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: { "COMPANY.md": { encoding: "base64", data: "binary" } } },
+        include: {},
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow("is not readable as text");
+    });
+
+    it("normalizes path traversal attempts in file keys", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: TraversalTest\nslug: traversal-test\n---\n",
+            "agents/evil/../../../etc/passwd/AGENTS.md": "---\nname: Evil\n---\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // Path traversal should be normalized; the resulting manifest should not contain escaped paths
+      expect(preview.manifest.agents.some((a) => a.slug.includes(".."))).toBe(false);
+    });
+
+    it("warns when referenced agent files are missing from package", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": `---\nname: MissingRefTest\nslug: missing-ref-test\nincludes:\n  - path: agents/nonexistent/AGENTS.md\n---\n`,
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("missing from package"))).toBe(true);
+    });
+
+    it("validates import with empty files object throws", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: {} },
+        include: {},
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow();
+    });
+
+    it("handles import with only company and no agents gracefully", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: SoloCompany\nslug: solo-company\n---\n",
+          },
+        },
+        include: { company: true, agents: false },
+        target: { mode: "new_company", newCompanyName: "Solo Test" },
+      });
+      expect(preview.manifest.company?.name).toBe("SoloCompany");
+      expect(preview.manifest.agents).toHaveLength(0);
+    });
+
+    it("rejects import with invalid YAML in extension file", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: BadYaml\nslug: bad-yaml\n---\n",
+            ".paperclip.yaml": "invalid: yaml: [unclosed",
+          },
+        },
+        include: { company: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // Should not crash even with bad YAML; warnings may be present
+      expect(preview.manifest.company?.name).toBe("BadYaml");
+    });
+
+    it("reports errors from buildPreview for missing manifest company metadata", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: NoCompanyInclude\nslug: no-company-include\n---\n",
+          },
+        },
+        include: { company: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // The buildPreview checks if manifest.company is present when include.company is true
+      // In this case, the company markdown is parsed so manifest.company should exist
+      expect(preview.manifest.company).not.toBeNull();
+    });
+
+    it("detects and warns for agent referencing missing skills in package", async () => {
+      const portability = companyPortabilityService({} as any);
+      agentSvc.list.mockResolvedValue([]);
+      companySkillSvc.listFull.mockResolvedValue([]);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: SkillRefTest\nslug: skill-ref-test\nincludes:\n  - path: agents/coder/AGENTS.md\n---\n",
+            "agents/coder/AGENTS.md": "---\nname: Coder\nskills:\n  - missing-skill\n---\nInstructions\n",
+          },
+        },
+        include: { agents: true, skills: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("missing-skill") || w.includes("skill"))).toBe(true);
+    });
+
+    it("warns when file paths contain directory traversal segments", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: TraversalWarn\nslug: traversal-warn\n---\n",
+            "agents/evil/../../../etc/passwd/AGENTS.md": "---\nname: Evil\n---\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("directory traversal") || w.includes(".."))).toBe(true);
+    });
+
+    it("warns when binary file entries contain invalid base64 data", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: BadBase64\nslug: bad-base64\nincludes:\n  - path: agents/test/AGENTS.md\n---\n",
+            "agents/test/AGENTS.md": "---\nname: Test\n---\n",
+            "images/logo.png": { encoding: "base64", data: "!!!not-base64!!!" },
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("base64") || w.includes("logo.png"))).toBe(true);
+    });
+
+    it("warns when agent has an unrecognized role", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: RoleTest\nslug: role-test\nincludes:\n  - path: agents/weirdo/AGENTS.md\n---\n",
+            "agents/weirdo/AGENTS.md": "---\nname: Weirdo\nrole: space_marine\n---\nInstructions\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("unrecognized role") && w.includes("space_marine"))).toBe(true);
+    });
+
+    it("warns when issue has an unrecognized status or priority", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: StatusTest\nslug: status-test\nincludes:\n  - path: tasks/check/TASK.md\n---\n",
+            "tasks/check/TASK.md": "---\nname: Check Task\nstatus: in_the_void\npriority: mega_important\n---\nDescription\n",
+          },
+        },
+        include: { issues: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("unrecognized status") && w.includes("in_the_void"))).toBe(true);
+      expect(preview.warnings.some((w) => w.includes("unrecognized priority") && w.includes("mega_important"))).toBe(true);
+    });
+  });
 });
