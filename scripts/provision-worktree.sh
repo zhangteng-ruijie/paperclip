@@ -40,21 +40,26 @@ workspace_has_paperclipai_script() {
   ' "$worktree_cwd/package.json" >/dev/null 2>&1
 }
 
-run_paperclipai_command() {
-  local command_args=("$@")
+run_isolated_worktree_init() {
   if command -v pnpm >/dev/null 2>&1 && workspace_has_paperclipai_script && pnpm run --silent paperclipai --help >/dev/null 2>&1; then
-    pnpm run --silent paperclipai "${command_args[@]}"
+    (
+      cd "$worktree_cwd"
+      pnpm run --silent paperclipai worktree init --force --seed-mode minimal --name "$worktree_name" --from-config "$source_config_path"
+    )
     return 0
   fi
 
-  local base_cli_tsx_path="$base_cwd/cli/node_modules/tsx/dist/cli.mjs"
-  local base_cli_entry_path="$base_cwd/cli/src/index.ts"
-  if command -v node >/dev/null 2>&1 && [[ -f "$base_cli_tsx_path" ]] && [[ -f "$base_cli_entry_path" ]]; then
-    node "$base_cli_tsx_path" "$base_cli_entry_path" "${command_args[@]}"
+  local base_cli_runner="$base_cwd/cli/node_modules/tsx/dist/cli.mjs"
+  local base_cli_entry="$base_cwd/cli/src/index.ts"
+  if [[ -f "$base_cli_runner" && -f "$base_cli_entry" ]]; then
+    (
+      cd "$worktree_cwd"
+      node "$base_cli_runner" "$base_cli_entry" worktree init --force --seed-mode minimal --name "$worktree_name" --from-config "$source_config_path"
+    )
     return 0
   fi
 
-  return 1
+  return 127
 }
 
 paperclipai_command_available() {
@@ -69,19 +74,6 @@ paperclipai_command_available() {
   fi
 
   return 1
-}
-
-run_isolated_worktree_init() {
-  run_paperclipai_command \
-    worktree \
-    init \
-    --force \
-    --seed-mode \
-    minimal \
-    --name \
-    "$worktree_name" \
-    --from-config \
-    "$source_config_path"
 }
 
 write_fallback_worktree_config() {
@@ -336,11 +328,15 @@ main().catch((error) => {
 EOF
 }
 
-if paperclipai_command_available; then
-  run_isolated_worktree_init
+if [[ -e "$worktree_config_path" && -e "$worktree_env_path" ]]; then
+  echo "Reusing existing isolated Paperclip worktree config at $worktree_config_path" >&2
 else
-  echo "paperclipai CLI not available in this workspace; writing isolated fallback config without DB seeding." >&2
-  write_fallback_worktree_config
+  if paperclipai_command_available; then
+    run_isolated_worktree_init
+  else
+    echo "paperclipai CLI not available in this workspace; writing isolated fallback config without DB seeding." >&2
+    write_fallback_worktree_config
+  fi
 fi
 
 list_base_node_modules_paths() {

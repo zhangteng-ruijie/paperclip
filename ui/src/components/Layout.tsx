@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Moon, Settings, Sun } from "lucide-react";
+import { Moon, Settings, Sun } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { CompanyRail } from "./CompanyRail";
 import { Sidebar } from "./Sidebar";
 import { InstanceSidebar } from "./InstanceSidebar";
+import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { CommandPalette } from "./CommandPalette";
@@ -17,6 +20,7 @@ import { ToastViewport } from "./ToastViewport";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { useDialog } from "../context/DialogContext";
 import { GeneralSettingsProvider } from "../context/GeneralSettingsContext";
 import { usePanel } from "../context/PanelContext";
@@ -43,8 +47,6 @@ import { scheduleMainContentFocus } from "../lib/main-content-focus";
 import { getShellCopy, themeToggleLabel } from "../lib/shell-copy";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "paperclip.lastInstanceSettingsPath";
 
@@ -62,6 +64,7 @@ export function Layout() {
   const { openNewIssue, openOnboarding } = useDialog();
   const { togglePanelVisible } = usePanel();
   const { locale } = useLocale();
+  const { theme, toggleTheme } = useTheme();
   const {
     companies,
     loading: companiesLoading,
@@ -70,12 +73,12 @@ export function Layout() {
     selectionSource,
     setSelectedCompanyId,
   } = useCompany();
-  const { theme, toggleTheme } = useTheme();
   const { companyPrefix } = useParams<{ companyPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
+  const isCompanySettingsRoute = location.pathname.includes("/company/settings");
   const onboardingTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
   const previousPathname = useRef<string | null>(null);
@@ -345,7 +348,13 @@ export function Layout() {
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <CompanyRail />
-              {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
+              {isInstanceSettingsRoute ? (
+                <InstanceSidebar />
+              ) : isCompanySettingsRoute ? (
+                <CompanySettingsSidebar />
+              ) : (
+                <Sidebar />
+              )}
             </div>
             <div className="border-t border-r border-border px-3 py-2 bg-background">
               <div className="flex items-center gap-1">
@@ -383,6 +392,11 @@ export function Layout() {
                 </Button>
               </div>
             </div>
+            <SidebarAccountMenu
+              deploymentMode={health?.deploymentMode}
+              instanceSettingsTarget={instanceSettingsTarget}
+              version={health?.version}
+            />
           </div>
         ) : (
           <div className="flex h-full flex-col shrink-0">
@@ -394,7 +408,13 @@ export function Layout() {
                   sidebarOpen ? "w-60" : "w-0"
                 )}
               >
-                {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
+                {isInstanceSettingsRoute ? (
+                  <InstanceSidebar />
+                ) : isCompanySettingsRoute ? (
+                  <CompanySettingsSidebar />
+                ) : (
+                  <Sidebar />
+                )}
               </div>
             </div>
             <div className="border-t border-r border-border px-3 py-2">
@@ -433,6 +453,11 @@ export function Layout() {
                 </Button>
               </div>
             </div>
+            <SidebarAccountMenu
+              deploymentMode={health?.deploymentMode}
+              instanceSettingsTarget={instanceSettingsTarget}
+              version={health?.version}
+            />
           </div>
         )}
 

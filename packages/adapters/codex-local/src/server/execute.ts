@@ -19,10 +19,15 @@ import {
   renderTemplate,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
+  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
-import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
+import {
+  parseCodexJsonl,
+  isCodexTransientUpstreamError,
+  isCodexUnknownSessionError,
+} from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import {
   codexLoadedAgentInstructionsNote,
@@ -165,6 +170,52 @@ type EnsureCodexSkillsInjectedOptions = {
   locale?: string | null;
 };
 
+type CodexTransientFallbackMode =
+  | "same_session"
+  | "safer_invocation"
+  | "fresh_session"
+  | "fresh_session_safer_invocation";
+
+function readCodexTransientFallbackMode(context: Record<string, unknown>): CodexTransientFallbackMode | null {
+  const value = asString(context.codexTransientFallbackMode, "").trim();
+  switch (value) {
+    case "same_session":
+    case "safer_invocation":
+    case "fresh_session":
+    case "fresh_session_safer_invocation":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function fallbackModeUsesSaferInvocation(mode: CodexTransientFallbackMode | null): boolean {
+  return mode === "safer_invocation" || mode === "fresh_session_safer_invocation";
+}
+
+function fallbackModeUsesFreshSession(mode: CodexTransientFallbackMode | null): boolean {
+  return mode === "fresh_session" || mode === "fresh_session_safer_invocation";
+}
+
+function buildCodexTransientHandoffNote(input: {
+  previousSessionId: string | null;
+  fallbackMode: CodexTransientFallbackMode;
+  continuationSummaryBody: string | null;
+}): string {
+  return [
+    "Paperclip session handoff:",
+    input.previousSessionId ? `- Previous session: ${input.previousSessionId}` : "",
+    "- Rotation reason: repeated Codex transient remote-compaction failures",
+    `- Fallback mode: ${input.fallbackMode}`,
+    input.continuationSummaryBody
+      ? `- Issue continuation summary: ${input.continuationSummaryBody.slice(0, 1_500)}`
+      : "",
+    "Continue from the current task state. Rebuild only the minimum context you need.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export async function ensureCodexSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
   options: EnsureCodexSkillsInjectedOptions = {},
@@ -247,7 +298,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = asString(
     config.promptTemplate,
-    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
+    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   );
   const command = asString(config.command, "codex");
   const model = asString(config.model, "");
@@ -444,7 +495,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
+  const codexTransientFallbackMode = readCodexTransientFallbackMode(context);
+  const forceSaferInvocation = fallbackModeUsesSaferInvocation(codexTransientFallbackMode);
+  const forceFreshSession = fallbackModeUsesFreshSession(codexTransientFallbackMode);
+  const sessionId = canResumeSession && !forceFreshSession ? runtimeSessionId : null;
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
@@ -500,28 +554,66 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const promptInstructionsPrefix = shouldUseResumeDeltaPrompt ? "" : instructionsPrefix;
   instructionsChars = promptInstructionsPrefix.length;
+  const continuationSummary = parseObject(context.paperclipContinuationSummary);
+  const continuationSummaryBody = asString(continuationSummary.body, "").trim() || null;
+  const codexFallbackHandoffNote =
+    forceFreshSession
+      ? buildCodexTransientHandoffNote({
+          previousSessionId: runtimeSessionId || runtime.sessionId || null,
+          fallbackMode: codexTransientFallbackMode ?? "fresh_session",
+          continuationSummaryBody,
+        })
+      : "";
   const commandNotes = (() => {
     if (!instructionsFilePath) {
-      return [repoAgentsNote];
+      const notes = [repoAgentsNote];
+      if (forceSaferInvocation) {
+        notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+      }
+      if (forceFreshSession) {
+        notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+      }
+      return notes;
     }
     if (instructionsPrefix.length > 0) {
       if (shouldUseResumeDeltaPrompt) {
-        return [
+        const notes = [
           codexLoadedAgentInstructionsNote(instructionsFilePath, paperclipLocale),
           codexSkippedInstructionReinjectionNote(paperclipLocale),
           repoAgentsNote,
         ];
+        if (forceSaferInvocation) {
+          notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+        }
+        if (forceFreshSession) {
+          notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+        }
+        return notes;
       }
-      return [
+      const notes = [
         codexLoadedAgentInstructionsNote(instructionsFilePath, paperclipLocale),
         codexPrependedInstructionsNote(instructionsDir, paperclipLocale),
         repoAgentsNote,
       ];
+      if (forceSaferInvocation) {
+        notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+      }
+      if (forceFreshSession) {
+        notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+      }
+      return notes;
     }
-    return [
+    const notes = [
       codexMissingInstructionsNote(instructionsFilePath, paperclipLocale),
       repoAgentsNote,
     ];
+    if (forceSaferInvocation) {
+      notes.push("Codex transient fallback requested safer invocation settings for this retry.");
+    }
+    if (forceFreshSession) {
+      notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
+    }
+    return notes;
   })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
@@ -529,6 +621,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     promptInstructionsPrefix,
     renderedBootstrapPrompt,
     wakePrompt,
+    codexFallbackHandoffNote,
     sessionHandoffNote,
     renderedPrompt,
   ]);
@@ -542,7 +635,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
-    const execArgs = buildCodexExecArgs(config, { resumeSessionId });
+    const execArgs = buildCodexExecArgs(
+      forceSaferInvocation ? { ...config, fastMode: false } : config,
+      { resumeSessionId },
+    );
     const args = execArgs.args;
     const commandNotesWithFastMode =
       execArgs.fastModeIgnoredReason == null
@@ -596,6 +692,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const toResult = (
     attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl> },
     clearSessionOnMissingSession = false,
+    isRetry = false,
   ): AdapterExecutionResult => {
     if (attempt.proc.timedOut) {
       return {
@@ -607,7 +704,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       };
     }
 
-    const resolvedSessionId = attempt.parsed.sessionId ?? runtimeSessionId ?? runtime.sessionId ?? null;
+    const canFallbackToRuntimeSession = !isRetry && !forceFreshSession;
+    const resolvedSessionId =
+      attempt.parsed.sessionId ??
+      (canFallbackToRuntimeSession ? (runtimeSessionId ?? runtime.sessionId ?? null) : null);
     const resolvedSessionParams = resolvedSessionId
       ? ({
         sessionId: resolvedSessionId,
@@ -632,6 +732,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         (attempt.proc.exitCode ?? 0) === 0
           ? null
           : fallbackErrorMessage,
+      errorCode:
+        (attempt.proc.exitCode ?? 0) !== 0 &&
+        isCodexTransientUpstreamError({
+          stdout: attempt.proc.stdout,
+          stderr: attempt.proc.stderr,
+          errorMessage: fallbackErrorMessage,
+        })
+          ? "codex_transient_upstream"
+          : null,
       usage: attempt.parsed.usage,
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,
@@ -646,7 +755,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         stderr: attempt.proc.stderr,
       },
       summary: attempt.parsed.summary,
-      clearSession: Boolean(clearSessionOnMissingSession && !resolvedSessionId),
+      clearSession: Boolean((clearSessionOnMissingSession || forceFreshSession) && !resolvedSessionId),
     };
   };
 
@@ -662,8 +771,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       formatCodexResumeUnavailableLog(sessionId, paperclipLocale),
     );
     const retry = await runAttempt(null);
-    return toResult(retry, true);
+    return toResult(retry, true, true);
   }
 
-  return toResult(initial);
+  return toResult(initial, false, false);
 }
