@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Link, useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary, type ExecutionWorkspace } from "@paperclipai/shared";
+import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -14,25 +14,21 @@ import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
 import { InlineEditor } from "../components/InlineEditor";
-import { StatusBadge, formatStatusLabel } from "../components/StatusBadge";
+import { StatusBadge } from "../components/StatusBadge";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
-import { ExecutionWorkspaceCloseDialog } from "../components/ExecutionWorkspaceCloseDialog";
 import { IssuesList } from "../components/IssuesList";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
-import { ProjectWorkspaceSummaryCard } from "../components/ProjectWorkspaceSummaryCard";
+import { ProjectWorkspacesContent } from "../components/ProjectWorkspacesContent";
 import { buildProjectWorkspaceSummaries } from "../lib/project-workspaces-tab";
-import { getProjectCopy } from "../lib/project-copy";
 import { projectRouteRef } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
-import { Loader2 } from "lucide-react";
 
 /* ── Top-level tab types ── */
 
@@ -68,9 +64,6 @@ function OverviewContent({
   onUpdate: (data: Record<string, unknown>) => void;
   imageUploadHandler?: (file: File) => Promise<string>;
 }) {
-  const { locale } = useLocale();
-  const copy = getProjectCopy(locale);
-
   return (
     <div className="space-y-6">
       <InlineEditor
@@ -79,21 +72,21 @@ function OverviewContent({
         nullable
         as="p"
         className="text-sm text-muted-foreground"
-        placeholder={copy.overview.addDescriptionPlaceholder}
+        placeholder="Add a description..."
         multiline
         imageUploadHandler={imageUploadHandler}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
         <div>
-          <span className="text-muted-foreground">{copy.overview.status}</span>
+          <span className="text-muted-foreground">Status</span>
           <div className="mt-1">
             <StatusBadge status={project.status} />
           </div>
         </div>
         {project.targetDate && (
           <div>
-            <span className="text-muted-foreground">{copy.overview.targetDate}</span>
+            <span className="text-muted-foreground">Target Date</span>
             <p>{project.targetDate}</p>
           </div>
         )}
@@ -111,8 +104,6 @@ function ColorPicker({
   currentColor: string;
   onSelect: (color: string) => void;
 }) {
-  const { locale } = useLocale();
-  const copy = getProjectCopy(locale);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -133,7 +124,7 @@ function ColorPicker({
         onClick={() => setOpen(!open)}
         className="shrink-0 h-5 w-5 rounded-md cursor-pointer hover:ring-2 hover:ring-foreground/20 transition-[box-shadow]"
         style={{ backgroundColor: currentColor }}
-        aria-label={copy.color.changeProjectColor}
+        aria-label="Change project color"
       />
       {open && (
         <div className="absolute top-full left-0 mt-2 p-2 bg-popover border border-border rounded-lg shadow-lg z-50 w-max">
@@ -151,7 +142,7 @@ function ColorPicker({
                     : "hover:ring-2 hover:ring-foreground/30"
                 }`}
                 style={{ backgroundColor: color }}
-                aria-label={copy.color.selectColor(color)}
+                aria-label={`Select color ${color}`}
               />
             ))}
           </div>
@@ -222,114 +213,6 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
   );
 }
 
-function ProjectWorkspacesContent({
-  companyId,
-  projectId,
-  projectRef,
-  summaries,
-}: {
-  companyId: string;
-  projectId: string;
-  projectRef: string;
-  summaries: ReturnType<typeof buildProjectWorkspaceSummaries>;
-}) {
-  const { locale } = useLocale();
-  const copy = getProjectCopy(locale);
-  const queryClient = useQueryClient();
-  const [runtimeActionKey, setRuntimeActionKey] = useState<string | null>(null);
-  const [closingWorkspace, setClosingWorkspace] = useState<{
-    id: string;
-    name: string;
-    status: ExecutionWorkspace["status"];
-  } | null>(null);
-  const controlWorkspaceRuntime = useMutation({
-    mutationFn: async (input: {
-      key: string;
-      kind: "project_workspace" | "execution_workspace";
-      workspaceId: string;
-      action: "start" | "stop" | "restart";
-    }) => {
-      setRuntimeActionKey(`${input.key}:${input.action}`);
-      if (input.kind === "project_workspace") {
-        return await projectsApi.controlWorkspaceRuntimeServices(projectId, input.workspaceId, input.action, companyId);
-      }
-      return await executionWorkspacesApi.controlRuntimeServices(input.workspaceId, input.action);
-    },
-    onSettled: () => {
-      setRuntimeActionKey(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.executionWorkspaces.list(companyId, { projectId }) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
-    },
-  });
-
-  if (summaries.length === 0) {
-    return <p className="text-sm text-muted-foreground">{copy.workspaces.emptyState}</p>;
-  }
-
-  const activeSummaries = summaries.filter((summary) => summary.executionWorkspaceStatus !== "cleanup_failed");
-  const cleanupFailedSummaries = summaries.filter((summary) => summary.executionWorkspaceStatus === "cleanup_failed");
-
-
-
-  return (
-    <>
-      <div className="space-y-4">
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          {activeSummaries.map((summary) => (
-            <ProjectWorkspaceSummaryCard
-              key={summary.key}
-              projectRef={projectRef}
-              summary={summary}
-              runtimeActionKey={runtimeActionKey}
-              runtimeActionPending={controlWorkspaceRuntime.isPending}
-              onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
-              onCloseWorkspace={(input) => setClosingWorkspace(input)}
-            />
-          ))}
-        </div>
-        {cleanupFailedSummaries.length > 0 ? (
-          <div className="space-y-2">
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              {copy.workspaces.cleanupAttentionNeeded}
-            </div>
-            <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/5">
-              {cleanupFailedSummaries.map((summary) => (
-                <ProjectWorkspaceSummaryCard
-                  key={summary.key}
-                  projectRef={projectRef}
-                  summary={summary}
-                  runtimeActionKey={runtimeActionKey}
-                  runtimeActionPending={controlWorkspaceRuntime.isPending}
-                  onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
-                  onCloseWorkspace={(input) => setClosingWorkspace(input)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-      {closingWorkspace ? (
-        <ExecutionWorkspaceCloseDialog
-          workspaceId={closingWorkspace.id}
-          workspaceName={closingWorkspace.name}
-          currentStatus={closingWorkspace.status}
-          open
-          onOpenChange={(open) => {
-            if (!open) setClosingWorkspace(null);
-          }}
-          onClosed={() => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.executionWorkspaces.list(companyId, { projectId }) });
-            queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
-            queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
-            setClosingWorkspace(null);
-          }}
-        />
-      ) : null}
-    </>
-  );
-}
-
 /* ── Main project page ── */
 
 export function ProjectDetail() {
@@ -339,8 +222,6 @@ export function ProjectDetail() {
     filter?: string;
   }>();
   const { companies, selectedCompanyId, setSelectedCompanyId } = useCompany();
-  const { locale } = useLocale();
-  const copy = getProjectCopy(locale);
   const { closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToastActions();
@@ -376,7 +257,6 @@ export function ProjectDetail() {
   const experimentalSettingsQuery = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
-    retry: false,
   });
   const {
     slots: pluginDetailSlots,
@@ -458,17 +338,17 @@ export function ProjectDetail() {
       ),
     onSuccess: (updatedProject, archived) => {
       invalidateProject();
-      const name = updatedProject?.name ?? project?.name ?? copy.fallbackName;
+      const name = updatedProject?.name ?? project?.name ?? "Project";
       if (archived) {
-        pushToast({ title: copy.archiveToast.archived(name), tone: "success" });
+        pushToast({ title: `"${name}" has been archived`, tone: "success" });
         navigate("/dashboard");
       } else {
-        pushToast({ title: copy.archiveToast.unarchived(name), tone: "success" });
+        pushToast({ title: `"${name}" has been unarchived`, tone: "success" });
       }
     },
     onError: (_, archived) => {
       pushToast({
-        title: archived ? copy.archiveToast.archiveFailed : copy.archiveToast.unarchiveFailed,
+        title: archived ? "Failed to archive project" : "Failed to unarchive project",
         tone: "error",
       });
     },
@@ -476,7 +356,7 @@ export function ProjectDetail() {
 
   const uploadImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!resolvedCompanyId) throw new Error(copy.noCompanySelected);
+      if (!resolvedCompanyId) throw new Error("No company selected");
       return assetsApi.uploadImage(resolvedCompanyId, file, `projects/${projectLookupRef || "draft"}`);
     },
   });
@@ -491,10 +371,10 @@ export function ProjectDetail() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: copy.breadcrumbProjects, href: "/projects" },
-      { label: project?.name ?? routeProjectRef ?? copy.fallbackName },
+      { label: "Projects", href: "/projects" },
+      { label: project?.name ?? routeProjectRef ?? "Project" },
     ]);
-  }, [copy.breadcrumbProjects, copy.fallbackName, setBreadcrumbs, project, routeProjectRef]);
+  }, [setBreadcrumbs, project, routeProjectRef]);
 
   useEffect(() => {
     if (!project) return;
@@ -588,7 +468,7 @@ export function ProjectDetail() {
       companyId: resolvedCompanyId ?? "",
       scopeType: "project",
       scopeId: project?.id ?? routeProjectRef,
-      scopeName: project?.name ?? copy.fallbackName,
+      scopeName: project?.name ?? "Project",
       metric: "billed_cents",
       windowKind: "lifetime",
       amount: 0,
@@ -605,7 +485,7 @@ export function ProjectDetail() {
       windowStart: new Date(),
       windowEnd: new Date(),
     } satisfies BudgetPolicySummary;
-  }, [budgetOverview?.policies, copy.fallbackName, project, resolvedCompanyId, routeProjectRef]);
+  }, [budgetOverview?.policies, project, resolvedCompanyId, routeProjectRef]);
 
   const budgetMutation = useMutation({
     mutationFn: (amount: number) =>
@@ -705,7 +585,7 @@ export function ProjectDetail() {
           {project.pauseReason === "budget" ? (
             <div className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-red-200">
               <span className="h-2 w-2 rounded-full bg-red-400" />
-              {copy.overview.pausedByBudgetHardStop}
+              Paused by budget hard stop
             </div>
           ) : null}
         </div>
@@ -745,11 +625,11 @@ export function ProjectDetail() {
       <Tabs value={activeTab ?? "list"} onValueChange={(value) => handleTabChange(value as ProjectTab)}>
         <PageTabBar
           items={[
-            { value: "list", label: copy.tabs.issues },
-            { value: "overview", label: copy.tabs.overview },
-            ...(showWorkspacesTab ? [{ value: "workspaces", label: copy.tabs.workspaces }] : []),
-            { value: "configuration", label: copy.tabs.configuration },
-            { value: "budget", label: copy.tabs.budget },
+            { value: "list", label: "Issues" },
+            { value: "overview", label: "Overview" },
+            ...(showWorkspacesTab ? [{ value: "workspaces", label: "Workspaces" }] : []),
+            { value: "configuration", label: "Configuration" },
+            { value: "budget", label: "Budget" },
             ...pluginTabItems.map((item) => ({
               value: item.value,
               label: item.label,
@@ -789,7 +669,7 @@ export function ProjectDetail() {
             />
           )
         ) : (
-          <p className="text-sm text-muted-foreground">{copy.workspaces.loading}</p>
+          <p className="text-sm text-muted-foreground">Loading workspaces...</p>
         )
       ) : null}
 

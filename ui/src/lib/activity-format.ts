@@ -1,5 +1,6 @@
 import type { Agent } from "@paperclipai/shared";
 import { getRuntimeLocaleConfig } from "./runtime-locale";
+import type { CompanyUserProfile } from "./company-members";
 
 type ActivityDetails = Record<string, unknown> | null | undefined;
 
@@ -17,6 +18,7 @@ type ActivityIssueReference = {
 
 interface ActivityFormatOptions {
   agentMap?: Map<string, Agent>;
+  userProfileMap?: Map<string, CompanyUserProfile>;
   currentUserId?: string | null;
 }
 
@@ -243,10 +245,12 @@ function readIssueReferences(details: ActivityDetails, key: string): ActivityIss
   return value.filter(isActivityIssueReference);
 }
 
-function formatUserLabel(userId: string | null | undefined, currentUserId?: string | null): string {
+function formatUserLabel(userId: string | null | undefined, options: ActivityFormatOptions = {}): string {
   const isZh = isZhLocale();
   if (!userId || userId === "local-board") return isZh ? "董事会" : "Board";
-  if (currentUserId && userId === currentUserId) return isZh ? "你" : "You";
+  if (options.currentUserId && userId === options.currentUserId) return isZh ? "你" : "You";
+  const profile = options.userProfileMap?.get(userId);
+  if (profile) return profile.label;
   return isZh ? `用户 ${userId.slice(0, 5)}` : `user ${userId.slice(0, 5)}`;
 }
 
@@ -256,7 +260,7 @@ function formatParticipantLabel(participant: ActivityParticipant, options: Activ
     const agentId = participant.agentId ?? "";
     return options.agentMap?.get(agentId)?.name ?? (isZh ? "智能体" : "agent");
   }
-  return formatUserLabel(participant.userId, options.currentUserId);
+  return formatUserLabel(participant.userId, options);
 }
 
 function formatIssueReferenceLabel(reference: ActivityIssueReference): string {
@@ -307,7 +311,20 @@ function formatIssueUpdatedVerb(details: ActivityDetails): string | null {
   return null;
 }
 
-function formatIssueUpdatedAction(details: ActivityDetails): string | null {
+function formatAssigneeName(details: ActivityDetails, options: ActivityFormatOptions): string | null {
+  if (!details) return null;
+  const agentId = details.assigneeAgentId;
+  const userId = details.assigneeUserId;
+  if (typeof agentId === "string" && agentId) {
+    return options.agentMap?.get(agentId)?.name ?? "agent";
+  }
+  if (typeof userId === "string" && userId) {
+    return formatUserLabel(userId, options);
+  }
+  return null;
+}
+
+function formatIssueUpdatedAction(details: ActivityDetails, options: ActivityFormatOptions = {}): string | null {
   if (!details) return null;
   const isZh = isZhLocale();
   const previous = asRecord(details._previous) ?? {};
@@ -338,9 +355,10 @@ function formatIssueUpdatedAction(details: ActivityDetails): string | null {
     );
   }
   if (details.assigneeAgentId !== undefined || details.assigneeUserId !== undefined) {
+    const assigneeName = formatAssigneeName(details, options);
     parts.push(
-      details.assigneeAgentId || details.assigneeUserId
-        ? (isZh ? "分配了任务负责人" : "assigned the issue")
+      assigneeName
+        ? (isZh ? `分配了任务负责人为 ${assigneeName}` : `assigned the issue to ${assigneeName}`)
         : isZh ? "取消了任务负责人" : "unassigned the issue",
     );
   }
@@ -448,7 +466,7 @@ export function formatIssueActivityAction(
 ): string {
   const isZh = isZhLocale();
   if (action === "issue.updated") {
-    const issueUpdatedAction = formatIssueUpdatedAction(details);
+    const issueUpdatedAction = formatIssueUpdatedAction(details, options);
     if (issueUpdatedAction) return issueUpdatedAction;
   }
 

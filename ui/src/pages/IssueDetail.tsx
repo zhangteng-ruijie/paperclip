@@ -2,11 +2,13 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEve
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
 import { heartbeatsApi, type ActiveRunForIssue, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
+import { accessApi } from "../api/access";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
@@ -16,11 +18,12 @@ import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
+import { buildCompanyUserInlineOptions, buildCompanyUserLabelMap, buildCompanyUserProfileMap, buildMarkdownMentionOptions } from "../lib/company-members";
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
+import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import {
   hasLegacyIssueDetailQuery,
   createIssueDetailPath,
@@ -40,6 +43,7 @@ import {
   applyOptimisticIssueFieldUpdate,
   applyOptimisticIssueFieldUpdateToCollection,
   applyOptimisticIssueCommentUpdate,
+  applyLocalQueuedIssueCommentState,
   createOptimisticIssueComment,
   flattenIssueCommentPages,
   getNextIssueCommentPageParam,
@@ -52,23 +56,19 @@ import {
   type IssueCommentReassignment,
   type OptimisticIssueComment,
 } from "../lib/optimistic-issue-comments";
-import { removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
+import { clearIssueExecutionRun, removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import {
-  formatIssueDetailTokenSummary,
-  getIssueDetailCopy,
-  issueFeedbackToastTitle,
-} from "../lib/issue-detail-copy";
-import { getIssuesCopy } from "../lib/issues-copy";
-import { getShellCopy } from "../lib/shell-copy";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { localizedActorLabel } from "../lib/actor-labels";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
+import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
+import { IssueReferenceActivitySummary } from "../components/IssueReferenceActivitySummary";
+import { IssueRelatedWorkPanel } from "../components/IssueRelatedWorkPanel";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
@@ -111,15 +111,21 @@ import {
 import {
   getClosedIsolatedExecutionWorkspaceMessage,
   isClosedIsolatedExecutionWorkspace,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+  type AskUserQuestionsAnswer,
   type ActivityEvent,
   type Agent,
   type FeedbackVote,
   type Issue,
   type IssueAttachment,
   type IssueComment,
+  type IssueThreadInteraction,
+  type RequestConfirmationInteraction,
+  type SuggestTasksInteraction,
 } from "@paperclipai/shared";
 
 type CommentReassignment = IssueCommentReassignment;
+type ActionableIssueThreadInteraction = SuggestTasksInteraction | RequestConfirmationInteraction;
 type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
   runId?: string | null;
   runAgentId?: string | null;
@@ -260,16 +266,18 @@ function mergeOptimisticFeedbackVote(
   ];
 }
 
-function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<string, Agent> }) {
-  const { locale } = useLocale();
+function ActorIdentity({ evt, agentMap, userProfileMap }: { evt: ActivityEvent; agentMap: Map<string, Agent>; userProfileMap?: Map<string, import("../lib/company-members").CompanyUserProfile> }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
     return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
   }
-  if (evt.actorType === "system") return <Identity name={localizedActorLabel("system", locale)} size="sm" />;
-  if (evt.actorType === "user") return <Identity name={localizedActorLabel("board", locale)} size="sm" />;
-  return <Identity name={id || localizedActorLabel("unknown", locale)} size="sm" />;
+  if (evt.actorType === "system") return <Identity name="System" size="sm" />;
+  if (evt.actorType === "user") {
+    const profile = userProfileMap?.get(id);
+    return <Identity name={profile?.label ?? "Board"} avatarUrl={profile?.image} size="sm" />;
+  }
+  return <Identity name={id || "Unknown"} size="sm" />;
 }
 
 function IssueSectionSkeleton({
@@ -330,7 +338,7 @@ function IssueDetailLoadingState({
   const identifier = headerSeed?.identifier ?? headerSeed?.id.slice(0, 8) ?? null;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div className="space-y-3">
         <Skeleton className="h-3 w-40" />
 
@@ -503,7 +511,10 @@ type IssueDetailChatTabProps = {
   projectId: string | null;
   issueStatus: Issue["status"];
   executionRunId: string | null;
+  blockedBy: Issue["blockedBy"];
   comments: IssueDetailComment[];
+  locallyQueuedCommentRunIds: ReadonlyMap<string, string>;
+  interactions: IssueThreadInteraction[];
   hasOlderComments: boolean;
   commentsLoadingOlder: boolean;
   onLoadOlderComments: () => void;
@@ -513,6 +524,8 @@ type IssueDetailChatTabProps = {
   feedbackTermsUrl: string | null;
   agentMap: Map<string, Agent>;
   currentUserId: string | null;
+  userLabelMap: ReadonlyMap<string, string> | null;
+  userProfileMap: ReadonlyMap<string, import("../lib/company-members").CompanyUserProfile> | null;
   draftKey: string;
   reassignOptions: Array<{ id: string; label: string; searchText?: string }>;
   currentAssigneeValue: string;
@@ -531,6 +544,15 @@ type IssueDetailChatTabProps = {
   onCancelQueued: (commentId: string) => void;
   interruptingQueuedRunId: string | null;
   onImageClick: (src: string) => void;
+  onAcceptInteraction: (
+    interaction: ActionableIssueThreadInteraction,
+    selectedClientKeys?: string[],
+  ) => Promise<void>;
+  onRejectInteraction: (interaction: ActionableIssueThreadInteraction, reason?: string) => Promise<void>;
+  onSubmitInteractionAnswers: (
+    interaction: IssueThreadInteraction,
+    answers: AskUserQuestionsAnswer[],
+  ) => Promise<void>;
 };
 
 const IssueDetailChatTab = memo(function IssueDetailChatTab({
@@ -539,7 +561,10 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   projectId,
   issueStatus,
   executionRunId,
+  blockedBy,
   comments,
+  locallyQueuedCommentRunIds,
+  interactions,
   hasOlderComments,
   commentsLoadingOlder,
   onLoadOlderComments,
@@ -549,6 +574,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   feedbackTermsUrl,
   agentMap,
   currentUserId,
+  userLabelMap,
+  userProfileMap,
   draftKey,
   reassignOptions,
   currentAssigneeValue,
@@ -563,6 +590,9 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   onCancelQueued,
   interruptingQueuedRunId,
   onImageClick,
+  onAcceptInteraction,
+  onRejectInteraction,
+  onSubmitInteractionAnswers,
 }: IssueDetailChatTabProps) {
   const { data: activity } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
@@ -602,19 +632,22 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     () => resolveRunningIssueRun(resolvedActiveRun, resolvedLiveRuns),
     [resolvedActiveRun, resolvedLiveRuns],
   );
+  const liveRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of resolvedLiveRuns) ids.add(run.id);
+    if (resolvedActiveRun) ids.add(resolvedActiveRun.id);
+    return ids;
+  }, [resolvedActiveRun, resolvedLiveRuns]);
   const timelineRuns = useMemo(() => {
-    const liveIds = new Set<string>();
-    for (const run of resolvedLiveRuns) liveIds.add(run.id);
-    if (activeRun) liveIds.add(activeRun.id);
-    const historicalRuns = liveIds.size === 0
+    const historicalRuns = liveRunIds.size === 0
       ? resolvedLinkedRuns
-      : resolvedLinkedRuns.filter((run) => !liveIds.has(run.runId));
+      : resolvedLinkedRuns.filter((run) => !liveRunIds.has(run.runId));
     return historicalRuns.map((run) => ({
       ...run,
       adapterType: run.adapterType,
       hasStoredOutput: (run.logBytes ?? 0) > 0,
     }));
-  }, [activeRun, resolvedLinkedRuns, resolvedLiveRuns]);
+  }, [liveRunIds, resolvedLinkedRuns]);
   const commentsWithRunMeta = useMemo<IssueDetailComment[]>(() => {
     const activeRunStartedAt = runningIssueRun?.startedAt ?? runningIssueRun?.createdAt ?? null;
     const runMetaByCommentId = new Map<string, { runId: string; runAgentId: string | null; interruptedRunId: string | null }>();
@@ -640,6 +673,15 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     return comments.map((comment) => {
       const meta = runMetaByCommentId.get(comment.id);
       const nextComment: IssueDetailComment = meta ? { ...comment, ...meta } : { ...comment };
+      const queuedTargetRunId = locallyQueuedCommentRunIds.get(comment.id) ?? null;
+      const locallyQueuedComment = applyLocalQueuedIssueCommentState(nextComment, {
+        queuedTargetRunId,
+        targetRunIsLive: queuedTargetRunId ? liveRunIds.has(queuedTargetRunId) : false,
+        runningRunId: runningIssueRun?.id ?? null,
+      });
+      if (locallyQueuedComment !== nextComment) {
+        return locallyQueuedComment;
+      }
       if (
         isQueuedIssueComment({
           comment: nextComment,
@@ -657,7 +699,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
       }
       return nextComment;
     });
-  }, [comments, resolvedActivity, resolvedLinkedRuns, runningIssueRun]);
+  }, [comments, liveRunIds, locallyQueuedCommentRunIds, resolvedActivity, resolvedLinkedRuns, runningIssueRun]);
   const timelineEvents = useMemo(
     () => extractIssueTimelineEvents(resolvedActivity),
     [resolvedActivity],
@@ -681,6 +723,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
       <IssueChatThread
         composerRef={composerRef}
         comments={commentsWithRunMeta}
+        interactions={interactions}
         feedbackVotes={feedbackVotes}
         feedbackDataSharingPreference={feedbackDataSharingPreference}
         feedbackTermsUrl={feedbackTermsUrl}
@@ -688,11 +731,14 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         timelineEvents={timelineEvents}
         liveRuns={resolvedLiveRuns}
         activeRun={resolvedActiveRun}
+        blockedBy={blockedBy ?? []}
         companyId={companyId}
         projectId={projectId}
         issueStatus={issueStatus}
         agentMap={agentMap}
         currentUserId={currentUserId}
+        userLabelMap={userLabelMap}
+        userProfileMap={userProfileMap}
         draftKey={draftKey}
         enableReassign
         reassignOptions={reassignOptions}
@@ -709,6 +755,11 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         interruptingQueuedRunId={interruptingQueuedRunId}
         stoppingRunId={interruptingQueuedRunId}
         onStopRun={onInterruptQueued}
+        onAcceptInteraction={onAcceptInteraction}
+        onRejectInteraction={onRejectInteraction}
+        onSubmitInteractionAnswers={(interaction, answers) =>
+          onSubmitInteractionAnswers(interaction, answers)
+        }
         onCancelRun={runningIssueRun
           ? async () => {
               await onInterruptQueued(runningIssueRun.id);
@@ -722,18 +773,28 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 
 type IssueDetailActivityTabProps = {
   issueId: string;
+  issueStatus: Issue["status"];
+  childIssues: Issue[];
   agentMap: Map<string, Agent>;
+  hasLiveRuns: boolean;
   currentUserId: string | null;
+  userProfileMap: Map<string, import("../lib/company-members").CompanyUserProfile>;
   pendingApprovalAction: { approvalId: string; action: "approve" | "reject" } | null;
   onApprovalAction: (approvalId: string, action: "approve" | "reject") => void;
+  handoffFocusSignal?: number;
 };
 
 function IssueDetailActivityTab({
   issueId,
+  issueStatus,
+  childIssues,
   agentMap,
+  hasLiveRuns,
   currentUserId,
+  userProfileMap,
   pendingApprovalAction,
   onApprovalAction,
+  handoffFocusSignal = 0,
 }: IssueDetailActivityTabProps) {
   const { data: activity, isLoading: activityLoading } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
@@ -749,6 +810,21 @@ function IssueDetailActivityTab({
     queryKey: queryKeys.issues.approvals(issueId),
     queryFn: () => issuesApi.listApprovals(issueId),
     placeholderData: keepPreviousDataForSameQueryTail<Awaited<ReturnType<typeof issuesApi.listApprovals>>>(issueId),
+  });
+  const { data: continuationHandoff } = useQuery({
+    queryKey: queryKeys.issues.document(issueId, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
+    queryFn: async () => {
+      try {
+        return await issuesApi.getDocument(issueId, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    retry: false,
+    placeholderData: keepPreviousDataForSameQueryTail<Awaited<ReturnType<typeof issuesApi.getDocument>> | null>(
+      issueId,
+    ),
   });
   const initialLoading =
     (activityLoading && activity === undefined)
@@ -798,6 +874,16 @@ function IssueDetailActivityTab({
 
   return (
     <>
+      <div className="mb-3">
+        <IssueRunLedger
+          issueId={issueId}
+          issueStatus={issueStatus}
+          childIssues={childIssues}
+          agentMap={agentMap}
+          hasLiveRuns={hasLiveRuns}
+        />
+      </div>
+      <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
       {linkedApprovals && linkedApprovals.length > 0 && (
         <div className="mb-3 space-y-3">
           {linkedApprovals.map((approval) => (
@@ -847,10 +933,13 @@ function IssueDetailActivityTab({
       ) : (
         <div className="space-y-1.5">
           {activity.slice(0, 20).map((evt) => (
-            <div key={evt.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ActorIdentity evt={evt} agentMap={agentMap} />
-              <span>{formatIssueActivityAction(evt.action, evt.details, { agentMap, currentUserId })}</span>
-              <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
+            <div key={evt.id} className="space-y-1.5 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <ActorIdentity evt={evt} agentMap={agentMap} userProfileMap={userProfileMap} />
+                <span>{formatIssueActivityAction(evt.action, evt.details, { agentMap, userProfileMap, currentUserId })}</span>
+                <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
+              </div>
+              <IssueReferenceActivitySummary event={evt} />
             </div>
           ))}
         </div>
@@ -865,10 +954,6 @@ export function IssueDetail() {
   const { openNewIssue } = useDialog();
   const { openPanel, closePanel, panelVisible, setPanelVisible } = usePanel();
   const { setBreadcrumbs, setMobileToolbar } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const issueDetailCopy = getIssueDetailCopy(locale);
-  const issuesCopy = getIssuesCopy(locale);
-  const shell = getShellCopy(locale);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
@@ -879,6 +964,7 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
+  const [handoffFocusSignal, setHandoffFocusSignal] = useState(0);
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
     action: "approve" | "reject";
@@ -889,6 +975,7 @@ export function IssueDetail() {
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
+  const [locallyQueuedCommentRunIds, setLocallyQueuedCommentRunIds] = useState<Map<string, string>>(() => new Map());
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
@@ -944,6 +1031,12 @@ export function IssueDetail() {
     () => flattenIssueCommentPages(commentPages?.pages),
     [commentPages?.pages],
   );
+  const { data: interactions = [] } = useQuery({
+    queryKey: queryKeys.issues.interactions(issueId!),
+    queryFn: () => issuesApi.listInteractions(issueId!),
+    enabled: !!issueId,
+    placeholderData: keepPreviousDataForSameQueryTail<IssueThreadInteraction[]>(issueId ?? "pending"),
+  });
 
   const { data: attachments, isLoading: attachmentsLoading } = useQuery({
     queryKey: queryKeys.issues.attachments(issueId!),
@@ -971,9 +1064,14 @@ export function IssueDetail() {
   });
   const resolvedHasActiveRun = issue ? shouldTrackIssueActiveRun(issue) && hasActiveRun : hasActiveRun;
   const hasLiveRuns = liveRunCount > 0 || resolvedHasActiveRun;
+  useEffect(() => {
+    if (!hasLiveRuns && locallyQueuedCommentRunIds.size > 0) {
+      setLocallyQueuedCommentRunIds(new Map());
+    }
+  }, [hasLiveRuns, locallyQueuedCommentRunIds.size]);
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: issueDetailCopy.issues, href: "/issues" },
-    [issueId, location.state, location.search, issueDetailCopy.issues],
+    () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: "Issues", href: "/issues" },
+    [issueId, location.state, location.search],
   );
 
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
@@ -985,10 +1083,22 @@ export function IssueDetail() {
     enabled: !!resolvedCompanyId && !!issue?.id,
     placeholderData: keepPreviousDataForSameQueryTail<Issue[]>(issue?.id ?? "pending"),
   });
+  const { data: companyLiveRuns } = useQuery({
+    queryKey: resolvedCompanyId ? queryKeys.liveRuns(resolvedCompanyId) : ["live-runs", "pending"],
+    queryFn: () => heartbeatsApi.liveRunsForCompany(resolvedCompanyId!),
+    enabled: !!resolvedCompanyId,
+    refetchInterval: 5000,
+    placeholderData: keepPreviousDataForSameQueryTail<LiveRunForIssue[]>(resolvedCompanyId ?? "pending"),
+  });
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
 
@@ -1042,31 +1152,21 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
+  const userProfileMap = useMemo(
+    () => buildCompanyUserProfileMap(companyMembers?.users),
+    [companyMembers?.users],
+  );
+  const userLabelMap = useMemo(
+    () => buildCompanyUserLabelMap(companyMembers?.users),
+    [companyMembers?.users],
+  );
   const mentionOptions = useMemo<MentionOption[]>(() => {
-    const options: MentionOption[] = [];
-    const activeAgents = [...(agents ?? [])]
-      .filter((agent) => agent.status !== "terminated")
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const agent of activeAgents) {
-      options.push({
-        id: `agent:${agent.id}`,
-        name: agent.name,
-        kind: "agent",
-        agentId: agent.id,
-        agentIcon: agent.icon,
-      });
-    }
-    for (const project of orderedProjects) {
-      options.push({
-        id: `project:${project.id}`,
-        name: project.name,
-        kind: "project",
-        projectId: project.id,
-        projectColor: project.color,
-      });
-    }
-    return options;
-  }, [agents, orderedProjects]);
+    return buildMarkdownMentionOptions({
+      agents,
+      projects: orderedProjects,
+      members: companyMembers?.users,
+    });
+  }, [agents, companyMembers?.users, orderedProjects]);
 
   const resolvedProject = useMemo(
     () => (issue?.projectId ? orderedProjects.find((project) => project.id === issue.projectId) ?? issue.project ?? null : null),
@@ -1076,6 +1176,7 @@ export function IssueDetail() {
     () => [...rawChildIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [rawChildIssues],
   );
+  const liveIssueIds = useMemo(() => collectLiveIssueIds(companyLiveRuns), [companyLiveRuns]);
   const issuePanelKey = useMemo(
     () => buildIssuePropertiesPanelKey(issue ?? null, childIssues),
     [childIssues, issue],
@@ -1100,6 +1201,7 @@ export function IssueDetail() {
 
   const commentReassignOptions = useMemo(() => {
     const options: Array<{ id: string; label: string; searchText?: string }> = [];
+    options.push(...buildCompanyUserInlineOptions(companyMembers?.users, { excludeUserIds: [currentUserId] }));
     const activeAgents = [...(agents ?? [])]
       .filter((agent) => agent.status !== "terminated")
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -1107,10 +1209,10 @@ export function IssueDetail() {
       options.push({ id: `agent:${agent.id}`, label: agent.name });
     }
     if (currentUserId) {
-      options.push({ id: `user:${currentUserId}`, label: issuesCopy.me });
+      options.push({ id: `user:${currentUserId}`, label: "Me" });
     }
     return options;
-  }, [agents, currentUserId, issuesCopy.me]);
+  }, [agents, companyMembers?.users, currentUserId]);
 
   const actualAssigneeValue = useMemo(
     () => assigneeValueFromSelection(issue ?? {}),
@@ -1136,10 +1238,12 @@ export function IssueDetail() {
   const invalidateIssueDetail = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.interactions(issueId!) });
   }, [issueId, queryClient]);
   const invalidateIssueThreadLazily = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId!), refetchType: "inactive" });
     queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId!), refetchType: "inactive" });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.interactions(issueId!), refetchType: "inactive" });
   }, [issueId, queryClient]);
 
   const invalidateIssueRunState = useCallback(() => {
@@ -1174,6 +1278,22 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId) });
     }
   }, [queryClient, selectedCompanyId]);
+  const upsertInteractionInCache = useCallback((interaction: IssueThreadInteraction) => {
+    queryClient.setQueryData<IssueThreadInteraction[] | undefined>(
+      queryKeys.issues.interactions(issueId!),
+      (current) => {
+        const existing = current ?? [];
+        const next = existing.filter((entry) => entry.id !== interaction.id);
+        next.push(interaction);
+        next.sort((left, right) => {
+          const createdAtDelta =
+            new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+          return createdAtDelta === 0 ? left.id.localeCompare(right.id) : createdAtDelta;
+        });
+        return next;
+      },
+    );
+  }, [issueId, queryClient]);
 
   const applyOptimisticIssueCacheUpdate = useCallback((refs: Iterable<string>, data: Record<string, unknown>) => {
     queryClient.setQueriesData<Issue>(
@@ -1252,8 +1372,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.list(context.selectedCompanyId), context.previousList);
       }
       pushToast({
-        title: issueDetailCopy.issueUpdateFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToSaveIssueChanges,
+        title: "Issue update failed",
+        body: err instanceof Error ? err.message : "Unable to save issue changes",
         tone: "error",
       });
     },
@@ -1307,18 +1427,14 @@ export function IssueDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
       }
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalApproved
-          : issueDetailCopy.approvalRejected,
+        title: variables.action === "approve" ? "Approval approved" : "Approval rejected",
         tone: "success",
       });
     },
     onError: (err, variables) => {
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalFailed
-          : issueDetailCopy.rejectionFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToUpdateApproval,
+        title: variables.action === "approve" ? "Approval failed" : "Rejection failed",
+        body: err instanceof Error ? err.message : "Unable to update approval",
         tone: "error",
       });
     },
@@ -1359,6 +1475,7 @@ export function IssueDetail() {
 
       return {
         optimisticCommentId: optimisticComment?.clientId ?? null,
+        queuedCommentTargetRunId: queuedComment?.id ?? null,
         previousIssue,
       };
     },
@@ -1384,6 +1501,13 @@ export function IssueDetail() {
           });
         }
       }
+      if (context?.queuedCommentTargetRunId) {
+        setLocallyQueuedCommentRunIds((current) => {
+          const next = new Map(current);
+          next.set(comment.id, context.queuedCommentTargetRunId!);
+          return next;
+        });
+      }
       queryClient.setQueryData<InfiniteData<IssueComment[], string | null>>(
         queryKeys.issues.comments(issueId!),
         (current) => current ? {
@@ -1405,8 +1529,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -1418,6 +1542,89 @@ export function IssueDetail() {
       if (variables.reopen) {
         invalidateIssueCollections();
       }
+    },
+  });
+  const acceptInteraction = useMutation({
+    mutationFn: ({
+      interaction,
+      selectedClientKeys,
+    }: {
+      interaction: ActionableIssueThreadInteraction;
+      selectedClientKeys?: string[];
+    }) => issuesApi.acceptInteraction(issueId!, interaction.id, { selectedClientKeys }),
+    onSuccess: (interaction) => {
+      upsertInteractionInCache(interaction);
+      if (interaction.kind === "suggest_tasks" && resolvedCompanyId && issue?.id) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByParent(resolvedCompanyId, issue.id) });
+      }
+      invalidateIssueDetail();
+      invalidateIssueCollections();
+      const createdCount = interaction.kind === "suggest_tasks"
+        ? interaction.result?.createdTasks?.length ?? 0
+        : 0;
+      const skippedCount = interaction.kind === "suggest_tasks"
+        ? interaction.result?.skippedClientKeys?.length ?? 0
+        : 0;
+      pushToast({
+        title: interaction.kind === "request_confirmation"
+          ? "Request confirmed"
+          : skippedCount > 0
+          ? `Accepted ${createdCount} draft${createdCount === 1 ? "" : "s"} and skipped ${skippedCount}`
+          : "Suggested tasks accepted",
+        tone: "success",
+      });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Accept failed",
+        body: err instanceof Error ? err.message : "Unable to accept the suggested tasks",
+        tone: "error",
+      });
+    },
+  });
+  const rejectInteraction = useMutation({
+    mutationFn: ({ interaction, reason }: { interaction: ActionableIssueThreadInteraction; reason?: string }) =>
+      issuesApi.rejectInteraction(issueId!, interaction.id, reason),
+    onSuccess: (interaction) => {
+      upsertInteractionInCache(interaction);
+      invalidateIssueDetail();
+      invalidateIssueCollections();
+      pushToast({
+        title: interaction.kind === "request_confirmation" ? "Request declined" : "Suggestion rejected",
+        tone: "success",
+      });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Reject failed",
+        body: err instanceof Error ? err.message : "Unable to reject the suggested tasks",
+        tone: "error",
+      });
+    },
+  });
+  const answerInteraction = useMutation({
+    mutationFn: ({
+      interaction,
+      answers,
+    }: {
+      interaction: IssueThreadInteraction;
+      answers: AskUserQuestionsAnswer[];
+    }) => issuesApi.respondToInteraction(issueId!, interaction.id, { answers }),
+    onSuccess: (interaction) => {
+      upsertInteractionInCache(interaction);
+      invalidateIssueDetail();
+      invalidateIssueCollections();
+      pushToast({
+        title: "Answers submitted",
+        tone: "success",
+      });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Submit failed",
+        body: err instanceof Error ? err.message : "Unable to submit answers",
+        tone: "error",
+      });
     },
   });
 
@@ -1469,6 +1676,7 @@ export function IssueDetail() {
 
       return {
         optimisticCommentId: optimisticComment?.clientId ?? null,
+        queuedCommentTargetRunId: queuedComment?.id ?? null,
         previousIssue,
       };
     },
@@ -1497,6 +1705,13 @@ export function IssueDetail() {
           });
         }
       }
+      if (comment && context?.queuedCommentTargetRunId) {
+        setLocallyQueuedCommentRunIds((current) => {
+          const next = new Map(current);
+          next.set(comment.id, context.queuedCommentTargetRunId!);
+          return next;
+        });
+      }
       if (comment) {
         queryClient.setQueryData<InfiniteData<IssueComment[], string | null>>(
           queryKeys.issues.comments(issueId!),
@@ -1520,8 +1735,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -1540,10 +1755,13 @@ export function IssueDetail() {
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.runs(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.liveRuns(issueId!) });
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.activeRun(issueId!) });
+      await queryClient.cancelQueries({ queryKey: queryKeys.issues.detail(issueId!) });
 
       const previousRuns = queryClient.getQueryData<RunForIssue[]>(queryKeys.issues.runs(issueId!));
       const previousLiveRuns = queryClient.getQueryData<LiveRunForIssue[]>(queryKeys.issues.liveRuns(issueId!));
       const previousActiveRun = queryClient.getQueryData<ActiveRunForIssue | null>(queryKeys.issues.activeRun(issueId!));
+      const previousIssue = queryClient.getQueryData<Issue>(queryKeys.issues.detail(issueId!));
+      const previousLocalQueuedCommentRunIds = locallyQueuedCommentRunIds;
       const liveRunList = previousLiveRuns ?? [];
       const cachedActiveRun = previousActiveRun ?? null;
       const runningIssueRun = resolveRunningIssueRun(cachedActiveRun, liveRunList);
@@ -1568,19 +1786,29 @@ export function IssueDetail() {
         queryKeys.issues.activeRun(issueId!),
         (current: ActiveRunForIssue | null | undefined) => (current?.id === runId ? null : current),
       );
+      queryClient.setQueryData(
+        queryKeys.issues.detail(issueId!),
+        (current: Issue | undefined) => clearIssueExecutionRun(current, runId),
+      );
+      setLocallyQueuedCommentRunIds((current) => {
+        const next = new Map([...current].filter(([, targetRunId]) => targetRunId !== runId));
+        return next.size === current.size ? current : next;
+      });
 
       return {
         previousRuns,
         previousLiveRuns,
         previousActiveRun,
+        previousIssue,
+        previousLocalQueuedCommentRunIds,
       };
     },
     onSuccess: () => {
       invalidateIssueDetail();
       invalidateIssueRunState();
       pushToast({
-        title: issueDetailCopy.interruptRequested,
-        body: issueDetailCopy.interruptRequestedBody,
+        title: "Interrupt requested",
+        body: "The active run is stopping so queued comments can continue next.",
         tone: "success",
       });
     },
@@ -1588,9 +1816,13 @@ export function IssueDetail() {
       queryClient.setQueryData(queryKeys.issues.runs(issueId!), context?.previousRuns);
       queryClient.setQueryData(queryKeys.issues.liveRuns(issueId!), context?.previousLiveRuns);
       queryClient.setQueryData(queryKeys.issues.activeRun(issueId!), context?.previousActiveRun);
+      queryClient.setQueryData(queryKeys.issues.detail(issueId!), context?.previousIssue);
+      if (context?.previousLocalQueuedCommentRunIds) {
+        setLocallyQueuedCommentRunIds(context.previousLocalQueuedCommentRunIds);
+      }
       pushToast({
-        title: issueDetailCopy.interruptFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToInterruptRun,
+        title: "Interrupt failed",
+        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
         tone: "error",
       });
     },
@@ -1599,6 +1831,12 @@ export function IssueDetail() {
   const cancelQueuedComment = useMutation({
     mutationFn: async ({ commentId }: { commentId: string }) => issuesApi.cancelComment(issueId!, commentId),
     onSuccess: (comment) => {
+      setLocallyQueuedCommentRunIds((current) => {
+        if (!current.has(comment.id)) return current;
+        const next = new Map(current);
+        next.delete(comment.id);
+        return next;
+      });
       removeCommentFromCache(comment.id);
       restoreQueuedCommentDraft(comment.body);
       invalidateIssueDetail();
@@ -1684,11 +1922,14 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
       pushToast({
-        title: issueFeedbackToastTitle({
-          locale,
-          sharingPreferenceAtSubmit: variables.sharingPreferenceAtSubmit,
-          allowSharing: variables.allowSharing,
-        }),
+        title:
+          variables.sharingPreferenceAtSubmit === "prompt"
+            ? variables.allowSharing
+              ? "Feedback saved. Future votes will share"
+              : "Feedback saved. Future votes will stay local"
+            : variables.allowSharing
+              ? "Feedback saved and sharing enabled"
+              : "Feedback saved",
         tone: "success",
       });
     },
@@ -1697,8 +1938,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.feedbackVotes(issueId!), context.previousVotes);
       }
       pushToast({
-        title: issueDetailCopy.failedToSaveFeedback,
-        body: err instanceof Error ? err.message : issueDetailCopy.unknownError,
+        title: "Failed to save feedback",
+        body: err instanceof Error ? err.message : "Unknown error",
         tone: "error",
       });
     },
@@ -1706,7 +1947,7 @@ export function IssueDetail() {
 
   const uploadAttachment = useMutation({
     mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error(issueDetailCopy.noCompanySelected);
+      if (!selectedCompanyId) throw new Error("No company selected");
       return issuesApi.uploadAttachment(selectedCompanyId, issueId!, file);
     },
     onSuccess: () => {
@@ -1715,7 +1956,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.uploadFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Upload failed");
     },
   });
 
@@ -1740,7 +1981,7 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.documentImportFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
     },
   });
 
@@ -1752,7 +1993,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.deleteFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Delete failed");
     },
   });
 
@@ -1761,19 +2002,18 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssueCollections();
       navigate(sourceBreadcrumb.href.startsWith("/inbox") ? sourceBreadcrumb.href : "/inbox", { replace: true });
-      pushToast({ title: issueDetailCopy.issueArchivedFromInbox, tone: "success" });
+      pushToast({ title: "Issue archived from inbox", tone: "success" });
     },
     onError: (err) => {
       pushToast({
-        title: issueDetailCopy.archiveFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToArchiveIssue,
+        title: "Archive failed",
+        body: err instanceof Error ? err.message : "Unable to archive this issue from the inbox",
         tone: "error",
       });
     },
   });
 
   useEffect(() => {
-
     setBreadcrumbs([
       sourceBreadcrumb,
       { label: hasLiveRuns ? `🔵 ${breadcrumbTitle}` : breadcrumbTitle },
@@ -1969,6 +2209,15 @@ export function IssueDetail() {
   }, [keyboardShortcutsEnabled, navigate, sourceBreadcrumb.href]);
 
   useEffect(() => {
+    const hash = location.hash;
+    if (!hash.startsWith("#document-")) return;
+    const documentKey = decodeURIComponent(hash.slice("#document-".length));
+    if (documentKey !== ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY) return;
+    setDetailTab("activity");
+    setHandoffFocusSignal((current) => current + 1);
+  }, [location.hash]);
+
+  useEffect(() => {
     if (pendingCommentComposerFocusKey === 0) return;
     if (detailTab !== "chat") return;
     commentComposerRef.current?.focus();
@@ -2013,7 +2262,7 @@ export function IssueDetail() {
     const md = `# ${issue.identifier}: ${title}\n\n${body}`.trimEnd();
     await navigator.clipboard.writeText(md);
     setCopied(true);
-    pushToast({ title: issueDetailCopy.copiedToClipboard, tone: "success" });
+    pushToast({ title: "Copied to clipboard", tone: "success" });
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -2052,6 +2301,7 @@ export function IssueDetail() {
   const showInboxToolbar = isMobile && isFromInbox;
   const archivePending = archiveFromInbox.isPending;
   const issueHidden = !!issue?.hiddenAt;
+  const canArchiveFromInbox = isFromInbox && !!issue?.id && !issueHidden;
 
   useEffect(() => {
     if (!showInboxToolbar) {
@@ -2106,6 +2356,21 @@ export function IssueDetail() {
   const handleInterruptQueuedRun = useCallback(async (runId: string) => {
     await interruptQueuedComment.mutateAsync(runId);
   }, [interruptQueuedComment]);
+  const handleAcceptInteraction = useCallback(async (
+    interaction: ActionableIssueThreadInteraction,
+    selectedClientKeys?: string[],
+  ) => {
+    await acceptInteraction.mutateAsync({ interaction, selectedClientKeys });
+  }, [acceptInteraction]);
+  const handleRejectInteraction = useCallback(async (interaction: ActionableIssueThreadInteraction, reason?: string) => {
+    await rejectInteraction.mutateAsync({ interaction, reason });
+  }, [rejectInteraction]);
+  const handleSubmitInteractionAnswers = useCallback(async (
+    interaction: IssueThreadInteraction,
+    answers: AskUserQuestionsAnswer[],
+  ) => {
+    await answerInteraction.mutateAsync({ interaction, answers });
+  }, [answerInteraction]);
 
   if (isLoading) return <IssueDetailLoadingState headerSeed={issueHeaderSeed} />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
@@ -2163,10 +2428,10 @@ export function IssueDetail() {
         )}
       >
         <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-        {uploadAttachment.isPending || importMarkdownDocument.isPending ? shell.uploading : (
+        {uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading..." : (
           <>
-            <span className="hidden sm:inline">{shell.uploadAttachment}</span>
-            <span className="sm:hidden">{shell.upload}</span>
+            <span className="hidden sm:inline">Upload attachment</span>
+            <span className="sm:hidden">Upload</span>
           </>
         )}
       </Button>
@@ -2174,7 +2439,7 @@ export function IssueDetail() {
   );
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       {/* Parent chain breadcrumb */}
       {ancestors.length > 0 && (
         <nav className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
@@ -2205,7 +2470,7 @@ export function IssueDetail() {
       {issue.hiddenAt && (
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <EyeOff className="h-4 w-4 shrink-0" />
-          {shell.hiddenIssue}
+          This issue is hidden
         </div>
       )}
 
@@ -2227,7 +2492,7 @@ export function IssueDetail() {
                 <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
               </span>
-              {shell.live}
+              Live
             </span>
           )}
 
@@ -2237,7 +2502,7 @@ export function IssueDetail() {
               className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0 hover:bg-violet-500/20 transition-colors"
             >
               <Repeat className="h-3 w-3" />
-              {shell.routine}
+              Routine
             </Link>
           )}
 
@@ -2252,7 +2517,7 @@ export function IssueDetail() {
           ) : (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50 px-1 -mx-1 py-0.5">
               <Hexagon className="h-3 w-3 shrink-0" />
-              {shell.noProject}
+              No project
             </span>
           )}
 
@@ -2283,7 +2548,7 @@ export function IssueDetail() {
                 variant="ghost"
                 size="icon-xs"
                 onClick={copyIssueToClipboard}
-                title={shell.copyIssueMarkdown}
+                title="Copy issue as markdown"
               >
                 {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
               </Button>
@@ -2291,7 +2556,7 @@ export function IssueDetail() {
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => setMobilePropsOpen(true)}
-                title={shell.properties}
+                title="Properties"
               >
                 <SlidersHorizontal className="h-4 w-4" />
               </Button>
@@ -2299,11 +2564,25 @@ export function IssueDetail() {
           )}
 
           <div className="hidden md:flex items-center md:ml-auto shrink-0">
+            {canArchiveFromInbox && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => {
+                  if (!archivePending && issue?.id) archiveFromInbox.mutate(issue.id);
+                }}
+                disabled={archivePending}
+                title="Archive from inbox"
+                aria-label="Archive from inbox"
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-xs"
               onClick={copyIssueToClipboard}
-              title={shell.copyIssueMarkdown}
+              title="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -2315,7 +2594,7 @@ export function IssueDetail() {
                 panelVisible ? "opacity-0 pointer-events-none w-0 overflow-hidden" : "opacity-100",
               )}
               onClick={() => setPanelVisible(true)}
-              title={shell.showProperties}
+              title="Show properties"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
@@ -2338,7 +2617,7 @@ export function IssueDetail() {
                 }}
               >
                 <EyeOff className="h-3 w-3" />
-                {shell.hideIssue}
+                Hide this Issue
               </button>
             </PopoverContent>
             </Popover>
@@ -2357,7 +2636,7 @@ export function IssueDetail() {
           onSave={(description) => updateIssue.mutateAsync({ description })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
-          placeholder={shell.addDescription}
+          placeholder="Add a description..."
           multiline
           mentions={mentionOptions}
           imageUploadHandler={async (file) => {
@@ -2414,18 +2693,14 @@ export function IssueDetail() {
       {showRichSubIssuesSection ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-medium text-muted-foreground">{shell.subIssues}</h3>
-            <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
-              <ListTree className="h-3.5 w-3.5 mr-1.5" />
-              <span className="hidden sm:inline">{shell.addSubIssue}</span>
-              <span className="sm:hidden">{shell.subIssue}</span>
-            </Button>
+            <h3 className="text-sm font-medium text-muted-foreground">Sub-issues</h3>
           </div>
           <IssuesList
             issues={childIssues}
             isLoading={childIssuesLoading}
             agents={agents}
             projects={projects}
+            liveIssueIds={liveIssueIds}
             projectId={issue.projectId ?? undefined}
             viewStateKey={`paperclip:issue-detail:${issue.id}:subissues-view`}
             issueLinkState={resolvedIssueDetailState ?? location.state}
@@ -2490,7 +2765,7 @@ export function IssueDetail() {
         onDrop={(evt) => void handleAttachmentDrop(evt)}
       >
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">{shell.attachments}</h3>
+          <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
           {attachmentUploadButton}
         </div>
 
@@ -2522,7 +2797,7 @@ export function IssueDetail() {
                     className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/60"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <p className="text-xs text-white font-medium">{shell.deletePrompt}</p>
+                    <p className="text-xs text-white font-medium">Delete?</p>
                     <div className="flex gap-1.5">
                       <button
                         type="button"
@@ -2534,7 +2809,7 @@ export function IssueDetail() {
                         }}
                         disabled={deleteAttachment.isPending}
                       >
-                        {shell.yes}
+                        Yes
                       </button>
                       <button
                         type="button"
@@ -2544,7 +2819,7 @@ export function IssueDetail() {
                           setConfirmDeleteId(null);
                         }}
                       >
-                        {shell.no}
+                        No
                       </button>
                     </div>
                   </div>
@@ -2556,7 +2831,7 @@ export function IssueDetail() {
                       e.stopPropagation();
                       setConfirmDeleteId(attachment.id);
                     }}
-                    title={shell.deleteAttachment}
+                    title="Delete attachment"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -2585,7 +2860,7 @@ export function IssueDetail() {
                     className="text-muted-foreground hover:text-destructive"
                     onClick={() => deleteAttachment.mutate(attachment.id)}
                     disabled={deleteAttachment.isPending}
-                    title={shell.deleteAttachment}
+                    title="Delete attachment"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -2619,11 +2894,15 @@ export function IssueDetail() {
         <TabsList variant="line" className="w-full justify-start gap-1">
           <TabsTrigger value="chat" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            {shell.chat}
+            Chat
           </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
-            {shell.activity}
+            Activity
+          </TabsTrigger>
+          <TabsTrigger value="related-work" className="gap-1.5">
+            <ListTree className="h-3.5 w-3.5" />
+            Related work
           </TabsTrigger>
           {issuePluginTabItems.map((item) => (
             <TabsTrigger key={item.value} value={item.value}>
@@ -2640,7 +2919,10 @@ export function IssueDetail() {
               projectId={issue.projectId ?? null}
               issueStatus={issue.status}
               executionRunId={issue.executionRunId ?? null}
+              blockedBy={issue.blockedBy ?? []}
               comments={threadComments}
+              locallyQueuedCommentRunIds={locallyQueuedCommentRunIds}
+              interactions={interactions}
               hasOlderComments={hasOlderComments}
               commentsLoadingOlder={commentsLoadingOlder}
               onLoadOlderComments={loadOlderComments}
@@ -2650,6 +2932,8 @@ export function IssueDetail() {
               feedbackTermsUrl={FEEDBACK_TERMS_URL}
               agentMap={agentMap}
               currentUserId={currentUserId}
+              userLabelMap={userLabelMap}
+              userProfileMap={userProfileMap}
               draftKey={`paperclip:issue-comment-draft:${issue.id}`}
               reassignOptions={commentReassignOptions}
               currentAssigneeValue={actualAssigneeValue}
@@ -2664,6 +2948,9 @@ export function IssueDetail() {
               onCancelQueued={handleCancelQueuedComment}
               interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
               onImageClick={handleChatImageClick}
+              onAcceptInteraction={handleAcceptInteraction}
+              onRejectInteraction={handleRejectInteraction}
+              onSubmitInteractionAnswers={handleSubmitInteractionAnswers}
             />
           ) : null}
         </TabsContent>
@@ -2672,14 +2959,23 @@ export function IssueDetail() {
           {detailTab === "activity" ? (
             <IssueDetailActivityTab
               issueId={issue.id}
+              issueStatus={issue.status}
+              childIssues={childIssues}
               agentMap={agentMap}
+              hasLiveRuns={hasLiveRuns}
               currentUserId={currentUserId}
+              userProfileMap={userProfileMap}
               pendingApprovalAction={pendingApprovalAction}
+              handoffFocusSignal={handoffFocusSignal}
               onApprovalAction={(approvalId, action) => {
                 approvalDecision.mutate({ approvalId, action });
               }}
             />
           ) : null}
+        </TabsContent>
+
+        <TabsContent value="related-work">
+          <IssueRelatedWorkPanel relatedWork={issue.relatedWork} />
         </TabsContent>
 
         {activePluginTab && (
@@ -2702,7 +2998,7 @@ export function IssueDetail() {
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
         <SheetContent side="bottom" className="max-h-[85dvh] pb-[env(safe-area-inset-bottom)]">
           <SheetHeader>
-            <SheetTitle className="text-sm">{shell.properties}</SheetTitle>
+            <SheetTitle className="text-sm">Properties</SheetTitle>
           </SheetHeader>
           <ScrollArea className="flex-1 overflow-y-auto">
             <div className="px-4 pb-4">
