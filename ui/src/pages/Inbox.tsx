@@ -16,6 +16,7 @@ import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useGeneralSettings } from "../context/GeneralSettingsContext";
+import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
@@ -58,6 +59,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { cn } from "../lib/utils";
 import { StatusBadge } from "../components/StatusBadge";
 import { approvalLabel, defaultTypeIcon, typeIcon } from "../components/ApprovalPayload";
+import { getInboxCopy } from "../lib/inbox-copy";
 import { timeAgo } from "../lib/timeAgo";
 import { Button } from "@/components/ui/button";
 import {
@@ -651,10 +653,12 @@ function JoinRequestInboxRow({
 export function Inbox() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
   const { isMobile } = useSidebar();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const copy = getInboxCopy(locale);
   const [actionError, setActionError] = useState<string | null>(null);
   const { keyboardShortcutsEnabled } = useGeneralSettings();
   const { data: experimentalSettings } = useQuery({
@@ -2355,6 +2359,7 @@ export function Inbox() {
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(approvalKey)}
+                          archiveLabel={copy.archive}
                         >
                           {row}
                         </SwipeToArchive>
@@ -2393,6 +2398,7 @@ export function Inbox() {
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(runKey)}
+                          archiveLabel={copy.archive}
                         >
                           {row}
                         </SwipeToArchive>
@@ -2428,6 +2434,7 @@ export function Inbox() {
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(joinKey)}
+                          archiveLabel={copy.archive}
                         >
                           {row}
                         </SwipeToArchive>
@@ -2457,6 +2464,7 @@ export function Inbox() {
                         selected={isSelected}
                         disabled={archivingIssueIds.has(issue.id) || archiveIssueMutation.isPending}
                         onArchive={() => archiveIssueMutation.mutate(issue.id)}
+                        archiveLabel={copy.archive}
                       >
                         {parentRow}
                       </SwipeToArchive>
@@ -2486,6 +2494,7 @@ export function Inbox() {
                                 selected={isChildSelected}
                                 disabled={isChildArchiving || archiveIssueMutation.isPending}
                                 onArchive={() => archiveIssueMutation.mutate(child.id)}
+                                archiveLabel={copy.archive}
                               >
                                 {childRow}
                               </SwipeToArchive>

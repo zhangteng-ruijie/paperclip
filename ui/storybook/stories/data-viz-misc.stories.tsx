@@ -525,6 +525,7 @@ function SwipeToArchiveDemo({ disabled = false }: { disabled?: boolean }) {
               selected
               disabled={disabled}
               onArchive={() => setArchived(true)}
+              archiveLabel="Archive"
             >
               <EntityRow
                 leading={<Play className="h-4 w-4 text-cyan-600" />}

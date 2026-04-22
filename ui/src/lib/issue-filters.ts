@@ -39,6 +39,7 @@ export const issueQuickFilterPresets: Array<{
 ];
 
 export function issueFilterLabel(value: string): string {
+  if (value === "todo") return "To Do";
   return value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
