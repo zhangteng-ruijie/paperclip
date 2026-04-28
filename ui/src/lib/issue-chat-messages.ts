@@ -32,6 +32,8 @@ export interface IssueChatComment extends IssueComment {
   clientStatus?: "pending" | "queued";
   queueState?: "queued";
   queueTargetRunId?: string | null;
+  queueReason?: "hold" | "active_run" | "other";
+  followUpRequested?: boolean;
 }
 
 export interface IssueChatLinkedRun {
@@ -44,6 +46,7 @@ export interface IssueChatLinkedRun {
   startedAt: Date | string | null;
   finishedAt?: Date | string | null;
   hasStoredOutput?: boolean;
+  logBytes?: number | null;
 }
 
 export interface IssueChatTranscriptEntry {
@@ -334,7 +337,9 @@ function createCommentMessage(args: {
     clientStatus: comment.clientStatus ?? null,
     queueState: comment.queueState ?? null,
     queueTargetRunId: comment.queueTargetRunId ?? null,
+    queueReason: comment.queueReason ?? null,
     interruptedRunId: comment.interruptedRunId ?? null,
+    followUpRequested: comment.followUpRequested === true,
   };
 
   if (comment.authorAgentId) {
@@ -374,7 +379,15 @@ function createTimelineEventMessage(args: {
       ? runtimeActorLabel("system")
       : (formatAssigneeUserLabel(event.actorId, currentUserId, userLabelMap) ?? runtimeActorLabel("board"));
 
-  const lines: string[] = [isZh ? `${actorName} 更新了此任务` : `${actorName} updated this issue`];
+  const lines: string[] = [
+    event.followUpRequested
+      ? isZh
+        ? `${actorName} 请求跟进`
+        : `${actorName} requested follow-up`
+      : isZh
+        ? `${actorName} 更新了此任务`
+        : `${actorName} updated this issue`,
+  ];
   if (event.statusChange) {
     lines.push(
       isZh
@@ -407,6 +420,7 @@ function createTimelineEventMessage(args: {
         actorId: event.actorId,
         statusChange: event.statusChange ?? null,
         assigneeChange: event.assigneeChange ?? null,
+        followUpRequested: event.followUpRequested === true,
       },
     },
   };

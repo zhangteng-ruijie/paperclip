@@ -195,11 +195,12 @@ export function issueQuickFilterLabel(
 }
 
 export function issueSortFieldLabel(
-  field: "status" | "priority" | "title" | "created" | "updated",
+  field: "status" | "priority" | "title" | "created" | "updated" | "workflow",
   locale: IssuesCopyLocale,
 ): string {
   return (
     {
+      workflow: locale === "zh-CN" ? "工作流" : "Workflow",
       status: getIssuesCopy(locale).status,
       priority: getIssuesCopy(locale).priority,
       title: getIssuesCopy(locale).title,

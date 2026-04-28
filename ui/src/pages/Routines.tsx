@@ -14,6 +14,7 @@ import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { groupBy } from "../lib/groupBy";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import {
   formatRoutineAssigneeGroupLabel,
@@ -495,13 +496,7 @@ export function Routines() {
     () => new Map((projects ?? []).map((project) => [project.id, project])),
     [projects],
   );
-  const liveIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const run of liveRuns ?? []) {
-      if (run.issueId) ids.add(run.issueId);
-    }
-    return ids;
-  }, [liveRuns]);
+  const liveIssueIds = useMemo(() => collectLiveIssueIds(liveRuns), [liveRuns]);
   const routineGroups = useMemo(
     () => buildRoutineGroups(routines ?? [], routineViewState.groupBy, projectById, agentById, locale),
     [agentById, locale, projectById, routineViewState.groupBy, routines],

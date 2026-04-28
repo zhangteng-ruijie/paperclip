@@ -27,18 +27,40 @@ function isRunActive(run: LiveRunForIssue): boolean {
 
 interface ActiveAgentsPanelProps {
   companyId: string;
+  title?: string;
+  minRunCount?: number;
+  fetchLimit?: number;
+  cardLimit?: number;
+  gridClassName?: string;
+  cardClassName?: string;
+  emptyMessage?: string;
+  queryScope?: string;
+  showMoreLink?: boolean;
 }
 
-export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
+export function ActiveAgentsPanel({
+  companyId,
+  title,
+  minRunCount = MIN_DASHBOARD_RUNS,
+  fetchLimit,
+  cardLimit = DASHBOARD_RUN_CARD_LIMIT,
+  gridClassName,
+  cardClassName,
+  emptyMessage,
+  queryScope = "dashboard",
+  showMoreLink = true,
+}: ActiveAgentsPanelProps) {
   const { locale } = useLocale();
   const copy = getDashboardCopy(locale);
+  const resolvedTitle = title ?? copy.agentsHeading;
+  const resolvedEmptyMessage = emptyMessage ?? copy.noRecentAgentRuns;
   const { data: liveRuns } = useQuery({
-    queryKey: [...queryKeys.liveRuns(companyId), "dashboard"],
-    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, MIN_DASHBOARD_RUNS),
+    queryKey: [...queryKeys.liveRuns(companyId), queryScope, { minRunCount, fetchLimit }],
+    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, { minCount: minRunCount, limit: fetchLimit }),
   });
 
   const runs = liveRuns ?? [];
-  const visibleRuns = useMemo(() => runs.slice(0, DASHBOARD_RUN_CARD_LIMIT), [runs]);
+  const visibleRuns = useMemo(() => runs.slice(0, cardLimit), [cardLimit, runs]);
   const hiddenRunCount = Math.max(0, runs.length - visibleRuns.length);
   const { data: issues } = useQuery({
     queryKey: [...queryKeys.issues.list(companyId), "with-routine-executions"],
@@ -66,14 +88,14 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
   return (
     <div>
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        {copy.agentsHeading}
+        {resolvedTitle}
       </h3>
       {runs.length === 0 ? (
         <div className="rounded-xl border border-border p-4">
-          <p className="text-sm text-muted-foreground">{copy.noRecentAgentRuns}</p>
+          <p className="text-sm text-muted-foreground">{resolvedEmptyMessage}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <div className={cn("grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4", gridClassName)}>
           {visibleRuns.map((run) => (
             <AgentRunCard
               key={run.id}
@@ -83,13 +105,14 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
               transcript={transcriptByRun.get(run.id) ?? EMPTY_TRANSCRIPT}
               hasOutput={hasOutputForRun(run.id)}
               isActive={isRunActive(run)}
+              className={cardClassName}
             />
           ))}
         </div>
       )}
-      {hiddenRunCount > 0 && (
+      {showMoreLink && hiddenRunCount > 0 && (
         <div className="mt-3 flex justify-end text-xs text-muted-foreground">
-          <Link to="/agents" className="hover:text-foreground hover:underline">
+          <Link to="/dashboard/live" className="hover:text-foreground hover:underline">
             {hiddenRunCount} more active/recent run{hiddenRunCount === 1 ? "" : "s"}
           </Link>
         </div>
@@ -105,6 +128,7 @@ const AgentRunCard = memo(function AgentRunCard({
   transcript,
   hasOutput,
   isActive,
+  className,
 }: {
   companyId: string;
   run: LiveRunForIssue;
@@ -112,6 +136,7 @@ const AgentRunCard = memo(function AgentRunCard({
   transcript: TranscriptEntry[];
   hasOutput: boolean;
   isActive: boolean;
+  className?: string;
 }) {
   const { locale } = useLocale();
   return (
@@ -120,6 +145,7 @@ const AgentRunCard = memo(function AgentRunCard({
       isActive
         ? "border-cyan-500/25 bg-cyan-500/[0.04] shadow-[0_16px_40px_rgba(6,182,212,0.08)]"
         : "border-border bg-background/70",
+      className,
     )}>
       <div className="border-b border-border/60 px-3 py-3">
         <div className="flex items-start justify-between gap-2">
