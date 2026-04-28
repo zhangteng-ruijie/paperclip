@@ -17,7 +17,7 @@
     "typecheck": "pnpm run preflight:workspace-links && pnpm -r typecheck",
     "test": "pnpm run test:run",
     "test:watch": "pnpm run preflight:workspace-links && vitest",
-    "test:run": "pnpm run preflight:workspace-links && vitest run",
+    "test:run": "pnpm run preflight:workspace-links && node scripts/run-vitest-stable.mjs",
     "sync:upstream": "node scripts/upstream-sync/index.mjs",
     "sync:upstream:dry-run": "node scripts/upstream-sync/index.mjs --dry-run",
     "test:upstream-sync": "node --test $(find scripts/upstream-sync -name '*.test.mjs' -print | sort)",

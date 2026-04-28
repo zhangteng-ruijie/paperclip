@@ -122,6 +122,8 @@ const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string 
   cancelled: { icon: Slash, color: "text-neutral-500 dark:text-neutral-400" },
 };
 
+const RUN_LOG_PAGE_BYTES = 256_000;
+
 const REDACTED_ENV_VALUE = "***REDACTED***";
 const SECRET_ENV_KEY_RE =
   /(api[-_]?key|access[-_]?token|auth(?:_?token)?|authorization|bearer|secret|passwd|password|credential|jwt|private[-_]?key|cookie|connectionstring)/i;
@@ -951,6 +953,7 @@ export function AgentDetail() {
                     pm: "产品经理",
                     qa: "测试",
                     devops: "运维",
+                    security: "安全",
                     researcher: "研究员",
                     general: "通用",
                   }[agent.role] ?? roleLabels[agent.role] ?? agent.role)
@@ -3530,6 +3533,8 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
   const [logLoading, setLogLoading] = useState(!!run.logRef);
   const [logError, setLogError] = useState<string | null>(null);
   const [logOffset, setLogOffset] = useState(0);
+  const [hasMoreLog, setHasMoreLog] = useState(false);
+  const [loadingMoreLog, setLoadingMoreLog] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isStreamingConnected, setIsStreamingConnected] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
@@ -3684,6 +3689,8 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
     pendingLogLineRef.current = "";
     setLogLines([]);
     setLogOffset(0);
+    setHasMoreLog(false);
+    setLoadingMoreLog(false);
     setLogError(null);
 
     if (!run.logRef && !isLive) {
@@ -3694,25 +3701,14 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
     }
 
     setLogLoading(true);
-    const firstLimit =
-      typeof run.logBytes === "number" && run.logBytes > 0
-        ? Math.min(Math.max(run.logBytes + 1024, 256_000), 2_000_000)
-        : 256_000;
-
     const load = async () => {
       try {
-        let offset = 0;
-        let first = true;
-        while (!cancelled) {
-          const result = await heartbeatsApi.log(run.id, offset, first ? firstLimit : 256_000);
-          if (cancelled) break;
-          appendLogContent(result.content, result.nextOffset === undefined);
-          const next = result.nextOffset ?? offset + result.content.length;
-          setLogOffset(next);
-          offset = next;
-          first = false;
-          if (result.nextOffset === undefined || isLive) break;
-        }
+        const result = await heartbeatsApi.log(run.id, 0, RUN_LOG_PAGE_BYTES);
+        if (cancelled) return;
+        appendLogContent(result.content, result.nextOffset === undefined);
+        const next = result.nextOffset ?? result.content.length;
+        setLogOffset(next);
+        setHasMoreLog(!isLive && result.nextOffset !== undefined);
       } catch (err) {
         if (!cancelled) {
           if (isLive && isRunLogUnavailable(err)) {
@@ -3731,6 +3727,23 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
       cancelled = true;
     };
   }, [run.id, run.logRef, run.logBytes, isLive, copy.failedToLoadRunLog]);
+
+  async function loadMorePersistedLog() {
+    if (loadingMoreLog || !hasMoreLog) return;
+    setLoadingMoreLog(true);
+    setLogError(null);
+    try {
+      const result = await heartbeatsApi.log(run.id, logOffset, RUN_LOG_PAGE_BYTES);
+      appendLogContent(result.content, result.nextOffset === undefined);
+      const next = result.nextOffset ?? logOffset + result.content.length;
+      setLogOffset(next);
+      setHasMoreLog(result.nextOffset !== undefined);
+    } catch (err) {
+      setLogError(err instanceof Error ? err.message : "Failed to load more run log");
+    } finally {
+      setLoadingMoreLog(false);
+    }
+  }
 
   // Poll for live updates
   useEffect(() => {
@@ -4003,6 +4016,25 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
           emptyMessage={run.logRef ? copy.waitingForTranscript : copy.noPersistedTranscript}
           locale={locale}
         />
+        {hasMoreLog && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={loadMorePersistedLog}
+              disabled={loadingMoreLog}
+            >
+              {loadingMoreLog ? "Loading..." : "Load more log"}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Showing the first {Math.round(logOffset / 1024).toLocaleString("en-US")} KB
+              {typeof run.logBytes === "number" && run.logBytes > 0
+                ? ` of ${Math.round(run.logBytes / 1024).toLocaleString("en-US")} KB`
+                : ""}
+            </span>
+          </div>
+        )}
         {logError && (
           <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
             {logError}
