@@ -24,6 +24,7 @@ import {
   formatOpenClawInvitePrompt,
   getCompanySettingsCopy,
 } from "../lib/company-settings-copy";
+import { hidePaperclipIngUrl } from "../lib/external-links";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Settings, Check, Download, Upload } from "lucide-react";
@@ -38,6 +39,7 @@ import {
 } from "../components/agent-config-primitives";
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
+const VISIBLE_FEEDBACK_TERMS_URL = hidePaperclipIngUrl(FEEDBACK_TERMS_URL);
 
 type AgentSnippetInput = {
   onboardingTextUrl: string;
@@ -1205,9 +1207,9 @@ export function CompanySettings() {
                 enabledBy: selectedCompany.feedbackDataSharingConsentByUserId ?? null,
               })}
             </div>
-            {FEEDBACK_TERMS_URL ? (
+            {VISIBLE_FEEDBACK_TERMS_URL ? (
               <a
-                href={FEEDBACK_TERMS_URL}
+                href={VISIBLE_FEEDBACK_TERMS_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex text-foreground underline underline-offset-4"

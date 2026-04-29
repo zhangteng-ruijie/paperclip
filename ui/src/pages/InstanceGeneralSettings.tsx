@@ -25,12 +25,14 @@ import {
   formatRetentionWeeks,
   getInstanceAdminCopy,
 } from "../lib/instance-admin-copy";
+import { hidePaperclipIngUrl } from "../lib/external-links";
 import { queryKeys } from "../lib/queryKeys";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "../lib/utils";
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
+const VISIBLE_FEEDBACK_TERMS_URL = hidePaperclipIngUrl(FEEDBACK_TERMS_URL);
 const TIME_ZONE_OPTIONS = ["system", "Asia/Shanghai", "UTC"] as const;
 
 export function InstanceGeneralSettings() {
@@ -369,9 +371,9 @@ export function InstanceGeneralSettings() {
             <p className="max-w-2xl text-sm text-muted-foreground">
               {t("settings.general.feedbackDescription")}
             </p>
-            {FEEDBACK_TERMS_URL ? (
+            {VISIBLE_FEEDBACK_TERMS_URL ? (
               <a
-                href={FEEDBACK_TERMS_URL}
+                href={VISIBLE_FEEDBACK_TERMS_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"

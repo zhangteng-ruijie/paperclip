@@ -16,6 +16,7 @@ const mockAuthApi = vi.hoisted(() => ({
 }));
 const mockToggleTheme = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
+const mockLocale = vi.hoisted(() => ({ current: "en" }));
 
 vi.mock("@/api/auth", () => ({
   authApi: mockAuthApi,
@@ -41,6 +42,10 @@ vi.mock("../context/ThemeContext", () => ({
   }),
 }));
 
+vi.mock("../context/LocaleContext", () => ({
+  useLocale: () => ({ locale: mockLocale.current }),
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +62,7 @@ describe("SidebarAccountMenu", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
+    mockLocale.current = "en";
     mockAuthApi.getSession.mockResolvedValue({
       session: { id: "session-1", userId: "user-1" },
       user: {
@@ -106,9 +112,51 @@ describe("SidebarAccountMenu", () => {
     await flushReact();
 
     expect(document.body.textContent).toContain("Edit profile");
-    expect(document.body.textContent).toContain("Documentation");
+    expect(document.body.textContent).not.toContain("Documentation");
+    expect(document.body.querySelector('a[href*="paperclip.ing"]')).toBeNull();
     expect(document.body.textContent).toContain("Paperclip v1.2.3");
     expect(document.body.textContent).toContain("jane@example.com");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("localizes account menu labels in Chinese", async () => {
+    mockLocale.current = "zh-CN";
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarAccountMenu
+            deploymentMode="authenticated"
+            instanceSettingsTarget="/instance/settings/general"
+            version="1.2.3"
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const trigger = container.querySelector('button[aria-label="打开账号菜单"]');
+    expect(trigger).not.toBeNull();
+
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    expect(document.body.textContent).toContain("查看个人资料");
+    expect(document.body.textContent).toContain("编辑个人资料");
+    expect(document.body.textContent).toContain("实例设置");
+    expect(document.body.textContent).toContain("切换到浅色模式");
+    expect(document.body.textContent).toContain("退出登录");
+    expect(document.body.textContent).not.toContain("Documentation");
 
     await act(async () => {
       root.unmount();

@@ -67,6 +67,7 @@ import {
 } from "../lib/issue-detail-copy";
 import { getIssuesCopy } from "../lib/issues-copy";
 import { getShellCopy } from "../lib/shell-copy";
+import { hidePaperclipIngUrl } from "../lib/external-links";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { localizedActorLabel } from "../lib/actor-labels";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -161,6 +162,7 @@ type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
 };
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
+const VISIBLE_FEEDBACK_TERMS_URL = hidePaperclipIngUrl(FEEDBACK_TERMS_URL);
 const ISSUE_COMMENT_PAGE_SIZE = 50;
 const ISSUE_COMMENT_AUTOLOAD_LIMIT = ISSUE_COMMENT_PAGE_SIZE * 3;
 const TREE_CONTROL_MODE_LABEL: Record<IssueTreeControlMode, string> = {
@@ -3228,7 +3230,7 @@ export function IssueDetail() {
         canDeleteDocuments={Boolean(session?.user?.id)}
         feedbackVotes={feedbackVotes}
         feedbackDataSharingPreference={feedbackDataSharingPreference}
-        feedbackTermsUrl={FEEDBACK_TERMS_URL}
+        feedbackTermsUrl={VISIBLE_FEEDBACK_TERMS_URL}
         mentions={mentionOptions}
         imageUploadHandler={async (file) => {
           const attachment = await uploadAttachment.mutateAsync(file);
@@ -3434,7 +3436,7 @@ export function IssueDetail() {
               composerRef={commentComposerRef}
               feedbackVotes={feedbackVotes}
               feedbackDataSharingPreference={feedbackDataSharingPreference}
-              feedbackTermsUrl={FEEDBACK_TERMS_URL}
+              feedbackTermsUrl={VISIBLE_FEEDBACK_TERMS_URL}
               agentMap={agentMap}
               currentUserId={currentUserId}
               userLabelMap={userLabelMap}
