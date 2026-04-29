@@ -297,7 +297,7 @@ test.describe("Signoff execution policy", () => {
 
     // Step 2: Navigate to issue in UI and verify execution label
     await page.goto(`/${ctx.companyPrefix}/issues/${issue.identifier}`);
-    await expect(page.getByRole('button', { name: '待审核' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/审核待处理|Review pending/)).toBeVisible({ timeout: 10_000 });
 
     // Step 3: Reviewer approves → should route to approver
     const step3Res = await agentPatch(
@@ -315,7 +315,7 @@ test.describe("Signoff execution policy", () => {
 
     // Step 4: Verify UI shows approval pending
     await page.reload();
-    await expect(page.locator('text=审批待处理')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/审批待处理|Approval pending/)).toBeVisible({ timeout: 10_000 });
 
     // Step 5: Approver approves → should complete
     const step5Res = await agentPatch(

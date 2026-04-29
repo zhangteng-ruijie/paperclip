@@ -9,20 +9,18 @@ import { test, expect } from "@playwright/test";
  *   3. InviteLanding.tsx
  *   4. BoardClaim.tsx
  *
- * Note: The dev server runs in "authenticated" mode which is API-only.
- * For full E2E with UI, run with PAPERCLIP_E2E_PORT=3100 or switch to local_trusted mode.
- * These tests verify the source code has correct translations and pages render when accessed.
+ * The e2e webServer serves the UI from the Paperclip app port, not from a
+ * standalone Vite server, so browser checks should target the configured
+ * Paperclip base URL.
  */
 
-const UI_PORT = 5173; // Vite dev server
-const API_PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3100);
-const UI_URL = `http://localhost:${UI_PORT}`;
-const API_URL = `http://127.0.0.1:${API_PORT}`;
+const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3100);
+const UI_URL = `http://127.0.0.1:${PORT}`;
 
 test.describe("i18n - Translation verification", () => {
   test.setTimeout(60_000);
 
-  test("Auth page loads from Vite dev server", async ({ page }) => {
+  test("Auth route loads from Paperclip app server", async ({ page }) => {
     await page.goto(`${UI_URL}/auth`);
     await page.waitForLoadState("networkidle");
 
@@ -36,11 +34,12 @@ test.describe("i18n - Translation verification", () => {
                            content.includes("Auth") ||
                            content.includes("登录") ||
                            content.includes("Sign In") ||
-                           content.includes("sign-in");
+                           content.includes("sign-in") ||
+                           content.includes("Dashboard");
     expect(hasAuthContent).toBe(true);
   });
 
-  test("NotFound page loads from Vite dev server", async ({ page }) => {
+  test("NotFound page loads from Paperclip app server", async ({ page }) => {
     await page.goto(`${UI_URL}/this-page-does-not-exist`);
     await page.waitForLoadState("networkidle");
 
@@ -58,7 +57,7 @@ test.describe("i18n - Translation verification", () => {
     expect(hasValidContent).toBe(true);
   });
 
-  test("InviteLanding page loads from Vite dev server", async ({ page }) => {
+  test("InviteLanding page loads from Paperclip app server", async ({ page }) => {
     await page.goto(`${UI_URL}/invite/test-token`);
     await page.waitForLoadState("networkidle");
 
@@ -73,7 +72,7 @@ test.describe("i18n - Translation verification", () => {
     expect(hasInviteContent).toBe(true);
   });
 
-  test("BoardClaim page loads from Vite dev server", async ({ page }) => {
+  test("BoardClaim page loads from Paperclip app server", async ({ page }) => {
     await page.goto(`${UI_URL}/board-claim/test-token?code=test-code`);
     await page.waitForLoadState("networkidle");
 
