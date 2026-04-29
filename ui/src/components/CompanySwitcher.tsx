@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
 
 function statusDotColor(status?: string): string {
   switch (status) {
@@ -26,14 +27,22 @@ function statusDotColor(status?: string): string {
   }
 }
 
-export function CompanySwitcher() {
+interface CompanySwitcherProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export function CompanySwitcher({ open: controlledOpen, onOpenChange }: CompanySwitcherProps = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
   const { companies, selectedCompany, setSelectedCompanyId } = useCompany();
   const { locale } = useLocale();
   const copy = getShellCopy(locale);
   const sidebarCompanies = companies.filter((company) => company.status !== "archived");
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"

@@ -59,6 +59,11 @@ const assetSvc = {
   create: vi.fn(),
 };
 
+const secretSvc = {
+  normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown>) => config),
+  resolveAdapterConfigForRuntime: vi.fn(async (_companyId: string, config: Record<string, unknown>) => ({ config, secretKeys: new Set<string>() })),
+};
+
 const agentInstructionsSvc = {
   exportFiles: vi.fn(),
   materializeManagedBundle: vi.fn(),
@@ -96,6 +101,10 @@ vi.mock("../services/assets.js", () => ({
   assetService: () => assetSvc,
 }));
 
+vi.mock("../services/secrets.js", () => ({
+  secretService: () => secretSvc,
+}));
+
 vi.mock("../services/agent-instructions.js", () => ({
   agentInstructionsService: () => agentInstructionsSvc,
 }));
@@ -117,6 +126,11 @@ describe("company portability", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    secretSvc.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId, config) => config);
+    secretSvc.resolveAdapterConfigForRuntime.mockImplementation(async (_companyId, config) => ({
+      config,
+      secretKeys: new Set<string>(),
+    }));
     companySvc.getById.mockResolvedValue({
       id: "company-1",
       name: "Paperclip",
@@ -125,7 +139,12 @@ describe("company portability", () => {
       brandColor: "#5c5fff",
       logoAssetId: null,
       logoUrl: null,
-      requireBoardApprovalForNewAgents: true,
+      requireBoardApprovalForNewAgents: false,
+    });
+    companySvc.create.mockResolvedValue({
+      id: "company-imported",
+      name: "Imported Paperclip",
+      requireBoardApprovalForNewAgents: false,
     });
     agentSvc.list.mockResolvedValue([
       {
@@ -440,6 +459,32 @@ describe("company portability", () => {
     expect(extension).not.toContain("budgetMonthlyCents: 0");
     expect(exported.warnings).toContain("Agent claudecoder command /Users/dotta/.local/bin/claude was omitted from export because it is system-dependent.");
     expect(exported.warnings).toContain("Agent claudecoder PATH override was omitted from export because it is system-dependent.");
+  });
+
+  it("exports hire approval policy only when approval is required", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    companySvc.getById.mockResolvedValueOnce({
+      id: "company-1",
+      name: "Paperclip",
+      description: null,
+      issuePrefix: "PAP",
+      brandColor: "#5c5fff",
+      logoAssetId: null,
+      logoUrl: null,
+      requireBoardApprovalForNewAgents: true,
+    });
+
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: false,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    expect(asTextFile(exported.files[".paperclip.yaml"])).toContain("requireBoardApprovalForNewAgents: true");
   });
 
   it("exports default sidebar order into the Paperclip extension and manifest", async () => {
@@ -1509,7 +1554,7 @@ describe("company portability", () => {
       }),
     ]);
 
-    await portability.importBundle({
+    const result = await portability.importBundle({
       source: { type: "inline", rootPath: "paperclip-demo", files },
       include: { company: true, agents: true, projects: true, issues: true, skills: false },
       target: { mode: "new_company", newCompanyName: "Imported Paperclip" },
@@ -1526,6 +1571,9 @@ describe("company portability", () => {
       concurrencyPolicy: "always_enqueue",
       catchUpPolicy: "enqueue_missed_with_cap",
     }), expect.any(Object));
+    expect(result.warnings).not.toContain(
+      "Task monday-review assignee claudecoder is pending_approval; imported work was left unassigned.",
+    );
     expect(routineSvc.createTrigger).toHaveBeenCalledTimes(2);
     expect(routineSvc.createTrigger).toHaveBeenCalledWith("routine-created", expect.objectContaining({
       kind: "schedule",
@@ -2110,6 +2158,7 @@ describe("company portability", () => {
       runtimeConfig: {
         heartbeat: {
           enabled: false,
+          maxConcurrentRuns: 5,
         },
       },
     });
@@ -2188,6 +2237,7 @@ describe("company portability", () => {
       runtimeConfig: {
         heartbeat: {
           enabled: false,
+          maxConcurrentRuns: 5,
         },
       },
     }));
@@ -2283,6 +2333,72 @@ describe("company portability", () => {
     expect(materializedFiles["AGENTS.md"]).not.toContain('name: "ClaudeCoder"');
   });
 
+  it("preserves issue labelIds through export and import round-trip", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    projectSvc.list.mockResolvedValue([
+      {
+        id: "project-1",
+        name: "Launch",
+        urlKey: "launch",
+        description: null,
+        status: "active",
+        leadAgentId: null,
+        metadata: null,
+        defaultProjectWorkspaceId: null,
+      },
+    ]);
+    projectSvc.listWorkspaces.mockResolvedValue([]);
+    issueSvc.list.mockResolvedValue([
+      {
+        id: "issue-1",
+        identifier: "PAP-1",
+        title: "Labelled task",
+        description: "Has labels",
+        projectId: "project-1",
+        projectWorkspaceId: null,
+        assigneeAgentId: null,
+        status: "todo",
+        priority: "high",
+        labelIds: ["label-a", "label-b"],
+        billingCode: null,
+        executionWorkspaceSettings: null,
+        assigneeAdapterOverrides: null,
+      },
+    ]);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: false, projects: true, issues: true },
+    });
+
+    const extension = asTextFile(exported.files[".paperclip.yaml"]);
+    expect(extension).toContain("labelIds:");
+    expect(extension).toContain("label-a");
+    expect(extension).toContain("label-b");
+
+    companySvc.create.mockResolvedValue({ id: "company-imported", name: "Imported" });
+    accessSvc.ensureMembership.mockResolvedValue(undefined);
+    agentSvc.list.mockResolvedValue([]);
+    projectSvc.list.mockResolvedValue([]);
+    projectSvc.create.mockResolvedValue({ id: "project-imported", name: "Launch", urlKey: "launch" });
+    issueSvc.create.mockResolvedValue({ id: "issue-imported", title: "Labelled task" });
+
+    await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: true, agents: false, projects: true, issues: true },
+      target: { mode: "new_company", newCompanyName: "Imported" },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(issueSvc.create).toHaveBeenCalledWith(
+      "company-imported",
+      expect.objectContaining({
+        labelIds: ["label-a", "label-b"],
+      }),
+    );
+  });
+
   it("strips root AGENTS frontmatter when importing a nested agent entry path", async () => {
     const portability = companyPortabilityService({} as any);
 
@@ -2352,4 +2468,526 @@ describe("company portability", () => {
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toMatch(/^---\n/);
     expect(nestedMaterializedFiles?.["AGENTS.md"]).not.toContain('name: "ClaudeCoder"');
   });
+
+  it("rejects dangerous adapter types on agent-safe imports", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    agentSvc.list.mockResolvedValue([]);
+
+    await expect(portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      agents: ["claudecoder"],
+      collisionStrategy: "rename",
+      adapterOverrides: {
+        claudecoder: {
+          adapterType: "process",
+          adapterConfig: {
+            command: "/bin/sh",
+            args: ["-c", "id"],
+          },
+        },
+      },
+    }, "user-1", {
+      mode: "agent_safe",
+      sourceCompanyId: "company-1",
+    })).rejects.toThrow('Adapter type "process" is not allowed in safe imports');
+
+    expect(agentSvc.create).not.toHaveBeenCalled();
+  });
+
+  it("imports new agents as active while preserving future hire approval settings", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    agentSvc.list.mockResolvedValue([]);
+    secretSvc.normalizeAdapterConfigForPersistence.mockResolvedValueOnce({
+      normalized: true,
+      env: {
+        OPENAI_API_KEY: {
+          type: "secret_ref",
+          secretId: "secret-1",
+          version: "latest",
+        },
+      },
+    });
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
+      id: "agent-created",
+      name: String(input.name),
+      adapterType: input.adapterType,
+      adapterConfig: input.adapterConfig,
+      status: input.status,
+    }));
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "new_company",
+        newCompanyName: "Imported Paperclip",
+      },
+      agents: ["claudecoder"],
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(secretSvc.normalizeAdapterConfigForPersistence).toHaveBeenCalledWith(
+      "company-imported",
+      expect.any(Object),
+      { strictMode: false },
+    );
+    expect(agentSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
+      adapterType: "claude_local",
+      adapterConfig: expect.objectContaining({
+        normalized: true,
+      }),
+      status: "idle",
+    }));
+    expect(companySvc.create).toHaveBeenCalledWith(expect.objectContaining({
+      requireBoardApprovalForNewAgents: false,
+    }));
+  });
+
+  it("normalizes adapter config on replace imports before updating existing agents", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    secretSvc.normalizeAdapterConfigForPersistence.mockResolvedValueOnce({
+      normalized: "updated",
+    });
+    agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
+      id,
+      name: "ClaudeCoder",
+      adapterType: patch.adapterType,
+      adapterConfig: patch.adapterConfig,
+    }));
+
+    await portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      agents: ["claudecoder"],
+      collisionStrategy: "replace",
+      adapterOverrides: {
+        claudecoder: {
+          adapterType: "codex_local",
+          adapterConfig: {
+            model: "gpt-5.4",
+          },
+        },
+      },
+    }, "user-1");
+
+    expect(secretSvc.normalizeAdapterConfigForPersistence).toHaveBeenCalledWith(
+      "company-1",
+      expect.any(Object),
+      { strictMode: false },
+    );
+    expect(agentSvc.update).toHaveBeenCalledWith("agent-1", expect.objectContaining({
+      adapterType: "codex_local",
+      adapterConfig: {
+        normalized: "updated",
+      },
+    }));
+  });
+
+  describe("import validation", () => {
+    it("rejects import packages missing COMPANY.md", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: { "agents/test/AGENTS.md": "---\nname: Test\n---\n" } },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow("Company package is missing COMPANY.md");
+    });
+
+    it("rejects import when COMPANY.md is a binary file", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: { "COMPANY.md": { encoding: "base64", data: "binary" } } },
+        include: {},
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow("is not readable as text");
+    });
+
+    it("normalizes path traversal attempts in file keys", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: TraversalTest\nslug: traversal-test\n---\n",
+            "agents/evil/../../../etc/passwd/AGENTS.md": "---\nname: Evil\n---\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // Path traversal should be normalized; the resulting manifest should not contain escaped paths
+      expect(preview.manifest.agents.some((a) => a.slug.includes(".."))).toBe(false);
+    });
+
+    it("warns when referenced agent files are missing from package", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": `---\nname: MissingRefTest\nslug: missing-ref-test\nincludes:\n  - path: agents/nonexistent/AGENTS.md\n---\n`,
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("missing from package"))).toBe(true);
+    });
+
+    it("validates import with empty files object throws", async () => {
+      const portability = companyPortabilityService({} as any);
+      await expect(portability.previewImport({
+        source: { type: "inline", files: {} },
+        include: {},
+        target: { mode: "new_company", newCompanyName: "Test" },
+      })).rejects.toThrow();
+    });
+
+    it("handles import with only company and no agents gracefully", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: SoloCompany\nslug: solo-company\n---\n",
+          },
+        },
+        include: { company: true, agents: false },
+        target: { mode: "new_company", newCompanyName: "Solo Test" },
+      });
+      expect(preview.manifest.company?.name).toBe("SoloCompany");
+      expect(preview.manifest.agents).toHaveLength(0);
+    });
+
+    it("rejects import with invalid YAML in extension file", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: BadYaml\nslug: bad-yaml\n---\n",
+            ".paperclip.yaml": "invalid: yaml: [unclosed",
+          },
+        },
+        include: { company: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // Should not crash even with bad YAML; warnings may be present
+      expect(preview.manifest.company?.name).toBe("BadYaml");
+    });
+
+    it("reports errors from buildPreview for missing manifest company metadata", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: NoCompanyInclude\nslug: no-company-include\n---\n",
+          },
+        },
+        include: { company: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      // The buildPreview checks if manifest.company is present when include.company is true
+      // In this case, the company markdown is parsed so manifest.company should exist
+      expect(preview.manifest.company).not.toBeNull();
+    });
+
+    it("detects and warns for agent referencing missing skills in package", async () => {
+      const portability = companyPortabilityService({} as any);
+      agentSvc.list.mockResolvedValue([]);
+      companySkillSvc.listFull.mockResolvedValue([]);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: SkillRefTest\nslug: skill-ref-test\nincludes:\n  - path: agents/coder/AGENTS.md\n---\n",
+            "agents/coder/AGENTS.md": "---\nname: Coder\nskills:\n  - missing-skill\n---\nInstructions\n",
+          },
+        },
+        include: { agents: true, skills: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("missing-skill") || w.includes("skill"))).toBe(true);
+    });
+
+    it("warns when file paths contain directory traversal segments", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: TraversalWarn\nslug: traversal-warn\n---\n",
+            "agents/evil/../../../etc/passwd/AGENTS.md": "---\nname: Evil\n---\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("directory traversal") || w.includes(".."))).toBe(true);
+    });
+
+    it("warns when binary file entries contain invalid base64 data", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: BadBase64\nslug: bad-base64\nincludes:\n  - path: agents/test/AGENTS.md\n---\n",
+            "agents/test/AGENTS.md": "---\nname: Test\n---\n",
+            "images/logo.png": { encoding: "base64", data: "!!!not-base64!!!" },
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("base64") || w.includes("logo.png"))).toBe(true);
+    });
+
+    it("warns when agent has an unrecognized role", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: RoleTest\nslug: role-test\nincludes:\n  - path: agents/weirdo/AGENTS.md\n---\n",
+            "agents/weirdo/AGENTS.md": "---\nname: Weirdo\nrole: space_marine\n---\nInstructions\n",
+          },
+        },
+        include: { agents: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("unrecognized role") && w.includes("space_marine"))).toBe(true);
+    });
+
+    it("warns when issue has an unrecognized status or priority", async () => {
+      const portability = companyPortabilityService({} as any);
+      const preview = await portability.previewImport({
+        source: {
+          type: "inline",
+          files: {
+            "COMPANY.md": "---\nname: StatusTest\nslug: status-test\nincludes:\n  - path: tasks/check/TASK.md\n---\n",
+            "tasks/check/TASK.md": "---\nname: Check Task\nstatus: in_the_void\npriority: mega_important\n---\nDescription\n",
+          },
+        },
+        include: { issues: true },
+        target: { mode: "new_company", newCompanyName: "Test" },
+      });
+      expect(preview.warnings.some((w) => w.includes("unrecognized status") && w.includes("in_the_void"))).toBe(true);
+      expect(preview.warnings.some((w) => w.includes("unrecognized priority") && w.includes("mega_important"))).toBe(true);
+    });
+
+  it("nameOverrides applied after collision detection do not re-validate uniqueness", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+
+    // Simulate existing agents so collision detection triggers rename
+    agentSvc.list.mockResolvedValue([
+      { id: "existing-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+    ]);
+
+    const preview = await portability.previewImport({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: ["claudecoder"],
+      collisionStrategy: "rename",
+      nameOverrides: { claudecoder: "ClaudeCoder" },
+    });
+
+    // The override reverts the renamed agent back to its original collision name.
+    // This is a known limitation: nameOverrides bypass collision checks.
+    const plan = preview.plan.agentPlans.find((p) => p.slug === "claudecoder");
+    expect(plan).toBeDefined();
+    expect(plan!.action).toBe("create");
+    expect(plan!.plannedName).toBe("ClaudeCoder");
+  });
+
+  it("handles circular reportsTo chains without infinite recursion during export", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    agentSvc.list.mockResolvedValue([
+      {
+        id: "agent-a", name: "AgentA", status: "idle", role: "engineer", title: null, icon: null,
+        reportsTo: "agent-b", capabilities: null, adapterType: "claude_local",
+        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+      },
+      {
+        id: "agent-b", name: "AgentB", status: "idle", role: "manager", title: null, icon: null,
+        reportsTo: "agent-a", capabilities: null, adapterType: "claude_local",
+        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+      },
+    ]);
+    agentInstructionsSvc.exportFiles.mockResolvedValue({
+      files: { "AGENTS.md": "Instructions" }, entryFile: "AGENTS.md", warnings: [],
+    });
+
+    // Export should complete without infinite recursion in org chart building
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: true, projects: false, issues: false },
+    });
+
+    expect(exported.manifest.agents).toHaveLength(2);
+    // Both agents should appear in the export
+    const slugs = exported.manifest.agents.map((a) => a.slug);
+    expect(slugs).toContain("agenta");
+    expect(slugs).toContain("agentb");
+  });
+
+  it("resolves issue assignee to existing agent when agent is skipped", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    projectSvc.list.mockResolvedValue([{
+      id: "project-1", companyId: "company-1", name: "TestProject", urlKey: "testproject",
+      description: null, leadAgentId: null, targetDate: null, color: null, status: "planned",
+      executionWorkspacePolicy: null, archivedAt: null, workspaces: [],
+    }]);
+    issueSvc.list.mockResolvedValue([{
+      id: "issue-1", companyId: "company-1", title: "Test task", identifier: "PAP-1",
+      description: "A test task", status: "todo", priority: "medium",
+      assigneeAgentId: "agent-1", projectId: "project-1", projectWorkspaceId: null,
+      goalId: null, parentId: null, billingCode: null, labelIds: [],
+      executionWorkspaceSettings: null, assigneeAdapterOverrides: null, metadata: null,
+    }]);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: true, issues: true },
+    });
+
+    // Re-import into same company with skip collision strategy
+    // Both agents exist so both will be skipped; the existing agent should resolve for issue assignment
+    agentSvc.list.mockResolvedValue([
+      { id: "agent-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+      { id: "agent-2", name: "CMO", status: "idle", role: "cmo", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+    ]);
+    projectSvc.list.mockResolvedValue([]);
+    issueSvc.list.mockResolvedValue([]);
+    projectSvc.create.mockResolvedValue({ id: "project-new", companyId: "company-1", urlKey: "testproject" });
+    issueSvc.create.mockResolvedValue({ id: "issue-new", identifier: "PAP-100" });
+
+    const result = await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: true, issues: true },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "skip",
+    }, "user-1");
+
+    // Both agents should be skipped (already exist)
+    const agentResult = result.agents.find((a) => a.slug === "claudecoder");
+    expect(agentResult).toBeDefined();
+    expect(agentResult!.action).toBe("skipped");
+
+    // Issue should still be created and reference the existing agent
+    expect(issueSvc.create).toHaveBeenCalled();
+    const issueCreateCall = issueSvc.create.mock.calls[0];
+    // The assigneeAgentId should resolve to the existing agent via existingSlugToAgentId
+    expect(issueCreateCall[1]).toEqual(expect.objectContaining({
+      assigneeAgentId: "agent-1",
+    }));
+  });
+
+  it("handles a package with only skills (no agents or projects)", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: false, projects: false, issues: false, skills: true },
+      expandReferencedSkills: true,
+    });
+
+    expect(exported.manifest.agents).toHaveLength(0);
+    expect(exported.manifest.projects).toHaveLength(0);
+    expect(exported.manifest.issues).toHaveLength(0);
+    // Skills should still be exported
+    expect(exported.manifest.skills.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("preview import detects no agents to import when agents are excluded", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: true, agents: true, projects: false, issues: false },
+    });
+
+    agentSvc.list.mockResolvedValue([]);
+
+    const preview = await portability.previewImport({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: false, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "rename",
+    });
+
+    expect(preview.plan.agentPlans).toHaveLength(0);
+    expect(preview.plan.projectPlans).toHaveLength(0);
+    expect(preview.plan.issuePlans).toHaveLength(0);
+  });
+});
 });

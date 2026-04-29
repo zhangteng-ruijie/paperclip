@@ -15,7 +15,7 @@ import { companySkillsApi } from "../api/companySkills";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useLocale } from "../context/LocaleContext";
-import { useToast } from "../context/ToastContext";
+import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
   formatCompanySkillsAvailableCount,
@@ -569,7 +569,7 @@ function SkillPane({
   savePending: boolean;
   copy: ReturnType<typeof getCompanySkillsCopy>;
 }) {
-  const { pushToast } = useToast();
+  const { pushToast } = useToastActions();
 
   if (!detail) {
     if (loading) {
@@ -798,7 +798,7 @@ export function CompanySkills() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { locale } = useLocale();
   const copy = getCompanySkillsCopy(locale);
-  const { pushToast } = useToast();
+  const { pushToast } = useToastActions();
   const [skillFilter, setSkillFilter] = useState("");
   const [source, setSource] = useState("");
   const [createOpen, setCreateOpen] = useState(false);

@@ -3,7 +3,7 @@ import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local"
 import { models as cursorFallbackModels } from "@paperclipai/adapter-cursor-local";
 import { models as opencodeFallbackModels } from "@paperclipai/adapter-opencode-local";
 import { resetOpenCodeModelsCacheForTests } from "@paperclipai/adapter-opencode-local/server";
-import { listAdapterModels } from "../adapters/index.js";
+import { listAdapterModels, refreshAdapterModels } from "../adapters/index.js";
 import { resetCodexModelsCacheForTests } from "../adapters/codex-models.js";
 import { resetCursorModelsCacheForTests, setCursorModelsRunnerForTests } from "../adapters/cursor-models.js";
 
@@ -31,7 +31,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("loads codex models dynamically and merges fallback options", async () => {
+  it("pins codex models to the adapter whitelist even when an OpenAI key is available", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -46,15 +46,27 @@ describe("adapter model listing", () => {
     const first = await listAdapterModels("codex_local");
     const second = await listAdapterModels("codex_local");
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(first).toEqual(second);
-    expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first).toEqual([{ id: "gpt-5.5", label: "gpt-5.5" }]);
+    expect(first.some((model) => model.id === "gpt-5-pro")).toBe(false);
   });
 
-  it("falls back to static codex models when OpenAI model discovery fails", async () => {
+  it("refreshes codex models from the same adapter whitelist", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const initial = await listAdapterModels("codex_local");
+    const refreshed = await refreshAdapterModels("codex_local");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(initial).toEqual(codexFallbackModels);
+    expect(refreshed).toEqual(codexFallbackModels);
+  });
+
+  it("keeps the codex whitelist when OpenAI model discovery would fail", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: false,
       status: 401,
       json: async () => ({}),
@@ -62,6 +74,7 @@ describe("adapter model listing", () => {
 
     const models = await listAdapterModels("codex_local");
     expect(models).toEqual(codexFallbackModels);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
 

@@ -198,6 +198,50 @@ function normalizePortablePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
+function assertNoPathTraversal(files: Record<string, unknown>): void {
+  for (const filePath of Object.keys(files)) {
+    const normalized = normalizePortablePath(filePath);
+    const segments = normalized.split("/").filter(Boolean);
+    if (segments.includes("..")) {
+      throw new Error(`Invalid package: path traversal detected in '${filePath}'.`);
+    }
+  }
+}
+
+function assertEssentialExportFiles(files: Record<string, unknown>): void {
+  const hasPaperclipYaml = Object.keys(files).some(
+    (f) => f === ".paperclip.yaml" || f === ".paperclip.yml" || f.endsWith("/.paperclip.yaml") || f.endsWith("/.paperclip.yml"),
+  );
+  if (!hasPaperclipYaml) {
+    throw new Error("Export failed: missing .paperclip.yaml manifest in the exported package.");
+  }
+}
+
+function assertCircularAgentHierarchy(agents: Array<{ slug: string; reportsToSlug?: string | null }>): string | null {
+  const slugSet = new Set(agents.map((a) => a.slug));
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+
+  for (const agent of agents) {
+    if (visited.has(agent.slug)) continue;
+    let current: string | null | undefined = agent.slug;
+    const stack: string[] = [];
+    while (current && slugSet.has(current)) {
+      if (inStack.has(current)) {
+        return `Circular agent hierarchy detected: ${stack.join(" -> ")} -> ${current}`;
+      }
+      inStack.add(current);
+      stack.push(current);
+      current = agents.find((a) => a.slug === current)?.reportsToSlug ?? null;
+    }
+    for (const s of stack) {
+      visited.add(s);
+      inStack.delete(s);
+    }
+  }
+  return null;
+}
+
 function shouldIncludePortableFile(filePath: string): boolean {
   const baseName = path.basename(filePath);
   const isMarkdown = baseName.endsWith(".md");
@@ -1239,6 +1283,7 @@ export function registerCompanyCommands(program: Command): void {
           if (!exported) {
             throw new Error("Export request returned no data");
           }
+          assertEssentialExportFiles(exported.files);
           await confirmOverwriteExportDirectory(opts.out!);
           await writeExportToFolder(opts.out!, exported);
           printOutput(
@@ -1339,6 +1384,8 @@ export function registerCompanyCommands(program: Command): void {
               throw new Error("--ref is only supported for GitHub import sources.");
             }
             const inline = await resolveInlineSourceFromPath(from);
+            assertNoPathTraversal(inline.files);
+            assertEssentialExportFiles(inline.files);
             sourcePayload = {
               type: "inline",
               rootPath: inline.rootPath,

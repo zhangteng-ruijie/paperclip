@@ -250,5 +250,5 @@ Notes:
 
 ## General Notes
 
-- The `docker-entrypoint.sh` adjusts the container `node` user UID/GID at startup to match the values passed via `USER_UID`/`USER_GID`, avoiding permission issues on bind-mounted volumes.
+- The `docker-entrypoint.sh` adjusts the container `node` user UID/GID at startup and probes `$PAPERCLIP_HOME` write access; if needed it repairs ownership so bind mounts and named volumes stay writable for uploads/secrets/storage.
 - Paperclip data persists via Docker volumes/bind mounts (compose) or at `~/.local/share/paperclip` (quadlet).

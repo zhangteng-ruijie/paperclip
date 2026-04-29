@@ -54,8 +54,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("<strong>world</strong>");
-    expect(html).toContain("<li>first</li>");
-    expect(html).toContain("<li>second</li>");
+    expect(html).toMatch(/<li[^>]*>first<\/li>/);
+    expect(html).toMatch(/<li[^>]*>second<\/li>/);
   });
 
   it("hides saved-session resume skip stderr from nice mode normalization", () => {
@@ -106,8 +106,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("<h2>Summary</h2>");
-    expect(html).toContain("<li>fixed deploy config</li>");
-    expect(html).toContain("<li>posted issue update</li>");
+    expect(html).toMatch(/<li[^>]*>fixed deploy config<\/li>/);
+    expect(html).toMatch(/<li[^>]*>posted issue update<\/li>/);
     expect(html).not.toContain("result");
   });
 
@@ -172,5 +172,24 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("1 条系统消息");
     expect(html).toContain("⚠️ 危险命令：通过 -e/-c 参数执行脚本");
     expect(html).toContain("✗ 已拒绝");
+  });
+
+  it("windows large raw transcripts instead of rendering every entry at once", () => {
+    const entries: TranscriptEntry[] = Array.from({ length: 500 }, (_, index) => ({
+      kind: "stdout",
+      ts: `2026-03-12T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      text: `line-${index}`,
+    }));
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView mode="raw" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("line-0");
+    expect(html).toContain("line-179");
+    expect(html).not.toContain("line-250");
+    expect(html).not.toContain("line-499");
   });
 });
