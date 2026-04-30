@@ -7,28 +7,17 @@ import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { heartbeatsApi } from "../api/heartbeats";
+import { accessApi } from "../api/access";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
-import { useToast } from "../context/ToastContext";
+import { useToastActions } from "../context/ToastContext";
+import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { queryKeys } from "../lib/queryKeys";
 import { groupBy } from "../lib/groupBy";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import {
-  formatRoutineAssigneeGroupLabel,
-  formatRoutineCount,
-  formatRoutineMoreActionsLabel,
-  formatRoutineProjectGroupLabel,
-  formatRoutineRowStatus,
-  formatRoutineRunStatus,
-  formatRoutineToggleAriaLabel,
-  formatRoutineToggleState,
-  getRoutinesCopy,
-  routinePolicyDescription,
-  routinePolicyLabel,
-} from "../lib/routines-copy";
-import { formatDateTime } from "../lib/utils";
+import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
@@ -36,7 +25,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
-import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
 import {
   RoutineRunVariablesDialog,
   type RoutineRunDialogSubmitData,
@@ -297,8 +286,7 @@ export function Routines() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { pushToast } = useToast();
-  const copy = getRoutinesCopy(locale);
+  const { pushToast } = useToastActions();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -356,6 +344,11 @@ export function Routines() {
     queryFn: () => projectsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
   const { data: routineExecutionIssues, isLoading: recentRunsLoading, error: recentRunsError } = useQuery({
     queryKey: [...queryKeys.issues.list(selectedCompanyId!), "routine-executions"],
     queryFn: () => issuesApi.list(selectedCompanyId!, { originKind: "routine_execution" }),
@@ -371,6 +364,14 @@ export function Routines() {
   useEffect(() => {
     autoResizeTextarea(titleInputRef.current);
   }, [draft.title, composerOpen]);
+
+  const mentionOptions = useMemo<MentionOption[]>(() => {
+    return buildMarkdownMentionOptions({
+      agents,
+      projects,
+      members: companyMembers?.users,
+    });
+  }, [agents, companyMembers?.users, projects]);
 
   const createRoutine = useMutation({
     mutationFn: () =>
@@ -464,6 +465,7 @@ export function Routines() {
   });
 
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [composerOpen]);
+  const recentProjectIds = useMemo(() => getRecentProjectIds(), [composerOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
     () =>
       sortAgentsByRecency(
@@ -493,13 +495,7 @@ export function Routines() {
     () => new Map((projects ?? []).map((project) => [project.id, project])),
     [projects],
   );
-  const liveIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const run of liveRuns ?? []) {
-      if (run.issueId) ids.add(run.issueId);
-    }
-    return ids;
-  }, [liveRuns]);
+  const liveIssueIds = useMemo(() => collectLiveIssueIds(liveRuns), [liveRuns]);
   const routineGroups = useMemo(
     () => buildRoutineGroups(routines ?? [], routineViewState.groupBy, projectById, agentById, locale),
     [agentById, locale, projectById, routineViewState.groupBy, routines],
@@ -720,10 +716,11 @@ export function Routines() {
                     ref={assigneeSelectorRef}
                     value={draft.assigneeAgentId}
                     options={assigneeOptions}
-                    placeholder={copy.assignee}
-                    noneLabel={copy.noAssignee}
-                    searchPlaceholder={copy.searchAssignees}
-                    emptyMessage={copy.noAssigneesFound}
+                    recentOptionIds={recentAssigneeIds}
+                    placeholder="Assignee"
+                    noneLabel="No assignee"
+                    searchPlaceholder="Search assignees..."
+                    emptyMessage="No assignees found."
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setDraft((current) => ({ ...current, assigneeAgentId }));
@@ -765,11 +762,15 @@ export function Routines() {
                     ref={projectSelectorRef}
                     value={draft.projectId}
                     options={projectOptions}
-                    placeholder={copy.projectPlaceholder}
-                    noneLabel={copy.noProject}
-                    searchPlaceholder={copy.searchProjects}
-                    emptyMessage={copy.noProjectsFound}
-                    onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
+                    recentOptionIds={recentProjectIds}
+                    placeholder="Project"
+                    noneLabel="No project"
+                    searchPlaceholder="Search projects..."
+                    emptyMessage="No projects found."
+                    onChange={(projectId) => {
+                      if (projectId) trackRecentProject(projectId);
+                      setDraft((current) => ({ ...current, projectId }));
+                    }}
                     onConfirm={() => descriptionEditorRef.current?.focus()}
                     renderTriggerValue={(option) =>
                       option && currentProject ? (
@@ -810,21 +811,13 @@ export function Routines() {
                 placeholder={copy.addInstructions}
                 bordered={false}
                 contentClassName="min-h-[160px] text-sm text-muted-foreground"
+                mentions={mentionOptions}
                 onSubmit={() => {
-                  if (!createRoutine.isPending && draft.title.trim()) {
+                  if (!createRoutine.isPending && draft.title.trim() && draft.projectId && draft.assigneeAgentId) {
                     createRoutine.mutate();
                   }
                 }}
               />
-              <div className="mt-3 space-y-3">
-                <RoutineVariablesHint />
-                <RoutineVariablesEditor
-                  title={draft.title}
-                  description={draft.description}
-                  value={draft.variables}
-                  onChange={(variables) => setDraft((current) => ({ ...current, variables }))}
-                />
-              </div>
             </div>
 
             <div className="border-t border-border/60 px-5 py-3">
@@ -976,6 +969,7 @@ export function Routines() {
           if (!next) setRunDialogRoutine(null);
         }}
         companyId={selectedCompanyId}
+        routineName={runDialogRoutine?.title ?? null}
         agents={agents ?? []}
         projects={projects ?? []}
         defaultProjectId={runDialogRoutine?.projectId ?? null}

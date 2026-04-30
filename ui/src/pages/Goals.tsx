@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { goalsApi } from "../api/goals";
 import { useCompany } from "../context/CompanyContext";
-import { useDialog } from "../context/DialogContext";
+import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useLocale } from "../context/LocaleContext";
 import { getGoalCopy } from "../lib/goal-copy";
@@ -15,7 +15,7 @@ import { Target, Plus } from "lucide-react";
 
 export function Goals() {
   const { selectedCompanyId } = useCompany();
-  const { openNewGoal } = useDialog();
+  const { openNewGoal } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { locale } = useLocale();
   const copy = getGoalCopy(locale);

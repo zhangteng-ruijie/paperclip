@@ -1,11 +1,7 @@
 import { ChangeEvent, useEffect, useState } from "react";
-import { Link } from "@/lib/router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
-import { useToast } from "../context/ToastContext";
 import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
@@ -23,10 +19,14 @@ import { formatDateTime } from "../lib/utils";
 import {
   Field,
   ToggleField,
-  HintIcon
+  HintIcon,
 } from "../components/agent-config-primitives";
 
-const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
+type AgentSnippetInput = {
+  onboardingTextUrl: string;
+  connectionCandidates?: string[] | null;
+  testResolutionUrl?: string | null;
+};
 
 export function CompanySettings() {
   const {
@@ -36,9 +36,6 @@ export function CompanySettings() {
     setSelectedCompanyId
   } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const copy = getCompanySettingsCopy(locale);
-  const { pushToast } = useToast();
   const queryClient = useQueryClient();
   // General settings local state
   const [companyName, setCompanyName] = useState("");
@@ -86,27 +83,6 @@ export function CompanySettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     }
-  });
-
-  const feedbackSharingMutation = useMutation({
-    mutationFn: (enabled: boolean) =>
-      companiesApi.update(selectedCompanyId!, {
-        feedbackDataSharingEnabled: enabled,
-      }),
-    onSuccess: (_company, enabled) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
-      pushToast({
-        title: enabled ? copy.feedbackEnabled : copy.feedbackDisabled,
-        tone: "success",
-      });
-    },
-    onError: (err) => {
-      pushToast({
-        title: copy.failedToUpdateFeedbackSharing,
-        body: err instanceof Error ? err.message : copy.unknownError,
-        tone: "error",
-      });
-    },
   });
 
   const inviteMutation = useMutation({
@@ -423,47 +399,6 @@ export function CompanySettings() {
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.feedbackSharing}
-        </div>
-        <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <ToggleField
-            label={copy.feedbackSharingLabel}
-            hint={copy.feedbackSharingHint}
-            checked={!!selectedCompany.feedbackDataSharingEnabled}
-            onChange={(enabled) => feedbackSharingMutation.mutate(enabled)}
-          />
-          <p className="text-sm text-muted-foreground">
-            {copy.feedbackSharingDescription}
-          </p>
-          <div className="space-y-1 text-xs text-muted-foreground">
-            <div>
-              {copy.termsVersion}: {selectedCompany.feedbackDataSharingTermsVersion ?? DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION}
-            </div>
-            <div>
-              {formatFeedbackSharingStatus({
-                locale,
-                enabledAt: selectedCompany.feedbackDataSharingConsentAt
-                  ? formatDateTime(selectedCompany.feedbackDataSharingConsentAt)
-                  : null,
-                enabledBy: selectedCompany.feedbackDataSharingConsentByUserId ?? null,
-              })}
-            </div>
-            {FEEDBACK_TERMS_URL ? (
-              <a
-                href={FEEDBACK_TERMS_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex text-foreground underline underline-offset-4"
-              >
-                {copy.readTermsOfService}
-              </a>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
       {/* Invites */}
       <div className="space-y-4" data-testid="company-settings-invites-section">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -555,16 +490,16 @@ export function CompanySettings() {
           </p>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="outline" asChild>
-              <Link to="/company/export">
+              <a href="/company/export">
                 <Download className="mr-1.5 h-3.5 w-3.5" />
-                {copy.export}
-              </Link>
+                Export
+              </a>
             </Button>
             <Button size="sm" variant="outline" asChild>
-              <Link to="/company/import">
+              <a href="/company/import">
                 <Upload className="mr-1.5 h-3.5 w-3.5" />
-                {copy.import}
-              </Link>
+                Import
+              </a>
             </Button>
           </div>
         </div>

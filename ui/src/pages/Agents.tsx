@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useCompany } from "../context/CompanyContext";
-import { useDialog } from "../context/DialogContext";
+import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
@@ -57,7 +57,7 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, showTerminated: boolean
 
 export function Agents() {
   const { selectedCompanyId } = useCompany();
-  const { openNewAgent } = useDialog();
+  const { openNewAgent } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { locale } = useLocale();
   const navigate = useNavigate();
@@ -85,8 +85,8 @@ export function Agents() {
   });
 
   const { data: runs } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedCompanyId!),
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!),
+    queryKey: [...queryKeys.liveRuns(selectedCompanyId!), "agents-page"],
+    queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
     enabled: !!selectedCompanyId,
     refetchInterval: 15_000,
   });
@@ -259,7 +259,7 @@ export function Agents() {
                           label={copy.live}
                         />
                       )}
-                      <span className="text-xs text-muted-foreground font-mono w-14 text-right">
+                      <span className="w-28 whitespace-nowrap text-right font-mono text-xs text-muted-foreground">
                         {getAdapterLabel(agent.adapterType)}
                       </span>
                       <span className="text-xs text-muted-foreground w-16 text-right">
@@ -374,7 +374,7 @@ function OrgTreeNode({
             )}
             {agent && (
               <>
-                <span className="text-xs text-muted-foreground font-mono w-14 text-right">
+                <span className="w-28 whitespace-nowrap text-right font-mono text-xs text-muted-foreground">
                   {getAdapterLabel(agent.adapterType)}
                 </span>
                 <span className="text-xs text-muted-foreground w-16 text-right">

@@ -6,6 +6,7 @@ import {
   DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
   DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   DEFAULT_BACKUP_RETENTION,
+  DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
   instanceExperimentalSettingsSchema,
@@ -47,13 +48,22 @@ function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettin
   const parsed = instanceExperimentalSettingsSchema.safeParse(raw ?? {});
   if (parsed.success) {
     return {
+      enableEnvironments: parsed.data.enableEnvironments ?? false,
       enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? false,
       autoRestartDevServerWhenIdle: parsed.data.autoRestartDevServerWhenIdle ?? false,
+      enableIssueGraphLivenessAutoRecovery: parsed.data.enableIssueGraphLivenessAutoRecovery ?? false,
+      issueGraphLivenessAutoRecoveryLookbackHours:
+        parsed.data.issueGraphLivenessAutoRecoveryLookbackHours ??
+        DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
     };
   }
   return {
+    enableEnvironments: false,
     enableIsolatedWorkspaces: false,
     autoRestartDevServerWhenIdle: false,
+    enableIssueGraphLivenessAutoRecovery: false,
+    issueGraphLivenessAutoRecoveryLookbackHours:
+      DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   };
 }
 
@@ -94,7 +104,16 @@ export function instanceSettingsService(db: Db) {
       })
       .returning();
 
-    return created;
+    if (created) return created;
+
+    const raced = await db
+      .select()
+      .from(instanceSettings)
+      .where(eq(instanceSettings.singletonKey, DEFAULT_SINGLETON_KEY))
+      .then((rows) => rows[0] ?? null);
+    if (raced) return raced;
+
+    throw new Error("Failed to initialize instance settings row");
   }
 
   return {

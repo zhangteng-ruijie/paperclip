@@ -53,7 +53,7 @@ export function StatusBadge({ status }: { status: string }) {
         statusBadge[status] ?? statusBadgeDefault
       )}
     >
-      {label}
+      {status.replace(/_/g, " ")}
     </span>
   );
 }

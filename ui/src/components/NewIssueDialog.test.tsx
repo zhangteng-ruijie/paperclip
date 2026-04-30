@@ -77,7 +77,7 @@ vi.mock("../context/CompanyContext", () => ({
 }));
 
 vi.mock("../context/ToastContext", () => ({
-  useToast: () => toastState,
+  useToastActions: () => toastState,
 }));
 
 vi.mock("../api/issues", () => ({
@@ -366,6 +366,93 @@ describe("NewIssueDialog", () => {
         goalId: "goal-1",
         projectId: "project-1",
         executionWorkspaceId: "workspace-1",
+      }),
+    );
+
+    act(() => root.unmount());
+  });
+
+  it("submits the latest locally typed title and description", async () => {
+    const { root } = renderDialog(container);
+    await flush();
+
+    const titleInput = container.querySelector('textarea[placeholder="Issue title"]') as HTMLTextAreaElement | null;
+    const descriptionInput = container.querySelector('textarea[aria-label="Add description..."]') as HTMLTextAreaElement | null;
+    expect(titleInput).not.toBeNull();
+    expect(descriptionInput).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(titleInput, "Typed issue");
+      titleInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(descriptionInput, "Typed description");
+      descriptionInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    const submitButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create Issue"));
+    expect(submitButton).not.toBeUndefined();
+    expect(submitButton?.hasAttribute("disabled")).toBe(false);
+
+    await act(async () => {
+      submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        title: "Typed issue",
+        description: "Typed description",
+      }),
+    );
+
+    act(() => root.unmount());
+  });
+
+  it("submits the parent assignee when a sub-issue opens with inherited defaults", async () => {
+    dialogState.newIssueDefaults = {
+      parentId: "issue-1",
+      parentIdentifier: "PAP-1",
+      parentTitle: "Parent issue",
+      title: "Child issue",
+      projectId: "project-1",
+      goalId: "goal-1",
+      assigneeAgentId: "agent-1",
+    };
+
+    const { root } = renderDialog(container);
+    await flush();
+
+    const submitButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Create Sub-Issue"));
+    expect(submitButton).not.toBeUndefined();
+
+    await act(async () => {
+      submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        title: "Child issue",
+        parentId: "issue-1",
+        goalId: "goal-1",
+        projectId: "project-1",
+        assigneeAgentId: "agent-1",
       }),
     );
 

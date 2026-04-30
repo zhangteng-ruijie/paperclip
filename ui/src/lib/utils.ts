@@ -15,7 +15,11 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCents(cents: number): string {
-  return formatLocalizedCurrency(cents / 100);
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function formatNumber(n: number): string {
+  return n.toLocaleString("en-US");
 }
 
 export function formatDate(date: Date | string | number): string {
@@ -69,6 +73,7 @@ export function currentTimeZone(): string {
 }
 
 export function formatTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);

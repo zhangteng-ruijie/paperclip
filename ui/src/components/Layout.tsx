@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Moon, Settings, Sun } from "lucide-react";
-import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
+import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { CompanyRail } from "./CompanyRail";
 import { Sidebar } from "./Sidebar";
 import { InstanceSidebar } from "./InstanceSidebar";
+import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { CommandPalette } from "./CommandPalette";
@@ -17,13 +17,13 @@ import { ToastViewport } from "./ToastViewport";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
-import { useDialog } from "../context/DialogContext";
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
+import { useDialogActions } from "../context/DialogContext";
 import { GeneralSettingsProvider } from "../context/GeneralSettingsContext";
 import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
 import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
-import { useTheme } from "../context/ThemeContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { healthApi } from "../api/health";
@@ -35,7 +35,6 @@ import {
 } from "../lib/instance-settings";
 import {
   resetNavigationScroll,
-  SIDEBAR_SCROLL_RESET_STATE,
   shouldResetScrollOnNavigation,
 } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
@@ -43,8 +42,6 @@ import { scheduleMainContentFocus } from "../lib/main-content-focus";
 import { getShellCopy, themeToggleLabel } from "../lib/shell-copy";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "paperclip.lastInstanceSettingsPath";
 
@@ -59,7 +56,7 @@ function readRememberedInstanceSettingsPath(): string {
 
 export function Layout() {
   const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
-  const { openNewIssue, openOnboarding } = useDialog();
+  const { openNewIssue, openOnboarding } = useDialogActions();
   const { togglePanelVisible } = usePanel();
   const { locale } = useLocale();
   const {
@@ -70,12 +67,12 @@ export function Layout() {
     selectionSource,
     setSelectedCompanyId,
   } = useCompany();
-  const { theme, toggleTheme } = useTheme();
   const { companyPrefix } = useParams<{ companyPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
+  const isCompanySettingsRoute = location.pathname.includes("/company/settings");
   const onboardingTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
   const previousPathname = useRef<string | null>(null);
@@ -83,8 +80,6 @@ export function Layout() {
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [instanceSettingsTarget, setInstanceSettingsTarget] = useState<string>(() => readRememberedInstanceSettingsPath());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const nextTheme = theme === "dark" ? "light" : "dark";
-  const copy = getShellCopy(locale);
   const matchedCompany = useMemo(() => {
     if (!companyPrefix) return null;
     const requestedPrefix = companyPrefix.toUpperCase();
@@ -345,44 +340,19 @@ export function Layout() {
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <CompanyRail />
-              {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
+              {isInstanceSettingsRoute ? (
+                <InstanceSidebar />
+              ) : isCompanySettingsRoute ? (
+                <CompanySettingsSidebar />
+              ) : (
+                <Sidebar />
+              )}
             </div>
-            <div className="border-t border-r border-border px-3 py-2 bg-background">
-              <div className="flex items-center gap-1">
-                {health?.version && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="px-2 text-xs text-muted-foreground shrink-0 cursor-default">v</span>
-                    </TooltipTrigger>
-                    <TooltipContent>v{health.version}</TooltipContent>
-                  </Tooltip>
-                )}
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
-                  <Link
-                    to={instanceSettingsTarget}
-                    state={SIDEBAR_SCROLL_RESET_STATE}
-                    aria-label={copy.instanceSettings}
-                    title={copy.instanceSettings}
-                    onClick={() => {
-                      if (isMobile) setSidebarOpen(false);
-                    }}
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground shrink-0"
-                  onClick={toggleTheme}
-                  aria-label={themeToggleLabel(nextTheme, locale)}
-                  title={themeToggleLabel(nextTheme, locale)}
-                >
-                  {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
+            <SidebarAccountMenu
+              deploymentMode={health?.deploymentMode}
+              instanceSettingsTarget={instanceSettingsTarget}
+              version={health?.version}
+            />
           </div>
         ) : (
           <div className="flex h-full flex-col shrink-0">
@@ -394,45 +364,20 @@ export function Layout() {
                   sidebarOpen ? "w-60" : "w-0"
                 )}
               >
-                {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
-              </div>
-            </div>
-            <div className="border-t border-r border-border px-3 py-2">
-              <div className="flex items-center gap-1">
-                {health?.version && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="px-2 text-xs text-muted-foreground shrink-0 cursor-default">v</span>
-                    </TooltipTrigger>
-                    <TooltipContent>v{health.version}</TooltipContent>
-                  </Tooltip>
+                {isInstanceSettingsRoute ? (
+                  <InstanceSidebar />
+                ) : isCompanySettingsRoute ? (
+                  <CompanySettingsSidebar />
+                ) : (
+                  <Sidebar />
                 )}
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
-                  <Link
-                    to={instanceSettingsTarget}
-                    state={SIDEBAR_SCROLL_RESET_STATE}
-                    aria-label={copy.instanceSettings}
-                    title={copy.instanceSettings}
-                    onClick={() => {
-                      if (isMobile) setSidebarOpen(false);
-                    }}
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-muted-foreground shrink-0"
-                  onClick={toggleTheme}
-                  aria-label={themeToggleLabel(nextTheme, locale)}
-                  title={themeToggleLabel(nextTheme, locale)}
-                >
-                  {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                </Button>
               </div>
             </div>
+            <SidebarAccountMenu
+              deploymentMode={health?.deploymentMode}
+              instanceSettingsTarget={instanceSettingsTarget}
+              version={health?.version}
+            />
           </div>
         )}
 
