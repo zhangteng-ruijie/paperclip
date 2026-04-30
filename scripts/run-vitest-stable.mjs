@@ -102,6 +102,22 @@ function runVitest(args, label) {
   }
 }
 
+function runPnpm(args, label) {
+  console.log(`\n[test:run] ${label}`);
+  const result = spawnSync("pnpm", args, {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    console.error(`[test:run] Failed to start pnpm: ${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
 const routeTests = walk(serverTestsDir)
   .filter((file) => isRouteOrAuthzTest(toRepoPath(file)))
   .map((file) => ({
@@ -114,6 +130,11 @@ const excludeRouteArgs = routeTests.flatMap((file) => ["--exclude", file.serverP
 for (const project of nonServerProjects) {
   runVitest(["--project", project], `non-server project ${project}`);
 }
+
+runPnpm(
+  ["--filter", "@paperclipai/plugin-sdk", "build"],
+  "build @paperclipai/plugin-sdk for server plugin tests",
+);
 
 runVitest(
   ["--project", "@paperclipai/server", ...excludeRouteArgs],

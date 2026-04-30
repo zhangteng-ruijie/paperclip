@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Layout } from "./Layout";
+import { ThemeProvider } from "../context/ThemeContext";
 
 const mockHealthApi = vi.hoisted(() => ({
   get: vi.fn(),
@@ -20,11 +21,20 @@ const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 let currentPathname = "/PAP/dashboard";
 
 vi.mock("@/lib/router", () => ({
+  Link: ({ children, to, ...props }: { children?: React.ReactNode; to: string }) => (
+    <a href={to} {...props}>{children}</a>
+  ),
   Outlet: () => <div>Outlet content</div>,
   useLocation: () => ({ pathname: currentPathname, search: "", hash: "", state: null }),
   useNavigate: () => mockNavigate,
   useNavigationType: () => "PUSH",
   useParams: () => ({ companyPrefix: "PAP" }),
+}));
+
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("./CompanyRail", () => ({
@@ -205,7 +215,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
@@ -235,7 +247,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });

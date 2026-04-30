@@ -285,6 +285,7 @@ export function sanitizeRuntimeServiceBaseEnv(baseEnv: NodeJS.ProcessEnv): NodeJ
     }
   }
   delete env.DATABASE_URL;
+  delete env.npm_config_prefix;
   delete env.npm_config_tailscale_auth;
   delete env.npm_config_authenticated_private;
   return env;
@@ -2036,7 +2037,7 @@ async function startLocalRuntimeService(input: {
   });
 
   const shell = resolveShell();
-  const child = spawn(shell, ["-lc", command], {
+  const child = spawn(shell, ["-c", command], {
     cwd: serviceCwd,
     env,
     detached: process.platform !== "win32",

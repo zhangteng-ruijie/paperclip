@@ -7,9 +7,11 @@ import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useLocale } from "../context/LocaleContext";
 import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
+import { getIssuesCopy } from "../lib/issues-copy";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { CircleDot } from "lucide-react";
@@ -58,10 +60,12 @@ export function buildIssuesSearchUrl(currentHref: string, search: string): strin
 export function Issues() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const fetchNextPageInFlightRef = useRef(false);
+  const copy = getIssuesCopy(locale);
 
   const urlSearch = searchParams.get("q") ?? "";
   const [searchOverride, setSearchOverride] = useState<{ search: string; locationSearch: string } | null>(null);
@@ -108,16 +112,16 @@ export function Issues() {
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        "Issues",
+        copy.issues,
         `${location.pathname}${location.search}${location.hash}`,
         "issues",
       ),
-    [location.pathname, location.search, location.hash],
+    [location.pathname, location.search, location.hash, copy.issues],
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Issues" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: copy.issues }]);
+  }, [setBreadcrumbs, copy.issues]);
 
   const issuePageSize = workspaceIdFilter ? WORKSPACE_FILTER_ISSUE_LIMIT : ISSUES_PAGE_SIZE;
 
@@ -173,7 +177,7 @@ export function Issues() {
   });
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={CircleDot} message="Select a company to view issues." />;
+    return <EmptyState icon={CircleDot} message={copy.selectCompany} />;
   }
 
   return (

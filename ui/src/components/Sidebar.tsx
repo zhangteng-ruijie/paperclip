@@ -20,9 +20,11 @@ import { SidebarProjects } from "./SidebarProjects";
 import { SidebarAgents } from "./SidebarAgents";
 import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
+import { getShellCopy } from "../lib/shell-copy";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -31,6 +33,8 @@ import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 export function Sidebar() {
   const { openNewIssue } = useDialogActions();
   const { selectedCompanyId, selectedCompany } = useCompany();
+  const { locale } = useLocale();
+  const copy = getShellCopy(locale);
   const inboxBadge = useInboxBadge(selectedCompanyId);
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -58,6 +62,12 @@ export function Sidebar() {
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
       {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border) */}
       <div className="flex items-center gap-1 px-3 h-12 shrink-0">
+        {selectedCompany?.brandColor && (
+          <div
+            className="w-4 h-4 rounded-sm shrink-0 ml-1"
+            style={{ backgroundColor: selectedCompany.brandColor }}
+          />
+        )}
         <SidebarCompanyMenu />
         <Button
           variant="ghost"
@@ -77,12 +87,17 @@ export function Sidebar() {
             className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
           >
             <SquarePen className="h-4 w-4 shrink-0" />
-            <span className="truncate">New Issue</span>
+            <span className="truncate">{copy.newIssue}</span>
           </button>
-          <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem
+            to="/dashboard"
+            label={copy.dashboard}
+            icon={LayoutDashboard}
+            liveCount={liveRunCount}
+          />
           <SidebarNavItem
             to="/inbox"
-            label="Inbox"
+            label={copy.inbox}
             icon={Inbox}
             badge={inboxBadge.inbox}
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
@@ -97,10 +112,16 @@ export function Sidebar() {
           />
         </div>
 
-        <SidebarSection label="Work">
-          <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
-          <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
-          <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+        <SidebarSection label={copy.work}>
+          <SidebarNavItem to="/issues" label={copy.issues} icon={CircleDot} />
+          <SidebarNavItem
+            to="/routines"
+            label={copy.routines}
+            icon={Repeat}
+            textBadge={copy.beta}
+            textBadgeTone="amber"
+          />
+          <SidebarNavItem to="/goals" label={copy.goals} icon={Target} />
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
           ) : null}
@@ -110,12 +131,12 @@ export function Sidebar() {
 
         <SidebarAgents />
 
-        <SidebarSection label="Company">
-          <SidebarNavItem to="/org" label="Org" icon={Network} />
-          <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-          <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
-          <SidebarNavItem to="/activity" label="Activity" icon={History} />
-          <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+        <SidebarSection label={copy.company}>
+          <SidebarNavItem to="/org" label={copy.org} icon={Network} />
+          <SidebarNavItem to="/skills" label={copy.skills} icon={Boxes} />
+          <SidebarNavItem to="/costs" label={copy.costs} icon={DollarSign} />
+          <SidebarNavItem to="/activity" label={copy.activity} icon={History} />
+          <SidebarNavItem to="/company/settings" label={copy.settings} icon={Settings} />
         </SidebarSection>
 
         <PluginSlotOutlet

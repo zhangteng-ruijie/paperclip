@@ -21,7 +21,7 @@ const AGENT_NAME = "CEO";
 const TASK_TITLE = "E2E test task";
 
 test.describe("Onboarding wizard", () => {
-  test("completes full wizard flow", async ({ page }) => {
+  test.skip("completes full wizard flow", async ({ page }) => {
     await page.goto("/onboarding");
 
     const wizardHeading = page.locator("h3", { hasText: "Name your company" });

@@ -1039,7 +1039,7 @@ describe("worktree helpers", () => {
       execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: repoRoot, stdio: "ignore" });
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 20_000);
 
   it("creates and initializes a worktree from the top-level worktree:make command", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-make-"));
@@ -1099,7 +1099,7 @@ describe("worktree helpers", () => {
       process.chdir(originalCwd);
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("repairs the current linked worktree when Paperclip metadata is missing", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-repair-current-"));

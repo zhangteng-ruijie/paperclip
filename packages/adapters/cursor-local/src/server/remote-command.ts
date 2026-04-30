@@ -135,7 +135,7 @@ export async function prepareCursorSandboxCommand(input: {
   }
 
   const remoteLocalBinDir = path.posix.join(remoteSystemHomeDir, ".local", "bin");
-  const runtimeEnv = ensurePathInEnv(input.env);
+  const runtimeEnv = ensurePathInEnv({ ...process.env, ...input.env });
   const currentPath = runtimeEnv.PATH ?? runtimeEnv.Path ?? "";
   const nextPath = prependPosixPathEntry(currentPath, remoteLocalBinDir);
   const env = nextPath === currentPath ? input.env : { ...input.env, PATH: nextPath };

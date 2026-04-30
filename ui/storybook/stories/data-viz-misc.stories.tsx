@@ -528,6 +528,7 @@ function SwipeToArchiveDemo({ disabled = false }: { disabled?: boolean }) {
             <SwipeToArchive
               selected
               disabled={disabled}
+              archiveLabel="Archive"
               onArchive={() => setArchived(true)}
             >
               <EntityRow

@@ -3,6 +3,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { accessApi } from "../api/access";
 import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { Link } from "@/lib/router";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
@@ -26,7 +27,6 @@ import {
   applyIssueFilters,
   countActiveIssueFilters,
   defaultIssueFilterState,
-  issueFilterLabel,
   issuePriorityOrder,
   normalizeIssueFilterState,
   resolveIssueFilterWorkspaceId,
@@ -34,6 +34,14 @@ import {
   issueStatusOrder,
   type IssueFilterState,
 } from "../lib/issue-filters";
+import {
+  formatIssueSubtaskCount,
+  getIssuesCopy,
+  issueGroupFieldLabel,
+  issuePriorityLabel,
+  issueSortFieldLabel,
+  issueStatusLabel,
+} from "../lib/issues-copy";
 import {
   DEFAULT_INBOX_ISSUE_COLUMNS,
   getAvailableInboxIssueColumns,
@@ -335,6 +343,8 @@ function IssueSearchInput({
   value: string;
   onDebouncedChange?: (search: string) => void;
 }) {
+  const { locale } = useLocale();
+  const copy = getIssuesCopy(locale);
   const [draftValue, setDraftValue] = useState(value);
   const lastCommittedValueRef = useRef(value);
 
@@ -381,9 +391,9 @@ function IssueSearchInput({
             e.currentTarget.blur();
           }
         }}
-        placeholder="Search issues..."
+        placeholder={copy.searchIssuesPlaceholder}
         className="pl-7 text-xs sm:text-sm"
-        aria-label="Search issues"
+        aria-label={copy.searchIssuesAria}
         data-page-search-target="true"
       />
     </div>
@@ -502,6 +512,7 @@ export function IssuesList({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialogActions();
+  const { locale } = useLocale();
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -517,6 +528,7 @@ export function IssuesList({
     retry: false,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const copy = getIssuesCopy(locale);
   const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
 
   // Scope the storage key per company so folding/view state is independent across companies.
@@ -918,13 +930,13 @@ export function IssuesList({
       const groups = groupBy(filtered, (i) => i.status);
       return issueStatusOrder
         .filter((s) => groups[s]?.length)
-        .map((s) => ({ key: s, label: issueFilterLabel(s), items: groups[s]! }));
+        .map((s) => ({ key: s, label: issueStatusLabel(s, locale), items: groups[s]! }));
     }
     if (viewState.groupBy === "priority") {
       const groups = groupBy(filtered, (i) => i.priority);
       return issuePriorityOrder
         .filter((p) => groups[p]?.length)
-        .map((p) => ({ key: p, label: issueFilterLabel(p), items: groups[p]! }));
+        .map((p) => ({ key: p, label: issuePriorityLabel(p, locale), items: groups[p]! }));
     }
     if (viewState.groupBy === "workspace") {
       const groups = groupBy(
@@ -940,7 +952,7 @@ export function IssuesList({
         })
         .map((key) => ({
           key,
-          label: key === "__no_workspace" ? "No Workspace" : (workspaceNameMap.get(key) ?? key.slice(0, 8)),
+          label: key === "__no_workspace" ? copy.noWorkspace : (workspaceNameMap.get(key) ?? key.slice(0, 8)),
           items: groups[key]!,
         }));
     }
@@ -955,7 +967,7 @@ export function IssuesList({
         })
         .map((key) => ({
           key,
-          label: key === "__no_parent" ? "No Parent" : (issueTitleMap.get(key) ?? key.slice(0, 8)),
+          label: key === "__no_parent" ? copy.noParent : (issueTitleMap.get(key) ?? key.slice(0, 8)),
           items: groups[key]!,
         }));
     }
@@ -968,9 +980,9 @@ export function IssuesList({
       key,
       label:
         key === "__unassigned"
-          ? "Unassigned"
+          ? copy.unassigned
           : key.startsWith("__user:")
-            ? (formatAssigneeUserLabel(key.slice("__user:".length), currentUserId, companyUserLabelMap) ?? "User")
+            ? (formatAssigneeUserLabel(key.slice("__user:".length), currentUserId, companyUserLabelMap) ?? copy.user)
             : (agentName(key) ?? key.slice(0, 8)),
       items: groups[key]!,
     }));
@@ -984,6 +996,7 @@ export function IssuesList({
     workspaceNameMap,
     issueTitleMap,
     companyUserLabelMap,
+    copy,
   ]);
 
   useEffect(() => {
@@ -1131,7 +1144,7 @@ export function IssuesList({
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Button size="sm" variant="outline" onClick={() => openCreateIssueDialog()}>
             <Plus className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">{createButtonLabel}</span>
+            <span className="hidden sm:inline">{createIssueLabel ? createButtonLabel : copy.newIssue}</span>
           </Button>
           <IssueSearchInput
             value={issueSearch}
@@ -1148,14 +1161,14 @@ export function IssuesList({
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => updateView({ viewMode: "list" })}
-              title="List view"
+              title={copy.listView}
             >
               <List className="h-3.5 w-3.5" />
             </button>
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "board" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => updateView({ viewMode: "board" })}
-              title="Board view"
+              title={copy.boardView}
             >
               <Columns3 className="h-3.5 w-3.5" />
             </button>
@@ -1179,7 +1192,7 @@ export function IssuesList({
             visibleColumnSet={visibleIssueColumnSet}
             onToggleColumn={toggleIssueColumn}
             onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
-            title="Choose which issue columns stay visible"
+            title={copy.chooseIssueColumns}
             iconOnly
           />
 
@@ -1201,20 +1214,20 @@ export function IssuesList({
           {viewState.viewMode === "list" && (
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Sort">
+                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title={copy.sort} aria-label={copy.sort}>
                   <ArrowUpDown className="h-3.5 w-3.5" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-48 p-0">
                 <div className="p-2 space-y-0.5">
                   {([
-                    ["workflow", "Workflow"],
-                    ["status", "Status"],
-                    ["priority", "Priority"],
-                    ["title", "Title"],
-                    ["created", "Created"],
-                    ["updated", "Updated"],
-                  ] as const).map(([field, label]) => (
+                    "workflow",
+                    "status",
+                    "priority",
+                    "title",
+                    "created",
+                    "updated",
+                  ] as const).map((field) => (
                     <button
                       key={field}
                       className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
@@ -1228,7 +1241,7 @@ export function IssuesList({
                         }
                       }}
                     >
-                      <span>{label}</span>
+                      <span>{issueSortFieldLabel(field, locale)}</span>
                       {viewState.sortField === field && (
                         <span className="text-xs text-muted-foreground">
                           {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
@@ -1245,20 +1258,13 @@ export function IssuesList({
           {viewState.viewMode === "list" && (
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Group">
+                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title={copy.group} aria-label={copy.group}>
                   <Layers className="h-3.5 w-3.5" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-44 p-0">
                 <div className="p-2 space-y-0.5">
-                  {([
-                    ["status", "Status"],
-                    ["priority", "Priority"],
-                    ["assignee", "Assignee"],
-                    ["workspace", "Workspace"],
-                    ["parent", "Parent Issue"],
-                    ["none", "None"],
-                  ] as const).map(([value, label]) => (
+                  {(["status", "priority", "assignee", "workspace", "parent", "none"] as const).map((value) => (
                     <button
                       key={value}
                       className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
@@ -1266,7 +1272,7 @@ export function IssuesList({
                       }`}
                       onClick={() => updateView({ groupBy: value })}
                     >
-                      <span>{label}</span>
+                      <span>{issueGroupFieldLabel(value, locale)}</span>
                       {viewState.groupBy === value && <Check className="h-3.5 w-3.5" />}
                     </button>
                   ))}
@@ -1292,8 +1298,8 @@ export function IssuesList({
       {!isLoading && filtered.length === 0 && viewState.viewMode === "list" && (
         <EmptyState
           icon={CircleDot}
-          message="No issues match the current filters or search."
-          action={createActionLabel}
+          message={copy.noIssuesMatch}
+          action={createIssueLabel ? createActionLabel : copy.createIssue}
           onAction={() => openCreateIssueDialog()}
         />
       )}
@@ -1445,7 +1451,7 @@ export function IssuesList({
                           <>
                             {hasChildren && !isExpanded ? (
                               <span className="ml-1.5 text-xs text-muted-foreground">
-                                ({totalDescendants} sub-task{totalDescendants !== 1 ? "s" : ""})
+                                {formatIssueSubtaskCount(totalDescendants, locale)}
                               </span>
                             ) : null}
                             {issueBadge ? (
@@ -1543,7 +1549,7 @@ export function IssuesList({
                                         <Identity name={agentName(issue.assigneeAgentId)!} size="sm" className="min-w-0" />
                                       ) : issue.assigneeUserId ? (
                                         <Identity
-                                          name={assigneeUserLabel ?? "User"}
+                                          name={assigneeUserLabel ?? copy.user}
                                           avatarUrl={assigneeUserProfile?.image ?? null}
                                           size="sm"
                                           className="min-w-0"
@@ -1553,7 +1559,7 @@ export function IssuesList({
                                           <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30">
                                             <User className="h-3.5 w-3.5" />
                                           </span>
-                                          Assignee
+                                          {copy.assignee}
                                         </span>
                                       )}
                                     </button>
@@ -1566,7 +1572,7 @@ export function IssuesList({
                                   >
                                     <input
                                       className="mb-1 w-full border-b border-border bg-transparent px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/50"
-                                      placeholder="Search assignees..."
+                                      placeholder={copy.searchAssignees}
                                       value={assigneeSearch}
                                       onChange={(e) => setAssigneeSearch(e.target.value)}
                                       autoFocus
@@ -1583,7 +1589,7 @@ export function IssuesList({
                                           assignIssue(issue.id, null, null);
                                         }}
                                       >
-                                        No assignee
+                                        {copy.noAssignee}
                                       </button>
                                       {currentUserId && (
                                         <button
@@ -1598,7 +1604,7 @@ export function IssuesList({
                                           }}
                                         >
                                           <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                          <span>Me</span>
+                                          <span>{copy.me}</span>
                                         </button>
                                       )}
                                       {(agents ?? [])

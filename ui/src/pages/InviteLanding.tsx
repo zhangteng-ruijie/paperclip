@@ -10,6 +10,7 @@ import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { companiesApi } from "../api/companies";
 import { healthApi } from "../api/health";
+import { useLocale } from "../context/LocaleContext";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
 import { clearPendingInviteToken, rememberPendingInviteToken } from "../lib/invite-memory";
 import { queryKeys } from "../lib/queryKeys";
@@ -213,6 +214,7 @@ function AwaitingJoinApprovalPanel({
 }
 
 export function InviteLandingPage() {
+  const { t, locale } = useLocale();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { setSelectedCompanyId } = useCompany();
@@ -412,31 +414,37 @@ export function InviteLandingPage() {
   });
 
   const joinButtonLabel = useMemo(() => {
-    if (!invite) return "Continue";
-    if (invite.inviteType === "bootstrap_ceo") return "Accept invite";
-    if (showsAgentForm) return "Submit request";
-    return sessionQuery.data ? "Accept invite" : "Continue";
-  }, [invite, sessionQuery.data, showsAgentForm]);
+    if (!invite) return locale === "zh-CN" ? "继续" : "Continue";
+    if (invite.inviteType === "bootstrap_ceo") return t("invite.acceptBootstrapInvite");
+    if (showsAgentForm) return t("invite.submitJoinRequest");
+    return sessionQuery.data
+      ? (locale === "zh-CN" ? "接受邀请" : "Accept invite")
+      : (locale === "zh-CN" ? "继续" : "Continue");
+  }, [invite, locale, sessionQuery.data, showsAgentForm, t]);
 
   if (!token) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-destructive">Invalid invite token.</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-destructive">{t("invite.invalidToken")}</div>;
   }
 
   if (inviteQuery.isLoading || healthQuery.isLoading || sessionQuery.isLoading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading invite...</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("invite.loading")}</div>;
   }
 
   if (isCheckingExistingMembership) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Checking your access...</div>;
+    return (
+      <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">
+        {locale === "zh-CN" ? "正在检查你的访问权限…" : "Checking your access..."}
+      </div>
+    );
   }
 
   if (inviteQuery.error || !invite) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="border border-border bg-card p-6" data-testid="invite-error">
-          <h1 className="text-lg font-semibold">Invite not available</h1>
+        <div className="rounded-lg border border-border bg-card p-6" data-testid="invite-error">
+          <h1 className="text-lg font-semibold">{t("invite.notAvailable")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This invite may be expired, revoked, or already used.
+            {t("invite.expiredOrRevoked")}
           </p>
         </div>
       </div>
@@ -448,7 +456,11 @@ export function InviteLandingPage() {
     inviteJoinRequestType === "human" &&
     isCurrentMember
   ) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Opening company...</div>;
+    return (
+      <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">
+        {locale === "zh-CN" ? "正在打开公司…" : "Opening company..."}
+      </div>
+    );
   }
 
   if (inviteJoinRequestStatus === "pending_approval") {
@@ -465,12 +477,12 @@ export function InviteLandingPage() {
   if (inviteJoinRequestStatus) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="border border-border bg-card p-6" data-testid="invite-error">
-          <h1 className="text-lg font-semibold">Invite not available</h1>
+        <div className="rounded-lg border border-border bg-card p-6" data-testid="invite-error">
+          <h1 className="text-lg font-semibold">{t("invite.notAvailable")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {inviteJoinRequestStatus === "rejected"
-              ? "This join request was not approved."
-              : "This invite has already been used."}
+              ? (locale === "zh-CN" ? "此加入请求未获批准。" : "This join request was not approved.")
+              : (locale === "zh-CN" ? "此邀请已被使用。" : "This invite has already been used.")}
           </p>
         </div>
       </div>
@@ -481,10 +493,11 @@ export function InviteLandingPage() {
     return (
       <div className="min-h-screen bg-zinc-950 px-6 py-12 text-zinc-100">
         <div className="mx-auto max-w-md border border-zinc-800 bg-zinc-950 p-6">
-          <h1 className="text-lg font-semibold">Bootstrap complete</h1>
+          <h1 className="text-lg font-semibold">{t("invite.bootstrapComplete")}</h1>
+          <p className="mt-2 text-sm text-zinc-400">{t("invite.bootstrapCompleteDescription")}</p>
           <div className="mt-4">
             <Button asChild className="rounded-none">
-              <Link to="/">Open board</Link>
+              <Link to="/">{t("invite.openBoard")}</Link>
             </Button>
           </div>
         </div>
@@ -497,11 +510,31 @@ export function InviteLandingPage() {
       claimSecret?: string;
       claimApiKeyPath?: string;
       onboarding?: Record<string, unknown>;
+      diagnostics?: Array<{
+        code: string;
+        level: "info" | "warn";
+        message: string;
+        hint?: string;
+      }>;
     };
     const claimSecret = typeof payload.claimSecret === "string" ? payload.claimSecret : null;
     const claimApiKeyPath = typeof payload.claimApiKeyPath === "string" ? payload.claimApiKeyPath : null;
+    const diagnostics = Array.isArray(payload.diagnostics)
+      ? payload.diagnostics.filter((diag): diag is NonNullable<typeof payload.diagnostics>[number] => Boolean(
+          diag
+          && typeof diag === "object"
+          && typeof diag.code === "string"
+          && typeof diag.level === "string"
+          && typeof diag.message === "string",
+        ))
+      : [];
+    const onboardingSkillUrl = readNestedString(payload.onboarding, ["skill", "url"]);
+    const onboardingSkillPath = readNestedString(payload.onboarding, ["skill", "path"]);
+    const onboardingInstallPath = readNestedString(payload.onboarding, ["skill", "installPath"]);
+    const onboardingTextPath = readNestedString(payload.onboarding, ["textInstructions", "path"]);
     const onboardingTextUrl = readNestedString(payload.onboarding, ["textInstructions", "url"]);
     const joinedNow = !showsAgentForm && payload.status === "approved";
+    const awaitingHumanApproval = !showsAgentForm && payload.status === "pending_approval";
 
     return (
       joinedNow ? (
@@ -514,16 +547,18 @@ export function InviteLandingPage() {
                 companyBrandColor={companyBrandColor}
                 className="h-12 w-12 border border-zinc-800 rounded-none"
               />
-              <h1 className="text-lg font-semibold">You joined the company</h1>
+              <h1 className="text-lg font-semibold">
+                {locale === "zh-CN" ? "你已加入公司" : "You joined the company"}
+              </h1>
             </div>
             <div className="mt-4">
               <Button asChild className="w-full rounded-none">
-                <Link to="/">Open board</Link>
+                <Link to="/">{t("invite.openBoard")}</Link>
               </Button>
             </div>
           </div>
         </div>
-      ) : (
+      ) : awaitingHumanApproval ? (
         <AwaitingJoinApprovalPanel
           companyDisplayName={companyDisplayName}
           companyLogoUrl={companyLogoUrl}
@@ -531,8 +566,55 @@ export function InviteLandingPage() {
           invitedByUserName={invitedByUserName}
           claimSecret={claimSecret}
           claimApiKeyPath={claimApiKeyPath}
-          onboardingTextUrl={onboardingTextUrl}
+          onboardingTextUrl={onboardingTextUrl ?? onboardingTextPath}
         />
+      ) : (
+        <div className="mx-auto max-w-xl py-10">
+          <div className="rounded-lg border border-border bg-card p-6">
+            <h1 className="text-lg font-semibold">{t("invite.joinRequestSubmitted")}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("invite.pendingApproval")}
+            </p>
+            <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+              {t("invite.requestId")} <span className="font-mono">{payload.id}</span>
+            </div>
+            {claimSecret && claimApiKeyPath && (
+              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t("invite.claimSecret")}</p>
+                <p className="font-mono break-all">{claimSecret}</p>
+                <p className="font-mono break-all">POST {claimApiKeyPath}</p>
+              </div>
+            )}
+            {(onboardingSkillUrl || onboardingSkillPath || onboardingInstallPath) && (
+              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t("invite.paperclipSkillBootstrap")}</p>
+                {onboardingSkillUrl && <p className="font-mono break-all">GET {onboardingSkillUrl}</p>}
+                {!onboardingSkillUrl && onboardingSkillPath && <p className="font-mono break-all">GET {onboardingSkillPath}</p>}
+                {onboardingInstallPath && <p className="font-mono break-all">{t("invite.installTo")} {onboardingInstallPath}</p>}
+              </div>
+            )}
+            {(onboardingTextUrl || onboardingTextPath) && (
+              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t("invite.agentOnboardingText")}</p>
+                {onboardingTextUrl && <p className="font-mono break-all">GET {onboardingTextUrl}</p>}
+                {!onboardingTextUrl && onboardingTextPath && <p className="font-mono break-all">GET {onboardingTextPath}</p>}
+              </div>
+            )}
+            {diagnostics.length > 0 && (
+              <div className="mt-3 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t("invite.connectivityDiagnostics")}</p>
+                {diagnostics.map((diag, idx) => (
+                  <div key={`${diag.code}:${idx}`} className="space-y-0.5">
+                    <p className={diag.level === "warn" ? "text-amber-600 dark:text-amber-400" : undefined}>
+                      [{diag.level}] {diag.message}
+                    </p>
+                    {diag.hint && <p className="font-mono break-all">{diag.hint}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )
     );
   }
@@ -551,52 +633,78 @@ export function InviteLandingPage() {
               />
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">
-                  You&apos;ve been invited to join Paperclip
+                  {locale === "zh-CN" ? "你已被邀请加入 Paperclip" : "You've been invited to join Paperclip"}
                 </p>
                 <h1 className="mt-2 text-2xl font-semibold">
-                  {invite.inviteType === "bootstrap_ceo" ? "Set up Paperclip" : `Join ${companyDisplayName}`}
+                  {invite.inviteType === "bootstrap_ceo"
+                    ? t("invite.bootstrapInstance")
+                    : companyName
+                      ? t("invite.joinCompany", { company: companyName })
+                      : t("invite.joinThisCompany")}
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">
                   {showsAgentForm
-                    ? "Review the invite details, then submit the agent information below to start the join request."
+                    ? (locale === "zh-CN"
+                        ? "请先查看邀请详情，再提交下方的 Agent 信息以发起加入请求。"
+                        : "Review the invite details, then submit the agent information below to start the join request.")
                     : requiresHumanAccount
-                      ? "Create your Paperclip account first. If you already have one, switch to sign in and continue the invite with the same email."
-                      : "Your account is ready. Review the invite details, then accept it to continue."}
+                      ? (locale === "zh-CN"
+                          ? "请先创建或登录 Paperclip 账号，然后继续此邀请。"
+                          : "Create your Paperclip account first. If you already have one, switch to sign in and continue the invite with the same email.")
+                      : (locale === "zh-CN"
+                          ? "你的账号已准备就绪。查看邀请详情后继续接受邀请。"
+                          : "Your account is ready. Review the invite details, then accept it to continue.")}
                 </p>
               </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Company</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                  {locale === "zh-CN" ? "公司" : "Company"}
+                </div>
                 <div className="mt-1 text-sm text-zinc-100">{companyDisplayName}</div>
               </div>
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Invited by</div>
-                <div className="mt-1 text-sm text-zinc-100">{invitedByUserName ?? "Paperclip board"}</div>
-              </div>
-              <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Requested access</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                  {locale === "zh-CN" ? "邀请人" : "Invited by"}
+                </div>
                 <div className="mt-1 text-sm text-zinc-100">
-                  {showsAgentForm ? "Agent join request" : requestedHumanRole ?? "Company access"}
+                  {invitedByUserName ?? (locale === "zh-CN" ? "Paperclip 董事会" : "Paperclip board")}
                 </div>
               </div>
               <div className="border border-zinc-800 p-3">
-                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Invite expires</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                  {locale === "zh-CN" ? "申请访问" : "Requested access"}
+                </div>
+                <div className="mt-1 text-sm text-zinc-100">
+                  {showsAgentForm
+                    ? (locale === "zh-CN" ? "Agent 加入请求" : "Agent join request")
+                    : requestedHumanRole ?? (locale === "zh-CN" ? "公司访问权限" : "Company access")}
+                </div>
+              </div>
+              <div className="border border-zinc-800 p-3">
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                  {locale === "zh-CN" ? "邀请过期时间" : "Invite expires"}
+                </div>
                 <div className="mt-1 text-sm text-zinc-100">{formatDate(invite.expiresAt)}</div>
               </div>
             </div>
 
             {inviteMessage ? (
               <div className="border border-amber-500/40 bg-amber-500/10 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-amber-200/80">Message from inviter</div>
+                <div className="text-xs uppercase tracking-[0.2em] text-amber-200/80">
+                  {locale === "zh-CN" ? "邀请留言" : "Message from inviter"}
+                </div>
                 <p className="mt-2 text-sm leading-6 text-amber-50">{inviteMessage}</p>
               </div>
             ) : null}
 
             {sessionQuery.data ? (
               <div className="border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-50">
-                Signed in as <span className="font-medium">{sessionLabel}</span>.
+                {locale === "zh-CN" ? "当前登录账号：" : "Signed in as "}
+                <span className="font-medium">{sessionLabel}</span>
+                {locale === "zh-CN" ? "" : "."}
               </div>
             ) : null}
           </section>
@@ -605,13 +713,17 @@ export function InviteLandingPage() {
             {showsAgentForm ? (
               <div className="space-y-4">
                 <div>
-                  <h2 className="text-lg font-semibold">Submit agent details</h2>
+                  <h2 className="text-lg font-semibold">
+                    {locale === "zh-CN" ? "提交 Agent 信息" : "Submit agent details"}
+                  </h2>
                   <p className="mt-1 text-sm text-zinc-400">
-                    This invite will create an approval request for a new agent in {companyDisplayName}.
+                    {locale === "zh-CN"
+                      ? `此邀请会为 ${companyDisplayName} 创建一个新的 Agent 审批请求。`
+                      : `This invite will create an approval request for a new agent in ${companyDisplayName}.`}
                   </p>
                 </div>
                 <label className="block text-sm">
-                  <span className="mb-1 block text-zinc-400">Agent name</span>
+                  <span className="mb-1 block text-zinc-400">{t("invite.agentName")}</span>
                   <input
                     className={fieldClassName}
                     value={agentName}
@@ -619,7 +731,7 @@ export function InviteLandingPage() {
                   />
                 </label>
                 <label className="block text-sm">
-                  <span className="mb-1 block text-zinc-400">Adapter type</span>
+                  <span className="mb-1 block text-zinc-400">{t("invite.adapterType")}</span>
                   <select
                     className={fieldClassName}
                     value={adapterType}
@@ -627,13 +739,13 @@ export function InviteLandingPage() {
                   >
                     {joinAdapterOptions.map((type) => (
                       <option key={type} value={type} disabled={!ENABLED_INVITE_ADAPTERS.has(type)}>
-                        {getAdapterLabel(type)}{!ENABLED_INVITE_ADAPTERS.has(type) ? " (Coming soon)" : ""}
+                        {getAdapterLabel(type)}{!ENABLED_INVITE_ADAPTERS.has(type) ? ` (${t("invite.comingSoon")})` : ""}
                       </option>
                     ))}
                   </select>
                 </label>
                 <label className="block text-sm">
-                  <span className="mb-1 block text-zinc-400">Capabilities</span>
+                  <span className="mb-1 block text-zinc-400">{t("invite.capabilitiesOptional")}</span>
                   <textarea
                     className={fieldClassName}
                     rows={4}
@@ -647,19 +759,25 @@ export function InviteLandingPage() {
                   disabled={acceptMutation.isPending || agentName.trim().length === 0}
                   onClick={() => acceptMutation.mutate()}
                 >
-                  {acceptMutation.isPending ? "Working..." : joinButtonLabel}
+                  {acceptMutation.isPending ? t("invite.submitting") : joinButtonLabel}
                 </Button>
               </div>
             ) : requiresHumanAccount ? (
               <div className="space-y-5">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {authMode === "sign_up" ? "Create your account" : "Sign in to continue"}
+                    {authMode === "sign_up"
+                      ? (locale === "zh-CN" ? "创建账号" : "Create your account")
+                      : (locale === "zh-CN" ? "登录后继续" : "Sign in to continue")}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {authMode === "sign_up"
-                      ? `Start with a Paperclip account. After that, you'll come right back here to accept the invite for ${companyDisplayName}.`
-                      : "Use the Paperclip account that already matches this invite. If you do not have one yet, switch back to create account."}
+                      ? (locale === "zh-CN"
+                          ? `先创建一个 Paperclip 账号，然后回到这里接受 ${companyDisplayName} 的邀请。`
+                          : `Start with a Paperclip account. After that, you'll come right back here to accept the invite for ${companyDisplayName}.`)
+                      : (locale === "zh-CN"
+                          ? "请使用与此邀请匹配的 Paperclip 账号登录；如果你还没有账号，请切换到创建账号。"
+                          : "Use the Paperclip account that already matches this invite. If you do not have one yet, switch back to create account.")}
                   </p>
                 </div>
 
@@ -676,7 +794,7 @@ export function InviteLandingPage() {
                       setAuthMode("sign_up");
                     }}
                   >
-                    Create account
+                    {locale === "zh-CN" ? "创建账号" : "Create account"}
                   </button>
                   <button
                     type="button"
@@ -690,7 +808,7 @@ export function InviteLandingPage() {
                       setAuthMode("sign_in");
                     }}
                   >
-                    I already have an account
+                    {locale === "zh-CN" ? "我已有账号" : "I already have an account"}
                   </button>
                 </div>
 
@@ -702,7 +820,10 @@ export function InviteLandingPage() {
                     event.preventDefault();
                     if (authMutation.isPending) return;
                     if (!authCanSubmit) {
-                      setAuthFeedback({ tone: "error", message: "Please fill in all required fields." });
+                      setAuthFeedback({
+                        tone: "error",
+                        message: locale === "zh-CN" ? "请填写所有必填字段。" : "Please fill in all required fields.",
+                      });
                       return;
                     }
                     authMutation.mutate();
@@ -711,7 +832,7 @@ export function InviteLandingPage() {
                 >
                   {authMode === "sign_up" ? (
                     <label className="block text-sm">
-                      <span className="mb-1 block text-zinc-400">Name</span>
+                      <span className="mb-1 block text-zinc-400">{locale === "zh-CN" ? "姓名" : "Name"}</span>
                       <input
                         name="name"
                         className={fieldClassName}
@@ -726,7 +847,7 @@ export function InviteLandingPage() {
                     </label>
                   ) : null}
                   <label className="block text-sm">
-                    <span className="mb-1 block text-zinc-400">Email</span>
+                    <span className="mb-1 block text-zinc-400">{locale === "zh-CN" ? "邮箱" : "Email"}</span>
                     <input
                       name="email"
                       type="email"
@@ -741,7 +862,7 @@ export function InviteLandingPage() {
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="mb-1 block text-zinc-400">Password</span>
+                    <span className="mb-1 block text-zinc-400">{locale === "zh-CN" ? "密码" : "Password"}</span>
                     <input
                       name="password"
                       type="password"
@@ -770,17 +891,21 @@ export function InviteLandingPage() {
                     aria-disabled={!authCanSubmit || authMutation.isPending}
                   >
                     {authMutation.isPending
-                      ? "Working..."
+                      ? (locale === "zh-CN" ? "处理中…" : "Working...")
                       : authMode === "sign_in"
-                        ? "Sign in and continue"
-                        : "Create account and continue"}
+                        ? (locale === "zh-CN" ? "登录并继续" : "Sign in and continue")
+                        : (locale === "zh-CN" ? "创建账号并继续" : "Create account and continue")}
                   </Button>
                 </form>
 
                 <p className="text-xs leading-5 text-zinc-500">
                   {authMode === "sign_up"
-                    ? "Already signed up before? Use the existing-account option instead so the invite lands on the right Paperclip user."
-                    : "No account yet? Switch back to create account so you can accept the invite with a new login."}
+                    ? (locale === "zh-CN"
+                        ? "如果你之前已经注册过，请切换到已有账号登录，以便邀请关联到正确的 Paperclip 用户。"
+                        : "Already signed up before? Use the existing-account option instead so the invite lands on the right Paperclip user.")
+                    : (locale === "zh-CN"
+                        ? "如果你还没有账号，请切换回创建账号，然后再接受此邀请。"
+                        : "No account yet? Switch back to create account so you can accept the invite with a new login.")}
                 </p>
               </div>
             ) : (
@@ -788,25 +913,35 @@ export function InviteLandingPage() {
                 <div>
                   <h2 className="text-lg font-semibold">
                     {shouldAutoAcceptHumanInvite
-                      ? "Submitting join request"
+                      ? (locale === "zh-CN" ? "正在提交加入请求" : "Submitting join request")
                       : invite.inviteType === "bootstrap_ceo"
-                        ? "Accept bootstrap invite"
-                        : "Accept company invite"}
+                        ? t("invite.acceptBootstrapInvite")
+                        : (locale === "zh-CN" ? "接受公司邀请" : "Accept company invite")}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {shouldAutoAcceptHumanInvite
-                      ? `Submitting your join request for ${companyDisplayName}.`
+                      ? (locale === "zh-CN"
+                          ? `正在为 ${companyDisplayName} 提交你的加入请求。`
+                          : `Submitting your join request for ${companyDisplayName}.`)
                       : isCurrentMember
-                      ? `This account already belongs to ${companyDisplayName}.`
-                      : `This will ${
-                          invite.inviteType === "bootstrap_ceo" ? "finish setting up Paperclip" : `submit or complete your join request for ${companyDisplayName}`
-                        }.`}
+                        ? (locale === "zh-CN"
+                            ? `此账号已经属于 ${companyDisplayName}。`
+                            : `This account already belongs to ${companyDisplayName}.`)
+                        : (locale === "zh-CN"
+                            ? `这将${invite.inviteType === "bootstrap_ceo" ? "完成 Paperclip 初始化" : `提交或完成你加入 ${companyDisplayName} 的请求`}。`
+                            : `This will ${
+                                invite.inviteType === "bootstrap_ceo"
+                                  ? "finish setting up Paperclip"
+                                  : `submit or complete your join request for ${companyDisplayName}`
+                              }.`)}
                   </p>
                 </div>
                 {error ? <p className="text-xs text-red-400">{error}</p> : null}
                 {shouldAutoAcceptHumanInvite ? (
                   <div className="text-sm text-zinc-400">
-                    {acceptMutation.isPending ? "Submitting request..." : "Finishing sign-in..."}
+                    {acceptMutation.isPending
+                      ? (locale === "zh-CN" ? "正在提交请求…" : "Submitting request...")
+                      : (locale === "zh-CN" ? "正在完成登录…" : "Finishing sign-in...")}
                   </div>
                 ) : (
                   <Button
@@ -814,7 +949,9 @@ export function InviteLandingPage() {
                     disabled={acceptMutation.isPending || isCurrentMember}
                     onClick={() => acceptMutation.mutate()}
                   >
-                    {acceptMutation.isPending ? "Working..." : joinButtonLabel}
+                    {acceptMutation.isPending
+                      ? (locale === "zh-CN" ? "处理中…" : "Working...")
+                      : joinButtonLabel}
                   </Button>
                 )}
               </div>

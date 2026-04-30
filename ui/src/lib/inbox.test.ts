@@ -926,7 +926,6 @@ describe("inbox helpers", () => {
       }),
     ).toEqual(["inbox", "archived", "other"]);
   });
-
   it("defaults the remembered inbox tab to mine and persists all", () => {
     localStorage.clear();
     expect(loadLastInboxTab()).toBe("mine");

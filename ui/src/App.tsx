@@ -1,8 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
-import { CloudAccessGate } from "./components/CloudAccessGate";
 import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
 import { Companies } from "./pages/Companies";
@@ -53,9 +53,81 @@ import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
 import { useCompany } from "./context/CompanyContext";
 import { useDialogActions } from "./context/DialogContext";
+import { useLocale } from "./context/LocaleContext";
+import { authApi } from "./api/auth";
+import { healthApi } from "./api/health";
 import { loadLastInboxTab } from "./lib/inbox";
 import { shouldRedirectCompanylessRouteToOnboarding } from "./lib/onboarding-route";
+import { queryKeys } from "./lib/queryKeys";
 
+function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
+  const { t } = useLocale();
+  return (
+    <div className="mx-auto max-w-xl py-10">
+      <div className="rounded-lg border border-border bg-card p-6">
+        <h1 className="text-xl font-semibold">{t("app.bootstrapPending.title")}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {hasActiveInvite
+            ? t("app.bootstrapPending.activeInvite")
+            : t("app.bootstrapPending.noInvite")}
+        </p>
+        <pre className="mt-4 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 text-xs">
+{`pnpm paperclipai auth bootstrap-ceo`}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function CloudAccessGate() {
+  const { t } = useLocale();
+  const location = useLocation();
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    retry: false,
+    refetchInterval: (query) => {
+      const data = query.state.data as
+        | { deploymentMode?: "local_trusted" | "authenticated"; bootstrapStatus?: "ready" | "bootstrap_pending" }
+        | undefined;
+      return data?.deploymentMode === "authenticated" && data.bootstrapStatus === "bootstrap_pending"
+        ? 2000
+        : false;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  const isAuthenticatedMode = healthQuery.data?.deploymentMode === "authenticated";
+  const sessionQuery = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+    enabled: isAuthenticatedMode,
+    retry: false,
+  });
+
+  if (healthQuery.isLoading || (isAuthenticatedMode && sessionQuery.isLoading)) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
+  }
+
+  if (healthQuery.error) {
+    return (
+      <div className="mx-auto max-w-xl py-10 text-sm text-destructive">
+        {healthQuery.error instanceof Error ? healthQuery.error.message : t("common.failedLoadAppState")}
+      </div>
+    );
+  }
+
+  if (isAuthenticatedMode && healthQuery.data?.bootstrapStatus === "bootstrap_pending") {
+    return <BootstrapPendingPage hasActiveInvite={healthQuery.data.bootstrapInviteActive} />;
+  }
+
+  if (isAuthenticatedMode && !sessionQuery.data) {
+    const next = encodeURIComponent(`${location.pathname}${location.search}`);
+    return <Navigate to={`/auth?next=${next}`} replace />;
+  }
+
+  return <Outlet />;
+}
 function boardRoutes() {
   return (
     <>
@@ -144,6 +216,7 @@ function LegacySettingsRedirect() {
 }
 
 function OnboardingRoutePage() {
+  const { t } = useLocale();
   const { companies } = useCompany();
   const { openOnboarding } = useDialogActions();
   const { companyPrefix } = useParams<{ companyPrefix?: string }>();
@@ -152,15 +225,15 @@ function OnboardingRoutePage() {
     : null;
 
   const title = matchedCompany
-    ? `Add another agent to ${matchedCompany.name}`
+    ? t("app.onboarding.addAnotherAgentTitle", { company: matchedCompany.name })
     : companies.length > 0
-      ? "Create another company"
-      : "Create your first company";
+      ? t("app.onboarding.createAnotherCompanyTitle")
+      : t("app.onboarding.createFirstCompanyTitle");
   const description = matchedCompany
-    ? "Run onboarding again to add an agent and a starter task for this company."
+    ? t("app.onboarding.addAnotherAgentDescription")
     : companies.length > 0
-      ? "Run onboarding again to create another company and seed its first agent."
-      : "Get started by creating a company and your first agent.";
+      ? t("app.onboarding.createAnotherCompanyDescription")
+      : t("app.onboarding.createFirstCompanyDescription");
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -175,7 +248,7 @@ function OnboardingRoutePage() {
                 : openOnboarding()
             }
           >
-            {matchedCompany ? "Add Agent" : "Start Onboarding"}
+            {matchedCompany ? t("app.onboarding.addAgent") : t("app.onboarding.start")}
           </Button>
         </div>
       </div>
@@ -184,11 +257,12 @@ function OnboardingRoutePage() {
 }
 
 function CompanyRootRedirect() {
+  const { t } = useLocale();
   const { companies, selectedCompany, loading } = useCompany();
   const location = useLocation();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -208,11 +282,12 @@ function CompanyRootRedirect() {
 }
 
 function UnprefixedBoardRedirect() {
+  const { t } = useLocale();
   const location = useLocation();
   const { companies, selectedCompany, loading } = useCompany();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -237,17 +312,18 @@ function UnprefixedBoardRedirect() {
 }
 
 function NoCompaniesStartPage() {
+  const { t } = useLocale();
   const { openOnboarding } = useDialogActions();
 
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">Create your first company</h1>
+        <h1 className="text-xl font-semibold">{t("app.noCompanies.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Get started by creating a company.
+          {t("app.noCompanies.description")}
         </p>
         <div className="mt-4">
-          <Button onClick={() => openOnboarding()}>New Company</Button>
+          <Button onClick={() => openOnboarding()}>{t("app.noCompanies.newCompany")}</Button>
         </div>
       </div>
     </div>

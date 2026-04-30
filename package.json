@@ -18,6 +18,9 @@
     "test": "pnpm run test:run",
     "test:watch": "pnpm run preflight:workspace-links && vitest",
     "test:run": "pnpm run preflight:workspace-links && node scripts/run-vitest-stable.mjs",
+    "sync:upstream": "node scripts/upstream-sync/index.mjs",
+    "sync:upstream:dry-run": "node scripts/upstream-sync/index.mjs --dry-run",
+    "test:upstream-sync": "node --test $(find scripts/upstream-sync -name '*.test.mjs' -print | sort)",
     "db:generate": "pnpm --filter @paperclipai/db generate",
     "db:migrate": "pnpm --filter @paperclipai/db migrate",
     "issue-references:backfill": "pnpm run preflight:workspace-links && tsx scripts/backfill-issue-reference-mentions.ts",
@@ -31,6 +34,7 @@
     "release:github": "./scripts/create-github-release.sh",
     "release:rollback": "./scripts/rollback-latest.sh",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
@@ -45,6 +49,7 @@
     "metrics:paperclip-commits": "tsx scripts/paperclip-commit-metrics.ts"
   },
   "devDependencies": {
+    "@embedded-postgres/darwin-arm64": "18.1.0-beta.15",
     "@playwright/test": "^1.58.2",
     "cross-env": "^10.1.0",
     "esbuild": "^0.27.3",

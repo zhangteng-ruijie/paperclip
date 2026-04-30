@@ -80,6 +80,7 @@ const VITE_DEV_STATIC_PATHS = new Set([
   "/site.webmanifest",
   "/sw.js",
 ]);
+const COMPETING_CSRF_COOKIE_NAMES = new Set(["csrftoken"]);
 
 export function resolveViteHmrPort(serverPort: number): number {
   if (serverPort <= 55_535) {
@@ -103,6 +104,24 @@ export function shouldEnablePrivateHostnameGuard(opts: {
     opts.deploymentExposure === "private" &&
     (opts.deploymentMode === "local_trusted" || opts.deploymentMode === "authenticated")
   );
+}
+
+export function sanitizeAuthCookieHeader(cookieHeader: string | undefined): string | undefined {
+  if (!cookieHeader) return cookieHeader;
+  const cookies = cookieHeader
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  if (cookies.length === 0) return undefined;
+
+  const filtered = cookies.filter((cookie) => {
+    const separatorIndex = cookie.indexOf("=");
+    const name = (separatorIndex === -1 ? cookie : cookie.slice(0, separatorIndex)).trim().toLowerCase();
+    return !COMPETING_CSRF_COOKIE_NAMES.has(name);
+  });
+  if (filtered.length === 0) return undefined;
+  if (filtered.length === cookies.length) return cookieHeader;
+  return filtered.join("; ");
 }
 
 export async function createApp(
@@ -168,7 +187,26 @@ export async function createApp(
   );
   app.use("/api/auth", authRoutes(db));
   if (opts.betterAuthHandler) {
+    app.use("/api/auth/{*authPath}", (req, _res, next) => {
+      if (typeof req.headers.cookie !== "string" || req.headers.cookie.length === 0) {
+        next();
+        return;
+      }
+      const sanitizedCookie = sanitizeAuthCookieHeader(req.headers.cookie);
+      if (sanitizedCookie === req.headers.cookie) {
+        next();
+        return;
+      }
+      if (sanitizedCookie) req.headers.cookie = sanitizedCookie;
+      else delete req.headers.cookie;
+      next();
+    });
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
+  } else {
+    // Fallback for local_trusted mode - sign-out is a no-op
+    app.post("/api/auth/sign-out", (_req, res) => {
+      res.json({ ok: true });
+    });
   }
   app.use(llmRoutes(db));
 

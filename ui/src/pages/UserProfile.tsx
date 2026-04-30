@@ -10,6 +10,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
   formatCents,
@@ -23,6 +24,87 @@ import {
 } from "../lib/utils";
 
 const NO_COMPANY = "__none__";
+
+function getUserProfileCopy(locale: string | null | undefined) {
+  if (locale === "zh-CN") {
+    return {
+      user: "用户",
+      users: "用户",
+      done: "完成",
+      touched: "触达",
+      completed: "已完成",
+      comments: "评论",
+      actions: "操作",
+      tokens: "Token",
+      spend: "花费",
+      created: "创建",
+      open: "未完成",
+      last14Days: "最近 14 天",
+      tokensTotal: "Token 总计",
+      tokensPerDay: "Token / 天",
+      completions: "完成数",
+      selectCompany: "选择公司后查看用户资料。",
+      notFound: "此公司中未找到用户资料。",
+      member: "成员",
+      joined: "加入于",
+      allTimeTokens: "累计 Token",
+      spent: "花费",
+      completedHero: "已完成",
+      rate: "完成率",
+      openAssigned: "未完成已分配",
+      sevenDayActions: "7 天操作",
+      recentTasks: "最近任务",
+      noTasks: "尚无触达任务。",
+      recentActivity: "最近活动",
+      noActivity: "尚未记录直接用户操作。",
+      agentAttribution: "智能体归因",
+      noAgentUsage: "尚无任务关联 Token 用量。",
+      providerMix: "提供商构成",
+      noProviderUsage: "尚无归因到提供商的用量。",
+      issueLinkedUsage: "任务关联用量",
+      billedThrough: "计费方",
+      createdHint: "已创建",
+    };
+  }
+  return {
+    user: "User",
+    users: "Users",
+    done: "done",
+    touched: "Touched",
+    completed: "Completed",
+    comments: "Comments",
+    actions: "Actions",
+    tokens: "Tokens",
+    spend: "Spend",
+    created: "Created",
+    open: "Open",
+    last14Days: "Last 14 days",
+    tokensTotal: "tokens total",
+    tokensPerDay: "tokens / day",
+    completions: "completions",
+    selectCompany: "Select a company to view user profiles.",
+    notFound: "User profile not found for this company.",
+    member: "member",
+    joined: "joined",
+    allTimeTokens: "All-time tokens",
+    spent: "spent",
+    completedHero: "Completed",
+    rate: "rate",
+    openAssigned: "Open assigned",
+    sevenDayActions: "7-day actions",
+    recentTasks: "Recent tasks",
+    noTasks: "No touched tasks yet.",
+    recentActivity: "Recent activity",
+    noActivity: "No direct user actions recorded yet.",
+    agentAttribution: "Agent attribution",
+    noAgentUsage: "No issue-linked token usage yet.",
+    providerMix: "Provider mix",
+    noProviderUsage: "No provider usage attributed yet.",
+    issueLinkedUsage: "Issue-linked usage",
+    billedThrough: "Billed through",
+    createdHint: "created",
+  };
+}
 
 function initials(name: string | null | undefined) {
   const value = name?.trim() || "User";
@@ -50,30 +132,30 @@ function HeroStat({ label, value, hint }: { label: string; value: string; hint?:
   );
 }
 
-function WindowColumn({ stats }: { stats: UserProfileWindowStats }) {
+function WindowColumn({ stats, copy }: { stats: UserProfileWindowStats; copy: ReturnType<typeof getUserProfileCopy> }) {
   const tokens = totalTokens(stats);
   return (
     <div className="flex min-w-0 flex-col gap-4 border-l border-border pl-5 first:border-l-0 first:pl-0">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{stats.label}</h2>
-        <span className="text-[11px] text-muted-foreground tabular-nums">{completionRate(stats)} done</span>
+        <span className="text-[11px] text-muted-foreground tabular-nums">{completionRate(stats)} {copy.done}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-x-5 gap-y-3">
-        <Metric value={formatNumber(stats.touchedIssues)} label="Touched" />
-        <Metric value={formatNumber(stats.completedIssues)} label="Completed" />
-        <Metric value={formatNumber(stats.commentCount)} label="Comments" />
-        <Metric value={formatNumber(stats.activityCount)} label="Actions" />
+        <Metric value={formatNumber(stats.touchedIssues)} label={copy.touched} />
+        <Metric value={formatNumber(stats.completedIssues)} label={copy.completed} />
+        <Metric value={formatNumber(stats.commentCount)} label={copy.comments} />
+        <Metric value={formatNumber(stats.activityCount)} label={copy.actions} />
       </div>
 
       <div className="grid grid-cols-2 gap-x-5 gap-y-1.5 pt-3 text-xs tabular-nums text-muted-foreground">
-        <span>Tokens</span>
+        <span>{copy.tokens}</span>
         <span className="text-right text-foreground">{formatTokens(tokens)}</span>
-        <span>Spend</span>
+        <span>{copy.spend}</span>
         <span className="text-right text-foreground">{formatCents(stats.costCents)}</span>
-        <span>Created</span>
+        <span>{copy.created}</span>
         <span className="text-right text-foreground">{formatNumber(stats.createdIssues)}</span>
-        <span>Open</span>
+        <span>{copy.open}</span>
         <span className="text-right text-foreground">{formatNumber(stats.assignedOpenIssues)}</span>
       </div>
     </div>
@@ -89,7 +171,7 @@ function Metric({ value, label }: { value: string; label: string }) {
   );
 }
 
-function UsageChart({ points }: { points: UserProfileDailyPoint[] }) {
+function UsageChart({ points, copy }: { points: UserProfileDailyPoint[]; copy: ReturnType<typeof getUserProfileCopy> }) {
   const totals = points.map((point) => totalTokens(point));
   const maxTokens = Math.max(1, ...totals);
   const maxCompleted = Math.max(1, ...points.map((point) => point.completedIssues));
@@ -98,10 +180,10 @@ function UsageChart({ points }: { points: UserProfileDailyPoint[] }) {
   return (
     <section>
       <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-border pb-3">
-        <h2 className="text-sm font-semibold">Last 14 days</h2>
+        <h2 className="text-sm font-semibold">{copy.last14Days}</h2>
         <div className="flex items-baseline gap-4 text-xs text-muted-foreground">
           <span className="tabular-nums text-foreground">{formatTokens(totalTokensSum)}</span>
-          <span>tokens total</span>
+          <span>{copy.tokensTotal}</span>
         </div>
       </div>
       <div className="mt-6 grid grid-cols-[repeat(14,minmax(0,1fr))] items-end gap-1.5 sm:gap-2">
@@ -137,10 +219,10 @@ function UsageChart({ points }: { points: UserProfileDailyPoint[] }) {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-4 text-[10px] uppercase tracking-wide text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 bg-foreground/80" /> tokens / day
+          <span className="h-2 w-2 bg-foreground/80" /> {copy.tokensPerDay}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-[3px] w-4 rounded-full bg-emerald-500/80" /> completions
+          <span className="h-[3px] w-4 rounded-full bg-emerald-500/80" /> {copy.completions}
         </span>
       </div>
     </section>
@@ -198,6 +280,8 @@ export function UserProfile() {
   const { userSlug = "" } = useParams<{ userSlug: string }>();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
+  const copy = getUserProfileCopy(locale);
   const companyId = selectedCompanyId ?? NO_COMPANY;
 
   const { data, isLoading, error } = useQuery({
@@ -207,19 +291,19 @@ export function UserProfile() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Users" }, { label: data?.user.name ?? userSlug }]);
-  }, [data?.user.name, setBreadcrumbs, userSlug]);
+    setBreadcrumbs([{ label: copy.users }, { label: data?.user.name ?? userSlug }]);
+  }, [copy.users, data?.user.name, setBreadcrumbs, userSlug]);
 
   const allTime = data?.stats.find((entry) => entry.key === "all");
   const last7 = data?.stats.find((entry) => entry.key === "last7");
-  const displayName = data?.user.name?.trim() || data?.user.email?.split("@")[0] || "User";
+  const displayName = data?.user.name?.trim() || data?.user.email?.split("@")[0] || copy.user;
 
   const agentUsageRows = useMemo<UsageRow[]>(
     () =>
       (data?.topAgents ?? []).map((row) => ({
         key: row.agentId ?? "unknown",
         label: row.agentName ?? (row.agentId ? row.agentId.slice(0, 8) : "unknown"),
-        sublabel: "Issue-linked usage",
+        sublabel: copy.issueLinkedUsage,
         costCents: row.costCents,
         inputTokens: row.inputTokens,
         cachedInputTokens: row.cachedInputTokens,
@@ -233,7 +317,7 @@ export function UserProfile() {
       (data?.topProviders ?? []).map((row) => ({
         key: `${row.provider}:${row.biller}:${row.model}`,
         label: `${providerDisplayName(row.provider)} / ${row.model}`,
-        sublabel: `Billed through ${providerDisplayName(row.biller)}`,
+        sublabel: `${copy.billedThrough} ${providerDisplayName(row.biller)}`,
         costCents: row.costCents,
         inputTokens: row.inputTokens,
         cachedInputTokens: row.cachedInputTokens,
@@ -243,7 +327,7 @@ export function UserProfile() {
   );
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={UserRound} message="Select a company to view user profiles." />;
+    return <EmptyState icon={UserRound} message={copy.selectCompany} />;
   }
 
   if (isLoading) {
@@ -251,14 +335,14 @@ export function UserProfile() {
   }
 
   if (error || !data) {
-    return <EmptyState icon={AlertCircle} message="User profile not found for this company." />;
+    return <EmptyState icon={AlertCircle} message={copy.notFound} />;
   }
 
   const allTimeTokens = allTime ? totalTokens(allTime) : 0;
   const metaParts = [
-    data.user.membershipRole ?? "member",
+    data.user.membershipRole ?? copy.member,
     data.user.membershipStatus,
-    `joined ${formatDate(data.user.joinedAt)}`,
+    `${copy.joined} ${formatDate(data.user.joinedAt)}`,
   ];
 
   return (
@@ -283,27 +367,27 @@ export function UserProfile() {
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <HeroStat label="All-time tokens" value={formatTokens(allTimeTokens)} hint={formatCents(allTime?.costCents ?? 0) + " spent"} />
-          <HeroStat label="Completed" value={formatNumber(allTime?.completedIssues ?? 0)} hint={allTime ? `${completionRate(allTime)} rate` : undefined} />
-          <HeroStat label="Open assigned" value={formatNumber(allTime?.assignedOpenIssues ?? 0)} hint={`${formatNumber(allTime?.createdIssues ?? 0)} created`} />
-          <HeroStat label="7-day actions" value={formatNumber(last7?.activityCount ?? 0)} hint={`${formatNumber(last7?.commentCount ?? 0)} comments`} />
+          <HeroStat label={copy.allTimeTokens} value={formatTokens(allTimeTokens)} hint={formatCents(allTime?.costCents ?? 0) + ` ${copy.spent}`} />
+          <HeroStat label={copy.completedHero} value={formatNumber(allTime?.completedIssues ?? 0)} hint={allTime ? `${completionRate(allTime)} ${copy.rate}` : undefined} />
+          <HeroStat label={copy.openAssigned} value={formatNumber(allTime?.assignedOpenIssues ?? 0)} hint={`${formatNumber(allTime?.createdIssues ?? 0)} ${copy.createdHint}`} />
+          <HeroStat label={copy.sevenDayActions} value={formatNumber(last7?.activityCount ?? 0)} hint={`${formatNumber(last7?.commentCount ?? 0)} ${copy.comments.toLowerCase()}`} />
         </div>
       </section>
 
       <section className="grid gap-8 border-b border-border pb-8 lg:grid-cols-3">
-        {data.stats.map((entry) => <WindowColumn key={entry.key} stats={entry} />)}
+        {data.stats.map((entry) => <WindowColumn key={entry.key} stats={entry} copy={copy} />)}
       </section>
 
-      <UsageChart points={data.daily} />
+      <UsageChart points={data.daily} copy={copy} />
 
       <div className="grid gap-10 pt-2 xl:grid-cols-2">
         <section>
           <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3">
-            <h2 className="text-sm font-semibold">Recent tasks</h2>
+            <h2 className="text-sm font-semibold">{copy.recentTasks}</h2>
             <span className="text-xs text-muted-foreground tabular-nums">{data.recentIssues.length}</span>
           </div>
           {data.recentIssues.length === 0 ? (
-            <div className="pt-4 text-sm text-muted-foreground">No touched tasks yet.</div>
+            <div className="pt-4 text-sm text-muted-foreground">{copy.noTasks}</div>
           ) : (
             <ul className="divide-y divide-border">
               {data.recentIssues.map((issue) => (
@@ -327,11 +411,11 @@ export function UserProfile() {
 
         <section>
           <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3">
-            <h2 className="text-sm font-semibold">Recent activity</h2>
+            <h2 className="text-sm font-semibold">{copy.recentActivity}</h2>
             <span className="text-xs text-muted-foreground tabular-nums">{data.recentActivity.length}</span>
           </div>
           {data.recentActivity.length === 0 ? (
-            <div className="pt-4 text-sm text-muted-foreground">No direct user actions recorded yet.</div>
+            <div className="pt-4 text-sm text-muted-foreground">{copy.noActivity}</div>
           ) : (
             <ul className="divide-y divide-border">
               {data.recentActivity.map((event) => (
@@ -351,8 +435,8 @@ export function UserProfile() {
       </div>
 
       <div className="grid gap-10 xl:grid-cols-2">
-        <UsageList title="Agent attribution" empty="No issue-linked token usage yet." rows={agentUsageRows} />
-        <UsageList title="Provider mix" empty="No provider usage attributed yet." rows={providerUsageRows} />
+        <UsageList title={copy.agentAttribution} empty={copy.noAgentUsage} rows={agentUsageRows} />
+        <UsageList title={copy.providerMix} empty={copy.noProviderUsage} rows={providerUsageRows} />
       </div>
     </div>
   );

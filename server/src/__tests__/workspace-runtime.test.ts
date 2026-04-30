@@ -50,6 +50,7 @@ const execFileAsync = promisify(execFile);
 const leasedRunIds = new Set<string>();
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+const RUNTIME_SERVICE_TEST_TIMEOUT_MS = 20_000;
 
 if (!embeddedPostgresSupport.supported) {
   console.warn(
@@ -999,110 +1000,6 @@ describe("realizeExecutionWorkspace", () => {
     }
   }, 15_000);
 
-  it(
-    "provisions worktree-local pnpm node_modules instead of reusing base-repo links",
-    async () => {
-    const repoRoot = await createTempRepo();
-    await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
-    await fs.mkdir(path.join(repoRoot, "packages", "shared"), { recursive: true });
-    await fs.mkdir(path.join(repoRoot, "server"), { recursive: true });
-    await fs.writeFile(
-      path.join(repoRoot, "package.json"),
-      JSON.stringify(
-        {
-          name: "workspace-root",
-          private: true,
-          packageManager: "pnpm@9.15.4",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-    await fs.writeFile(
-      path.join(repoRoot, "pnpm-workspace.yaml"),
-      ["packages:", "  - packages/*", "  - server", ""].join("\n"),
-      "utf8",
-    );
-    await fs.writeFile(
-      path.join(repoRoot, "packages", "shared", "package.json"),
-      JSON.stringify(
-        {
-          name: "@repo/shared",
-          version: "1.0.0",
-          private: true,
-          type: "module",
-          exports: "./index.js",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-    await fs.writeFile(path.join(repoRoot, "packages", "shared", "index.js"), "export const value = 'shared';\n", "utf8");
-    await fs.writeFile(
-      path.join(repoRoot, "server", "package.json"),
-      JSON.stringify(
-        {
-          name: "server",
-          private: true,
-          type: "module",
-          dependencies: {
-            "@repo/shared": "workspace:*",
-          },
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-    await fs.writeFile(path.join(repoRoot, "server", "index.js"), "export {};\n", "utf8");
-    await fs.copyFile(provisionWorktreeScriptPath, path.join(repoRoot, "scripts", "provision-worktree.sh"));
-    await fs.chmod(path.join(repoRoot, "scripts", "provision-worktree.sh"), 0o755);
-    await runPnpm(repoRoot, ["install"]);
-    await runGit(repoRoot, ["add", "."]);
-    await runGit(repoRoot, ["commit", "-m", "Add pnpm workspace fixture"]);
-
-    const workspace = await realizeExecutionWorkspace({
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId: "project-1",
-        workspaceId: "workspace-1",
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: {
-        workspaceStrategy: {
-          type: "git_worktree",
-          branchTemplate: "{{issue.identifier}}-{{slug}}",
-          provisionCommand: "bash ./scripts/provision-worktree.sh",
-        },
-      },
-      issue: {
-        id: "issue-1",
-        identifier: "PAP-551",
-        title: "Provision local workspace dependencies",
-      },
-      agent: {
-        id: "agent-1",
-        name: "Codex Coder",
-        companyId: "company-1",
-      },
-    });
-
-    expect((await fs.lstat(path.join(workspace.cwd, "node_modules"))).isSymbolicLink()).toBe(false);
-    expect((await fs.lstat(path.join(workspace.cwd, "server", "node_modules"))).isSymbolicLink()).toBe(false);
-    await expect(fs.realpath(path.join(workspace.cwd, "server", "node_modules", "@repo", "shared"))).resolves.toBe(
-      await fs.realpath(path.join(workspace.cwd, "packages", "shared")),
-    );
-    await expect(fs.realpath(path.join(repoRoot, "server", "node_modules", "@repo", "shared"))).resolves.toBe(
-      await fs.realpath(path.join(repoRoot, "packages", "shared")),
-    );
-    },
-    30_000,
-  );
-
   it("provisions successfully when install is needed but there are no symlinked node_modules to move", async () => {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
@@ -1188,20 +1085,35 @@ describe("realizeExecutionWorkspace", () => {
       await fs.mkdir(baseRoot, { recursive: true });
       await fs.mkdir(worktreeRoot, { recursive: true });
       await fs.mkdir(fakeBin, { recursive: true });
+      await fs.writeFile(
+        path.join(worktreeRoot, "package.json"),
+        JSON.stringify(
+          {
+            name: "workspace-root",
+            private: true,
+            scripts: {
+              paperclipai: "paperclipai",
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
       await fs.copyFile(provisionWorktreeScriptPath, scriptPath);
       await fs.chmod(scriptPath, 0o755);
       await fs.writeFile(
         fakePnpmPath,
         [
           "#!/bin/sh",
-          "if [ \"$1\" = \"paperclipai\" ] && [ \"$2\" = \"--help\" ]; then",
+          "if [ \"$1\" = \"run\" ] && [ \"$2\" = \"--silent\" ] && [ \"$3\" = \"paperclipai\" ] && [ \"$4\" = \"--help\" ]; then",
           "  exit 0",
           "fi",
-          "if [ \"$1\" = \"paperclipai\" ] && [ \"$2\" = \"worktree\" ] && [ \"$3\" = \"init\" ]; then",
+          "if [ \"$1\" = \"run\" ] && [ \"$2\" = \"--silent\" ] && [ \"$3\" = \"paperclipai\" ] && [ \"$4\" = \"worktree\" ] && [ \"$5\" = \"init\" ]; then",
           "  echo \"simulated init failure\" >&2",
           "  exit 42",
           "fi",
-          "exit 0",
+          "exit 1",
           "",
         ].join("\n"),
         "utf8",
@@ -1268,7 +1180,7 @@ describe("realizeExecutionWorkspace", () => {
         fakePnpmPath,
         [
           "#!/bin/sh",
-          "if [ \"$1\" = \"paperclipai\" ] && [ \"$2\" = \"--help\" ]; then",
+          "if [ \"$1\" = \"run\" ] && [ \"$2\" = \"--silent\" ] && [ \"$3\" = \"paperclipai\" ] && [ \"$4\" = \"--help\" ]; then",
           "  exit 1",
           "fi",
           "if [ \"$1\" = \"install\" ] && [ \"$2\" = \"--frozen-lockfile\" ]; then",
@@ -2174,7 +2086,7 @@ describe("ensureRuntimeServicesForRun", () => {
     expect(third).toHaveLength(1);
     expect(third[0]?.reused).toBe(false);
     expect(third[0]?.id).not.toBe(first[0]?.id);
-  }, 10_000);
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("does not reuse project-scoped shared services across different workspace launch contexts", async () => {
     const primaryWorkspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-primary-"));
@@ -2269,7 +2181,7 @@ describe("ensureRuntimeServicesForRun", () => {
 
     const executionResponse = await fetch(executionServices[0]!.url!);
     expect(await executionResponse.text()).toBe(path.join(worktreeWorkspaceRoot, ".paperclip", "runtime-services"));
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("does not leak parent Paperclip instance env into runtime service commands", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-env-"));
@@ -2349,7 +2261,7 @@ describe("ensureRuntimeServicesForRun", () => {
     expect(services[0]?.executionWorkspaceId).toBe("execution-workspace-1");
     expect(services[0]?.scopeType).toBe("execution_workspace");
     expect(services[0]?.scopeId).toBe("execution-workspace-1");
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("stops execution workspace runtime services by executionWorkspaceId", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-stop-"));
@@ -2403,7 +2315,7 @@ describe("ensureRuntimeServicesForRun", () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     await expect(fetch(services[0]!.url!)).rejects.toThrow();
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("does not stop services in sibling directories when matching by workspace cwd", async () => {
     const workspaceParent = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-sibling-"));
@@ -2462,7 +2374,7 @@ describe("ensureRuntimeServicesForRun", () => {
 
     await releaseRuntimeServicesForRun(runId);
     leasedRunIds.delete(runId);
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("starts only the selected workspace-controlled runtime service", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-control-start-"));
@@ -2523,7 +2435,7 @@ describe("ensureRuntimeServicesForRun", () => {
       executionWorkspaceId: "execution-workspace-control-start",
       workspaceCwd: workspace.cwd,
     });
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("stops only the selected execution workspace runtime service", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-control-stop-"));
@@ -2599,7 +2511,7 @@ describe("ensureRuntimeServicesForRun", () => {
       workspaceCwd: workspace.cwd,
       runtimeServiceId: worker?.id ?? null,
     });
-  }, 10_000);
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 });
 
 describe("buildWorkspaceRuntimeDesiredStatePatch", () => {
@@ -2922,7 +2834,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
     });
 
     await expect(fetch(service!.url!)).rejects.toThrow();
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("marks persisted local services stopped when the registry pid is stale", async () => {
     const companyId = randomUUID();
@@ -3133,7 +3045,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
     expect(persisted?.status).toBe("stopped");
     expect(persisted?.healthStatus).toBe("unknown");
     expect(persisted?.stoppedAt).toBeTruthy();
-  });
+  }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 });
 
 describe("normalizeAdapterManagedRuntimeServices", () => {

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
+import { Moon, Settings, Sun } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { CompanyRail } from "./CompanyRail";
 import { Sidebar } from "./Sidebar";
 import { InstanceSidebar } from "./InstanceSidebar";
@@ -22,7 +25,9 @@ import { useDialogActions } from "../context/DialogContext";
 import { GeneralSettingsProvider } from "../context/GeneralSettingsContext";
 import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
+import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useTheme } from "../context/ThemeContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
 import { healthApi } from "../api/health";
@@ -34,10 +39,12 @@ import {
 } from "../lib/instance-settings";
 import {
   resetNavigationScroll,
+  SIDEBAR_SCROLL_RESET_STATE,
   shouldResetScrollOnNavigation,
 } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { scheduleMainContentFocus } from "../lib/main-content-focus";
+import { getShellCopy, themeToggleLabel } from "../lib/shell-copy";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
 
@@ -56,6 +63,8 @@ export function Layout() {
   const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
   const { openNewIssue, openOnboarding } = useDialogActions();
   const { togglePanelVisible } = usePanel();
+  const { locale } = useLocale();
+  const { theme, toggleTheme } = useTheme();
   const {
     companies,
     loading: companiesLoading,
@@ -77,6 +86,8 @@ export function Layout() {
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [instanceSettingsTarget, setInstanceSettingsTarget] = useState<string>(() => readRememberedInstanceSettingsPath());
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const nextTheme = theme === "dark" ? "light" : "dark";
+  const copy = getShellCopy(locale);
   const matchedCompany = useMemo(() => {
     if (!companyPrefix) return null;
     const requestedPrefix = companyPrefix.toUpperCase();
@@ -314,7 +325,7 @@ export function Layout() {
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[200] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        Skip to Main Content
+        {copy.skipToMainContent}
       </a>
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
@@ -324,7 +335,7 @@ export function Layout() {
             type="button"
             className="fixed inset-0 z-40 bg-black/50"
             onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            aria-label={copy.closeSidebar}
           />
         )}
 
@@ -344,6 +355,42 @@ export function Layout() {
               ) : (
                 <Sidebar />
               )}
+            </div>
+            <div className="border-t border-r border-border px-3 py-2 bg-background">
+              <div className="flex items-center gap-1">
+                {health?.version && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="px-2 text-xs text-muted-foreground shrink-0 cursor-default">v</span>
+                    </TooltipTrigger>
+                    <TooltipContent>v{health.version}</TooltipContent>
+                  </Tooltip>
+                )}
+                <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
+                  <Link
+                    to={instanceSettingsTarget}
+                    state={SIDEBAR_SCROLL_RESET_STATE}
+                    aria-label={copy.instanceSettings}
+                    title={copy.instanceSettings}
+                    onClick={() => {
+                      if (isMobile) setSidebarOpen(false);
+                    }}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground shrink-0"
+                  onClick={toggleTheme}
+                  aria-label={themeToggleLabel(nextTheme, locale)}
+                  title={themeToggleLabel(nextTheme, locale)}
+                >
+                  {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
             <SidebarAccountMenu
               deploymentMode={health?.deploymentMode}
@@ -368,6 +415,42 @@ export function Layout() {
                 ) : (
                   <Sidebar />
                 )}
+              </div>
+            </div>
+            <div className="border-t border-r border-border px-3 py-2">
+              <div className="flex items-center gap-1">
+                {health?.version && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="px-2 text-xs text-muted-foreground shrink-0 cursor-default">v</span>
+                    </TooltipTrigger>
+                    <TooltipContent>v{health.version}</TooltipContent>
+                  </Tooltip>
+                )}
+                <Button variant="ghost" size="icon-sm" className="text-muted-foreground shrink-0" asChild>
+                  <Link
+                    to={instanceSettingsTarget}
+                    state={SIDEBAR_SCROLL_RESET_STATE}
+                    aria-label={copy.instanceSettings}
+                    title={copy.instanceSettings}
+                    onClick={() => {
+                      if (isMobile) setSidebarOpen(false);
+                    }}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground shrink-0"
+                  onClick={toggleTheme}
+                  aria-label={themeToggleLabel(nextTheme, locale)}
+                  title={themeToggleLabel(nextTheme, locale)}
+                >
+                  {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                </Button>
               </div>
             </div>
             <SidebarAccountMenu

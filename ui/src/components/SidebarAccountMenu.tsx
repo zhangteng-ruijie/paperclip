@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  BookOpen,
   LogOut,
   type LucideIcon,
   Moon,
@@ -16,12 +15,12 @@ import { authApi } from "@/api/auth";
 import { queryKeys } from "@/lib/queryKeys";
 import { useSidebar } from "../context/SidebarContext";
 import { useTheme } from "../context/ThemeContext";
+import { useLocale } from "../context/LocaleContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "../lib/utils";
 
 const PROFILE_SETTINGS_PATH = "/instance/settings/profile";
-const DOCS_URL = "https://docs.paperclip.ing/";
 
 interface SidebarAccountMenuProps {
   deploymentMode?: DeploymentMode;
@@ -60,6 +59,51 @@ function deriveUserSlug(name: string | null | undefined, email: string | null | 
     if (slug) return slug;
   }
   return "me";
+}
+
+function getAccountMenuCopy(locale: string | null | undefined) {
+  if (locale === "zh-CN") {
+    return {
+      openMenu: "打开账号菜单",
+      board: "看板",
+      signedIn: "已登录",
+      localWorkspaceBoard: "本地工作区看板",
+      account: "账号",
+      local: "本地",
+      viewProfile: "查看个人资料",
+      viewProfileDescription: "打开你的活动、任务和用量记录。",
+      editProfile: "编辑个人资料",
+      editProfileDescription: "更新你的显示名称和头像。",
+      instanceSettings: "实例设置",
+      instanceSettingsDescription: "回到你上次打开的设置页面。",
+      switchToLightMode: "切换到浅色模式",
+      switchToDarkMode: "切换到深色模式",
+      toggleAppearance: "切换应用外观。",
+      signingOut: "正在退出...",
+      signOut: "退出登录",
+      signOutDescription: "结束当前浏览器会话。",
+    };
+  }
+  return {
+    openMenu: "Open account menu",
+    board: "Board",
+    signedIn: "Signed in",
+    localWorkspaceBoard: "Local workspace board",
+    account: "Account",
+    local: "Local",
+    viewProfile: "View profile",
+    viewProfileDescription: "Open your activity, task, and usage ledger.",
+    editProfile: "Edit profile",
+    editProfileDescription: "Update your display name and avatar.",
+    instanceSettings: "Instance settings",
+    instanceSettingsDescription: "Jump back to the last settings page you opened.",
+    switchToLightMode: "Switch to light mode",
+    switchToDarkMode: "Switch to dark mode",
+    toggleAppearance: "Toggle the app appearance.",
+    signingOut: "Signing out...",
+    signOut: "Sign out",
+    signOutDescription: "End this browser session.",
+  };
 }
 
 function MenuAction({ label, description, icon: Icon, onClick, href, external = false }: MenuActionProps) {
@@ -112,6 +156,8 @@ export function SidebarAccountMenu({
   const queryClient = useQueryClient();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { theme, toggleTheme } = useTheme();
+  const { locale } = useLocale();
+  const copy = getAccountMenuCopy(locale);
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const { data: session } = useQuery({
@@ -128,10 +174,10 @@ export function SidebarAccountMenu({
     },
   });
 
-  const displayName = session?.user.name?.trim() || "Board";
+  const displayName = session?.user.name?.trim() || copy.board;
   const secondaryLabel =
-    session?.user.email?.trim() || (deploymentMode === "authenticated" ? "Signed in" : "Local workspace board");
-  const accountBadge = deploymentMode === "authenticated" ? "Account" : "Local";
+    session?.user.email?.trim() || (deploymentMode === "authenticated" ? copy.signedIn : copy.localWorkspaceBoard);
+  const accountBadge = deploymentMode === "authenticated" ? copy.account : copy.local;
   const initials = deriveInitials(displayName);
   const profileHref = `/u/${deriveUserSlug(session?.user.name, session?.user.email, session?.user.id)}`;
 
@@ -147,7 +193,7 @@ export function SidebarAccountMenu({
           <button
             type="button"
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
-            aria-label="Open account menu"
+            aria-label={copy.openMenu}
           >
             <Avatar size="sm">
               {session?.user.image ? <AvatarImage src={session.user.image} alt={displayName} /> : null}
@@ -187,37 +233,29 @@ export function SidebarAccountMenu({
 
             <div className="mt-4 space-y-1">
               <MenuAction
-                label="View profile"
-                description="Open your activity, task, and usage ledger."
+                label={copy.viewProfile}
+                description={copy.viewProfileDescription}
                 icon={UserRound}
                 href={profileHref}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label="Edit profile"
-                description="Update your display name and avatar."
+                label={copy.editProfile}
+                description={copy.editProfileDescription}
                 icon={UserRoundPen}
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label="Instance settings"
-                description="Jump back to the last settings page you opened."
+                label={copy.instanceSettings}
+                description={copy.instanceSettingsDescription}
                 icon={Settings}
                 href={instanceSettingsTarget}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label="Documentation"
-                description="Open Paperclip docs in a new tab."
-                icon={BookOpen}
-                href={DOCS_URL}
-                external
-                onClick={() => setOpen(false)}
-              />
-              <MenuAction
-                label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-                description="Toggle the app appearance."
+                label={theme === "dark" ? copy.switchToLightMode : copy.switchToDarkMode}
+                description={copy.toggleAppearance}
                 icon={theme === "dark" ? Sun : Moon}
                 onClick={() => {
                   toggleTheme();
@@ -239,10 +277,10 @@ export function SidebarAccountMenu({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground">
-                      {signOutMutation.isPending ? "Signing out..." : "Sign out"}
+                      {signOutMutation.isPending ? copy.signingOut : copy.signOut}
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      End this browser session.
+                      {copy.signOutDescription}
                     </span>
                   </span>
                 </button>

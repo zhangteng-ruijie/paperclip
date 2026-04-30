@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { defineConfig } from "@playwright/test";
 
-// Use a dedicated port so e2e tests always start their own server in local_trusted mode,
-// even when the dev server is running on :3100 in authenticated mode.
-const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3199);
+// Use port 3100 to reuse the already-running dev server.
+// Set PAPERCLIP_E2E_PORT to a different port to start a dedicated test server.
+const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3100);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const PAPERCLIP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-e2e-home-"));
 

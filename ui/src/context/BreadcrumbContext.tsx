@@ -1,4 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 
 export interface Breadcrumb {
   label: string;
@@ -39,10 +46,10 @@ export function BreadcrumbProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (breadcrumbs.length === 0) {
-      document.title = "Paperclip";
+      document.title = "锐捷网络-数字员工平台";
     } else {
       const parts = [...breadcrumbs].reverse().map((b) => b.label);
-      document.title = `${parts.join(" · ")} · Paperclip`;
+      document.title = `${parts.join(" · ")} · 锐捷网络-数字员工平台`;
     }
   }, [breadcrumbs]);
 

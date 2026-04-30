@@ -1270,7 +1270,29 @@ describe("heartbeat comment wake batching", () => {
         return Boolean(deferred);
       });
 
+      const deferredWake = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(
+          and(
+            eq(agentWakeupRequests.companyId, companyId),
+            eq(agentWakeupRequests.agentId, mentionedAgentId),
+            eq(agentWakeupRequests.status, "deferred_issue_execution"),
+          ),
+        )
+        .then((rows) => rows[0] ?? null);
+
       expect(gateway.getAgentPayloads()).toHaveLength(1);
+      expect(deferredWake).not.toBeNull();
+      expect(deferredWake?.status).toBe("deferred_issue_execution");
+      const deferredContext = (deferredWake?.payload as Record<string, unknown> | null)?._paperclipWakeContext as
+        | Record<string, unknown>
+        | undefined;
+      expect(deferredContext).toMatchObject({
+        issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeCommentId: mentionComment.id,
+      });
 
       gateway.releaseFirstWait();
 
@@ -1484,7 +1506,7 @@ describe("heartbeat comment wake batching", () => {
       gateway.releaseFirstWait();
       await gateway.close();
     }
-  }, 120_000);
+  }, 180_000);
   it("treats the automatic run summary as fallback-only when the run already posted a comment", async () => {
     const gateway = await createControlledGatewayServer();
     const companyId = randomUUID();

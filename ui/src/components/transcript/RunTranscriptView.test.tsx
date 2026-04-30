@@ -111,6 +111,69 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("result");
   });
 
+  it("renders transcript chrome in Chinese when locale is zh-CN", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          locale="zh-CN"
+          entries={[
+            {
+              kind: "user",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "请检查工作区",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd_1",
+              input: { command: "pwd" },
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("用户");
+    expect(html).toContain("正在执行命令");
+  });
+
+  it("uses the localized empty state when locale is zh-CN", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView locale="zh-CN" entries={[]} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("还没有转录内容。");
+  });
+
+  it("localizes known system and command output patterns in zh-CN nice mode", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          locale="zh-CN"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "[paperclip] No project or prior session workspace was available. Using fallback workspace \"/tmp/fallback\" for this run.",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "⚠️ DANGEROUS COMMAND: script execution via -e/-c flag curl -s https://example.com [o]nce | [s]ession | [a]lways | [d]eny Choice [o/s/a/D]: ✗ Denied",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("1 条系统消息");
+    expect(html).toContain("⚠️ 危险命令：通过 -e/-c 参数执行脚本");
+    expect(html).toContain("✗ 已拒绝");
+  });
+
   it("windows large raw transcripts instead of rendering every entry at once", () => {
     const entries: TranscriptEntry[] = Array.from({ length: 500 }, (_, index) => ({
       kind: "stdout",

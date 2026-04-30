@@ -3,10 +3,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Puzzle, ArrowLeft, ShieldAlert, ActivitySquare, CheckCircle, XCircle, Loader2, Clock, Cpu, Webhook, CalendarClock, AlertTriangle } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useLocale } from "@/context/LocaleContext";
 import { Link, Navigate, useParams } from "@/lib/router";
 import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
+import {
+  formatInstanceAdminDuration,
+  formatInstanceAdminJobTriggerLabel,
+  formatInstanceAdminRelativeTime,
+  formatInstanceAdminStatusLabel,
+  formatInstanceAdminUptime,
+  formatPluginCrashSummary,
+  formatPluginLogEntryCount,
+  getInstanceAdminCopy,
+} from "@/lib/instance-admin-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,6 +30,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { PageTabBar } from "@/components/PageTabBar";
+import { formatDateTime, formatTime } from "@/lib/utils";
 import {
   JsonSchemaForm,
   validateJsonSchemaForm,
@@ -60,6 +72,8 @@ import {
 export function PluginSettings() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { locale } = useLocale();
+  const copy = getInstanceAdminCopy(locale);
   const { companyPrefix, pluginId } = useParams<{ companyPrefix?: string; pluginId: string }>();
   const [activeTab, setActiveTab] = useState<"configuration" | "status">("configuration");
 
@@ -114,33 +128,42 @@ export function PluginSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
-      { label: "Settings", href: "/instance/settings/heartbeats" },
-      { label: "Plugins", href: "/instance/settings/plugins" },
-      { label: plugin?.manifestJson?.displayName ?? plugin?.packageName ?? "Plugin Details" },
+      { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
+      { label: copy.plugins.breadcrumbSettings, href: "/instance/settings/heartbeats" },
+      { label: copy.plugins.breadcrumbPlugins, href: "/instance/settings/plugins" },
+      { label: plugin?.manifestJson?.displayName ?? plugin?.packageName ?? copy.plugins.pluginDetailsFallback },
     ]);
-  }, [selectedCompany?.name, setBreadcrumbs, companyPrefix, plugin]);
+  }, [
+    companyPrefix,
+    copy.company,
+    copy.plugins.breadcrumbPlugins,
+    copy.plugins.breadcrumbSettings,
+    copy.plugins.pluginDetailsFallback,
+    plugin,
+    selectedCompany?.name,
+    setBreadcrumbs,
+  ]);
 
   useEffect(() => {
     setActiveTab("configuration");
   }, [pluginId]);
 
   if (pluginLoading) {
-    return <div className="p-4 text-sm text-muted-foreground">Loading plugin details...</div>;
+    return <div className="p-4 text-sm text-muted-foreground">{copy.plugins.loadingPluginDetails}</div>;
   }
 
   if (!plugin) {
     return <Navigate to="/instance/settings/plugins" replace />;
   }
 
-  const displayStatus = plugin.status;
+  const displayStatus = formatInstanceAdminStatusLabel(plugin.status, locale);
   const statusVariant =
     plugin.status === "ready"
       ? "default"
       : plugin.status === "error"
         ? "destructive"
         : "secondary";
-  const pluginDescription = plugin.manifestJson.description || "No description provided.";
+  const pluginDescription = plugin.manifestJson.description || copy.plugins.noDescriptionProvided;
   const pluginCapabilities = plugin.manifestJson.capabilities ?? [];
   const environmentDrivers = plugin.manifestJson.environmentDrivers ?? [];
   const environmentDriverNames = environmentDrivers
@@ -172,8 +195,8 @@ export function PluginSettings() {
         <PageTabBar
           align="start"
           items={[
-            { value: "configuration", label: "Configuration" },
-            { value: "status", label: "Status" },
+            { value: "configuration", label: copy.plugins.configurationTab },
+            { value: "status", label: copy.plugins.statusTab },
           ]}
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as "configuration" | "status")}
@@ -182,19 +205,19 @@ export function PluginSettings() {
         <TabsContent value="configuration" className="space-y-6">
           <div className="space-y-8">
             <section className="space-y-5">
-              <h2 className="text-base font-semibold">About</h2>
+              <h2 className="text-base font-semibold">{copy.plugins.about}</h2>
               <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
                 <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-muted-foreground">Description</h3>
+                  <h3 className="text-sm font-medium text-muted-foreground">{copy.plugins.description}</h3>
                   <p className="text-sm leading-6 text-foreground/90">{pluginDescription}</p>
                 </div>
                 <div className="space-y-4 text-sm">
                   <div className="space-y-1.5">
-                    <h3 className="font-medium text-muted-foreground">Author</h3>
+                    <h3 className="font-medium text-muted-foreground">{copy.plugins.author}</h3>
                     <p className="text-foreground">{plugin.manifestJson.author}</p>
                   </div>
                   <div className="space-y-2">
-                    <h3 className="font-medium text-muted-foreground">Categories</h3>
+                    <h3 className="font-medium text-muted-foreground">{copy.plugins.categories}</h3>
                     <div className="flex flex-wrap gap-2">
                       {plugin.categories.length > 0 ? (
                         plugin.categories.map((category) => (
@@ -203,7 +226,7 @@ export function PluginSettings() {
                           </Badge>
                         ))
                       ) : (
-                        <span className="text-foreground">None</span>
+                        <span className="text-foreground">{copy.plugins.none}</span>
                       )}
                     </div>
                   </div>
@@ -215,7 +238,7 @@ export function PluginSettings() {
 
             <section className="space-y-4">
               <div className="space-y-1">
-                <h2 className="text-base font-semibold">Settings</h2>
+                <h2 className="text-base font-semibold">{copy.plugins.settings}</h2>
               </div>
               {hasCustomSettingsPage ? (
                 <div className="space-y-3">
@@ -255,7 +278,7 @@ export function PluginSettings() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  This plugin does not require any settings.
+                  {copy.plugins.noSettingsRequired}
                 </p>
               )}
             </section>
@@ -269,10 +292,10 @@ export function PluginSettings() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-1.5">
                     <Cpu className="h-4 w-4" />
-                    Runtime Dashboard
+                    {copy.plugins.runtimeDashboard}
                   </CardTitle>
                   <CardDescription>
-                    Worker process, scheduled jobs, and webhook deliveries
+                    {copy.plugins.runtimeDashboardDescription}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -281,26 +304,26 @@ export function PluginSettings() {
                       <div>
                         <h3 className="text-sm font-medium mb-3 flex items-center gap-1.5">
                           <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
-                          Worker Process
+                          {copy.plugins.workerProcess}
                         </h3>
                         {dashboardData.worker ? (
                           <div className="grid grid-cols-2 gap-3 text-sm">
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">Status</span>
+                              <span className="text-muted-foreground">{copy.plugins.status}</span>
                               <Badge variant={dashboardData.worker.status === "running" ? "default" : "secondary"}>
-                                {dashboardData.worker.status}
+                                {formatInstanceAdminStatusLabel(dashboardData.worker.status, locale)}
                               </Badge>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">PID</span>
+                              <span className="text-muted-foreground">{copy.plugins.pid}</span>
                               <span className="font-mono text-xs">{dashboardData.worker.pid ?? "—"}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">Uptime</span>
-                              <span className="text-xs">{formatUptime(dashboardData.worker.uptime)}</span>
+                              <span className="text-muted-foreground">{copy.plugins.uptime}</span>
+                              <span className="text-xs">{formatInstanceAdminUptime(dashboardData.worker.uptime, locale)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">Pending RPCs</span>
+                              <span className="text-muted-foreground">{copy.plugins.pendingRpcs}</span>
                               <span className="text-xs">{dashboardData.worker.pendingRequests}</span>
                             </div>
                             {dashboardData.worker.totalCrashes > 0 && (
@@ -308,15 +331,19 @@ export function PluginSettings() {
                                 <div className="flex justify-between col-span-2">
                                   <span className="text-muted-foreground flex items-center gap-1">
                                     <AlertTriangle className="h-3 w-3 text-amber-500" />
-                                    Crashes
+                                    {copy.plugins.crashes}
                                   </span>
                                   <span className="text-xs">
-                                    {dashboardData.worker.consecutiveCrashes} consecutive / {dashboardData.worker.totalCrashes} total
+                                    {formatPluginCrashSummary(
+                                      dashboardData.worker.consecutiveCrashes,
+                                      dashboardData.worker.totalCrashes,
+                                      locale,
+                                    )}
                                   </span>
                                 </div>
                                 {dashboardData.worker.lastCrashAt && (
                                   <div className="flex justify-between col-span-2">
-                                    <span className="text-muted-foreground">Last Crash</span>
+                                    <span className="text-muted-foreground">{copy.plugins.lastCrash}</span>
                                     <span className="text-xs">{formatTimestamp(dashboardData.worker.lastCrashAt)}</span>
                                   </div>
                                 )}
@@ -324,7 +351,7 @@ export function PluginSettings() {
                             )}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground italic">No worker process registered.</p>
+                          <p className="text-sm text-muted-foreground italic">{copy.plugins.noWorkerProcess}</p>
                         )}
                       </div>
 
@@ -333,7 +360,7 @@ export function PluginSettings() {
                       <div>
                         <h3 className="text-sm font-medium mb-3 flex items-center gap-1.5">
                           <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-                          Recent Job Runs
+                          {copy.plugins.recentJobRuns}
                         </h3>
                         {dashboardData.recentJobRuns.length > 0 ? (
                           <div className="space-y-2">
@@ -343,23 +370,23 @@ export function PluginSettings() {
                                 className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-2 py-1.5 text-sm"
                               >
                                 <div className="flex min-w-0 items-center gap-2">
-                                  <JobStatusDot status={run.status} />
+                                  <JobStatusDot status={run.status} locale={locale} />
                                   <span className="truncate font-mono text-xs" title={run.jobKey ?? run.jobId}>
                                     {run.jobKey ?? run.jobId.slice(0, 8)}
                                   </span>
                                   <Badge variant="outline" className="px-1 py-0 text-[10px]">
-                                    {run.trigger}
+                                    {formatInstanceAdminJobTriggerLabel(run.trigger, locale)}
                                   </Badge>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                                  {run.durationMs != null ? <span>{formatDuration(run.durationMs)}</span> : null}
-                                  <span title={run.createdAt}>{formatRelativeTime(run.createdAt)}</span>
+                                  {run.durationMs != null ? <span>{formatInstanceAdminDuration(run.durationMs, locale)}</span> : null}
+                                  <span title={run.createdAt}>{formatInstanceAdminRelativeTime(run.createdAt, locale)}</span>
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground italic">No job runs recorded yet.</p>
+                          <p className="text-sm text-muted-foreground italic">{copy.plugins.noJobRuns}</p>
                         )}
                       </div>
 
@@ -368,7 +395,7 @@ export function PluginSettings() {
                       <div>
                         <h3 className="text-sm font-medium mb-3 flex items-center gap-1.5">
                           <Webhook className="h-3.5 w-3.5 text-muted-foreground" />
-                          Recent Webhook Deliveries
+                          {copy.plugins.recentWebhookDeliveries}
                         </h3>
                         {dashboardData.recentWebhookDeliveries.length > 0 ? (
                           <div className="space-y-2">
@@ -378,31 +405,31 @@ export function PluginSettings() {
                                 className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-2 py-1.5 text-sm"
                               >
                                 <div className="flex min-w-0 items-center gap-2">
-                                  <DeliveryStatusDot status={delivery.status} />
+                                  <DeliveryStatusDot status={delivery.status} locale={locale} />
                                   <span className="truncate font-mono text-xs" title={delivery.webhookKey}>
                                     {delivery.webhookKey}
                                   </span>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                                  {delivery.durationMs != null ? <span>{formatDuration(delivery.durationMs)}</span> : null}
-                                  <span title={delivery.createdAt}>{formatRelativeTime(delivery.createdAt)}</span>
+                                  {delivery.durationMs != null ? <span>{formatInstanceAdminDuration(delivery.durationMs, locale)}</span> : null}
+                                  <span title={delivery.createdAt}>{formatInstanceAdminRelativeTime(delivery.createdAt, locale)}</span>
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground italic">No webhook deliveries recorded yet.</p>
+                          <p className="text-sm text-muted-foreground italic">{copy.plugins.noWebhookDeliveries}</p>
                         )}
                       </div>
 
                       <div className="flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
-                        Last checked: {new Date(dashboardData.checkedAt).toLocaleTimeString()}
+                        {copy.plugins.lastChecked}: {formatTime(dashboardData.checkedAt)}
                       </div>
                     </>
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      Runtime diagnostics are unavailable right now.
+                      {copy.plugins.runtimeUnavailable}
                     </p>
                   )}
                 </CardContent>
@@ -411,13 +438,13 @@ export function PluginSettings() {
               {recentLogs && recentLogs.length > 0 ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-1.5">
-                      <ActivitySquare className="h-4 w-4" />
-                      Recent Logs
-                    </CardTitle>
-                    <CardDescription>Last {recentLogs.length} log entries</CardDescription>
-                  </CardHeader>
-                  <CardContent>
+                  <CardTitle className="text-base flex items-center gap-1.5">
+                    <ActivitySquare className="h-4 w-4" />
+                    {copy.plugins.recentLogs}
+                  </CardTitle>
+                    <CardDescription>{formatPluginLogEntryCount(recentLogs.length, locale)}</CardDescription>
+                </CardHeader>
+                <CardContent>
                     <div className="max-h-64 space-y-1 overflow-y-auto font-mono text-xs">
                       {recentLogs.map((entry) => (
                         <div
@@ -432,8 +459,10 @@ export function PluginSettings() {
                                   : "text-muted-foreground"
                           }`}
                         >
-                          <span className="shrink-0 text-muted-foreground/50">{new Date(entry.createdAt).toLocaleTimeString()}</span>
-                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px]">{entry.level}</Badge>
+                          <span className="shrink-0 text-muted-foreground/50">{formatTime(entry.createdAt)}</span>
+                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px]">
+                            {formatInstanceAdminStatusLabel(entry.level, locale)}
+                          </Badge>
                           <span className="truncate" title={entry.message}>{entry.message}</span>
                         </div>
                       ))}
@@ -448,18 +477,18 @@ export function PluginSettings() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-1.5">
                     <ActivitySquare className="h-4 w-4" />
-                    Health Status
+                    {copy.plugins.healthStatus}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   {healthLoading ? (
-                    <p className="text-sm text-muted-foreground">Checking health...</p>
+                    <p className="text-sm text-muted-foreground">{copy.plugins.checkingHealth}</p>
                   ) : healthData ? (
                     <div className="space-y-4 text-sm">
                       <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Overall</span>
+                        <span className="text-muted-foreground">{copy.plugins.overall}</span>
                         <Badge variant={healthData.healthy ? "default" : "destructive"}>
-                          {healthData.status}
+                          {formatInstanceAdminStatusLabel(healthData.status, locale)}
                         </Badge>
                       </div>
 
@@ -489,10 +518,10 @@ export function PluginSettings() {
                   ) : (
                     <div className="space-y-3 text-sm text-muted-foreground">
                       <div className="flex items-center justify-between">
-                        <span>Lifecycle</span>
+                        <span>{copy.plugins.lifecycle}</span>
                         <Badge variant={statusVariant}>{displayStatus}</Badge>
                       </div>
-                      <p>Health checks run once the plugin is ready.</p>
+                      <p>{copy.plugins.healthChecksWhenReady}</p>
                       {plugin.lastError ? (
                         <div className="break-words rounded border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive">
                           {plugin.lastError}
@@ -505,25 +534,25 @@ export function PluginSettings() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Details</CardTitle>
+                  <CardTitle className="text-base">{copy.plugins.details}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-muted-foreground">
                   <div className="flex justify-between gap-3">
-                    <span>Plugin ID</span>
+                    <span>{copy.plugins.pluginId}</span>
                     <span className="font-mono text-xs text-right">{plugin.id}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span>Plugin Key</span>
+                    <span>{copy.plugins.pluginKey}</span>
                     <span className="font-mono text-xs text-right">{plugin.pluginKey}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span>NPM Package</span>
+                    <span>{copy.plugins.npmPackage}</span>
                     <span className="max-w-[170px] truncate text-right text-xs" title={plugin.packageName}>
                       {plugin.packageName}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span>Version</span>
+                    <span>{copy.plugins.version}</span>
                     <span className="text-right text-foreground">v{plugin.manifestJson.version ?? plugin.version}</span>
                   </div>
                 </CardContent>
@@ -533,7 +562,7 @@ export function PluginSettings() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-1.5">
                     <ShieldAlert className="h-4 w-4" />
-                    Permissions
+                    {copy.plugins.permissions}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -546,7 +575,7 @@ export function PluginSettings() {
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-sm text-muted-foreground italic">No special permissions requested.</p>
+                    <p className="text-sm text-muted-foreground italic">{copy.plugins.noSpecialPermissions}</p>
                   )}
                 </CardContent>
               </Card>
@@ -582,6 +611,8 @@ interface PluginConfigFormProps {
  */
 function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginStatus, supportsConfigTest }: PluginConfigFormProps) {
   const queryClient = useQueryClient();
+  const { locale } = useLocale();
+  const copy = getInstanceAdminCopy(locale);
 
   // Form values: start with saved values, fall back to schema defaults
   const [values, setValues] = useState<Record<string, unknown>>(() => ({
@@ -618,14 +649,14 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
     mutationFn: (configJson: Record<string, unknown>) =>
       pluginsApi.saveConfig(pluginId, configJson),
     onSuccess: () => {
-      setSaveMessage({ type: "success", text: "Configuration saved." });
+      setSaveMessage({ type: "success", text: copy.plugins.configurationSaved });
       setTestResult(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.plugins.config(pluginId) });
       // Clear success message after 3s
       setTimeout(() => setSaveMessage(null), 3000);
     },
     onError: (err: Error) => {
-      setSaveMessage({ type: "error", text: err.message || "Failed to save configuration." });
+      setSaveMessage({ type: "error", text: err.message || copy.plugins.configurationSaveFailed });
     },
   });
 
@@ -635,13 +666,13 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
       pluginsApi.testConfig(pluginId, configJson),
     onSuccess: (result) => {
       if (result.valid) {
-        setTestResult({ type: "success", text: "Configuration test passed." });
+        setTestResult({ type: "success", text: copy.plugins.configurationTestPassed });
       } else {
-        setTestResult({ type: "error", text: result.message || "Configuration test failed." });
+        setTestResult({ type: "error", text: result.message || copy.plugins.configurationTestFailed });
       }
     },
     onError: (err: Error) => {
-      setTestResult({ type: "error", text: err.message || "Configuration test failed." });
+      setTestResult({ type: "error", text: err.message || copy.plugins.configurationTestFailed });
     },
   });
 
@@ -679,7 +710,7 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Loading configuration...
+        {copy.plugins.loadingConfiguration}
       </div>
     );
   }
@@ -729,10 +760,10 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
           {saveMutation.isPending ? (
             <>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Saving...
+              {copy.plugins.savingConfiguration}
             </>
           ) : (
-            "Save Configuration"
+            copy.plugins.saveConfiguration
           )}
         </Button>
         {pluginStatus === "ready" && supportsConfigTest && (
@@ -745,10 +776,10 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
             {testMutation.isPending ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Testing...
+                {copy.plugins.testingConfiguration}
               </>
             ) : (
-              "Test Configuration"
+              copy.plugins.testConfiguration
             )}
           </Button>
         )}
@@ -764,57 +795,14 @@ function PluginConfigForm({ pluginId, schema, initialValues, isLoading, pluginSt
 /**
  * Format an uptime value (in milliseconds) to a human-readable string.
  */
-function formatUptime(uptimeMs: number | null): string {
-  if (uptimeMs == null) return "—";
-  const totalSeconds = Math.floor(uptimeMs / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  if (minutes < 60) return `${minutes}m ${totalSeconds % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ${minutes % 60}m`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ${hours % 24}h`;
-}
-
-/**
- * Format a duration in milliseconds to a compact display string.
- */
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
-}
-
-/**
- * Format an ISO timestamp to a relative time string (e.g., "2m ago").
- */
-function formatRelativeTime(isoString: string): string {
-  const now = Date.now();
-  const then = new Date(isoString).getTime();
-  const diffMs = now - then;
-
-  if (diffMs < 0) return "just now";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-/**
- * Format a unix timestamp (ms since epoch) to a locale string.
- */
 function formatTimestamp(epochMs: number): string {
-  return new Date(epochMs).toLocaleString();
+  return formatDateTime(epochMs);
 }
 
 /**
  * Status indicator dot for job run statuses.
  */
-function JobStatusDot({ status }: { status: string }) {
+function JobStatusDot({ status, locale }: { status: string; locale: string | null | undefined }) {
   const colorClass =
     status === "success" || status === "succeeded"
       ? "bg-green-500"
@@ -828,7 +816,7 @@ function JobStatusDot({ status }: { status: string }) {
   return (
     <span
       className={`inline-block h-2 w-2 rounded-full shrink-0 ${colorClass}`}
-      title={status}
+      title={formatInstanceAdminStatusLabel(status, locale)}
     />
   );
 }
@@ -836,7 +824,7 @@ function JobStatusDot({ status }: { status: string }) {
 /**
  * Status indicator dot for webhook delivery statuses.
  */
-function DeliveryStatusDot({ status }: { status: string }) {
+function DeliveryStatusDot({ status, locale }: { status: string; locale: string | null | undefined }) {
   const colorClass =
     status === "processed" || status === "success"
       ? "bg-green-500"
@@ -848,7 +836,7 @@ function DeliveryStatusDot({ status }: { status: string }) {
   return (
     <span
       className={`inline-block h-2 w-2 rounded-full shrink-0 ${colorClass}`}
-      title={status}
+      title={formatInstanceAdminStatusLabel(status, locale)}
     />
   );
 }
