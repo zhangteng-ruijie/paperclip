@@ -11,7 +11,6 @@ import { buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
 import { useDialogActions } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
@@ -27,15 +26,6 @@ import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRa
 import { PageSkeleton } from "../components/PageSkeleton";
 import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
-import {
-  formatAgentsEnabledDescription,
-  formatBudgetIncidentLabel,
-  formatBudgetIncidentSummary,
-  formatMonthSpendDescription,
-  formatPendingApprovalsDescription,
-  formatTasksInProgressDescription,
-  getDashboardCopy,
-} from "../lib/dashboard-copy";
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
 
@@ -48,8 +38,6 @@ export function Dashboard() {
   const { selectedCompanyId, companies } = useCompany();
   const { openOnboarding } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const copy = getDashboardCopy(locale);
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
   const seenActivityIdsRef = useRef<Set<string>>(new Set());
   const hydratedActivityRef = useRef(false);
@@ -62,8 +50,8 @@ export function Dashboard() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: copy.dashboard }]);
-  }, [setBreadcrumbs, copy.dashboard]);
+    setBreadcrumbs([{ label: "Dashboard" }]);
+  }, [setBreadcrumbs]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.dashboard(selectedCompanyId!),
@@ -188,14 +176,14 @@ export function Dashboard() {
       return (
         <EmptyState
           icon={LayoutDashboard}
-          message={copy.onboardingMessage}
-          action={copy.getStarted}
+          message="Welcome to Paperclip. Set up your first company and agent to get started."
+          action="Get Started"
           onAction={openOnboarding}
         />
       );
     }
     return (
-      <EmptyState icon={LayoutDashboard} message={copy.selectCompany} />
+      <EmptyState icon={LayoutDashboard} message="Create or select a company to view the dashboard." />
     );
   }
 
@@ -211,17 +199,17 @@ export function Dashboard() {
 
       {hasNoAgents && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-950/60">
-            <div className="flex items-center gap-2.5">
-              <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-              <p className="text-sm text-amber-900 dark:text-amber-100">
-                {copy.noAgents}
-              </p>
-            </div>
+          <div className="flex items-center gap-2.5">
+            <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <p className="text-sm text-amber-900 dark:text-amber-100">
+              You have no agents.
+            </p>
+          </div>
           <button
             onClick={() => openOnboarding({ initialStep: 2, companyId: selectedCompanyId! })}
             className="text-sm font-medium text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 underline underline-offset-2 shrink-0"
           >
-            {copy.createOneHere}
+            Create one here
           </button>
         </div>
       )}
@@ -236,20 +224,15 @@ export function Dashboard() {
                 <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
                 <div>
                   <p className="text-sm font-medium text-red-50">
-                    {formatBudgetIncidentLabel(data.budgets.activeIncidents, locale)}
+                    {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
                   </p>
                   <p className="text-xs text-red-100/70">
-                    {formatBudgetIncidentSummary(
-                      data.budgets.pausedAgents,
-                      data.budgets.pausedProjects,
-                      data.budgets.pendingApprovals,
-                      locale,
-                    )}
+                    {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
                   </p>
                 </div>
               </div>
               <Link to="/costs" className="text-sm underline underline-offset-2 text-red-100">
-                {copy.openBudgets}
+                Open budgets
               </Link>
             </div>
           ) : null}
@@ -258,50 +241,51 @@ export function Dashboard() {
             <MetricCard
               icon={Bot}
               value={data.agents.active + data.agents.running + data.agents.paused + data.agents.error}
-              label={copy.agentsEnabled}
+              label="Agents Enabled"
               to="/agents"
               description={
                 <span>
-                  {formatAgentsEnabledDescription(data.agents.running, data.agents.paused, data.agents.error, locale)}
+                  {data.agents.running} running{", "}
+                  {data.agents.paused} paused{", "}
+                  {data.agents.error} errors
                 </span>
               }
             />
             <MetricCard
               icon={CircleDot}
               value={data.tasks.inProgress}
-              label={copy.tasksInProgress}
+              label="Tasks In Progress"
               to="/issues"
               description={
                 <span>
-                  {formatTasksInProgressDescription(data.tasks.open, data.tasks.blocked, locale)}
+                  {data.tasks.open} open{", "}
+                  {data.tasks.blocked} blocked
                 </span>
               }
             />
             <MetricCard
               icon={DollarSign}
               value={formatCents(data.costs.monthSpendCents)}
-              label={copy.monthSpend}
+              label="Month Spend"
               to="/costs"
               description={
                 <span>
                   {data.costs.monthBudgetCents > 0
-                    ? formatMonthSpendDescription(
-                        formatCents(data.costs.monthBudgetCents),
-                        data.costs.monthUtilizationPercent,
-                        locale,
-                      )
-                    : copy.unlimitedBudget}
+                    ? `${data.costs.monthUtilizationPercent}% of ${formatCents(data.costs.monthBudgetCents)} budget`
+                    : "Unlimited budget"}
                 </span>
               }
             />
             <MetricCard
               icon={ShieldCheck}
               value={data.pendingApprovals + data.budgets.pendingApprovals}
-              label={copy.pendingApprovals}
+              label="Pending Approvals"
               to="/approvals"
               description={
                 <span>
-                  {formatPendingApprovalsDescription(data.budgets.pendingApprovals, locale)}
+                  {data.budgets.pendingApprovals > 0
+                    ? `${data.budgets.pendingApprovals} budget overrides awaiting board review`
+                    : "Awaiting board review"}
                 </span>
               }
             />
@@ -311,10 +295,10 @@ export function Dashboard() {
             <ChartCard title="Run Activity" subtitle="Last 14 days">
               <RunActivityChart activity={data.runActivity} />
             </ChartCard>
-            <ChartCard title={copy.issuesByPriority} subtitle={copy.last14Days}>
+            <ChartCard title="Issues by Priority" subtitle="Last 14 days">
               <PriorityChart issues={issues ?? []} />
             </ChartCard>
-            <ChartCard title={copy.issuesByStatus} subtitle={copy.last14Days}>
+            <ChartCard title="Issues by Status" subtitle="Last 14 days">
               <IssueStatusChart issues={issues ?? []} />
             </ChartCard>
             <ChartCard title="Success Rate" subtitle="Last 14 days">
@@ -334,7 +318,7 @@ export function Dashboard() {
             {recentActivity.length > 0 && (
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                  {copy.recentActivity}
+                  Recent Activity
                 </h3>
                 <div className="border border-border divide-y divide-border overflow-hidden">
                   {recentActivity.map((event) => (
@@ -355,11 +339,11 @@ export function Dashboard() {
             {/* Recent Tasks */}
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                {copy.recentTasks}
+                Recent Tasks
               </h3>
               {recentIssues.length === 0 ? (
                 <div className="border border-border p-4">
-                  <p className="text-sm text-muted-foreground">{copy.noTasksYet}</p>
+                  <p className="text-sm text-muted-foreground">No tasks yet.</p>
                 </div>
               ) : (
                 <div className="border border-border divide-y divide-border overflow-hidden">

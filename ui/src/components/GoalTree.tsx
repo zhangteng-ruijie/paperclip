@@ -3,9 +3,7 @@ import { Link } from "@/lib/router";
 import { StatusBadge } from "./StatusBadge";
 import { ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
-import { goalLevelLabel, getGoalCopy } from "../lib/goal-copy";
 import { useState } from "react";
-import { useLocale } from "../context/LocaleContext";
 
 interface GoalTreeProps {
   goals: Goal[];
@@ -24,10 +22,8 @@ interface GoalNodeProps {
 
 function GoalNode({ goal, children, allGoals, depth, goalLink, onSelect }: GoalNodeProps) {
   const [expanded, setExpanded] = useState(true);
-  const { locale } = useLocale();
   const hasChildren = children.length > 0;
   const link = goalLink?.(goal);
-  const levelLabel = goalLevelLabel(goal.level, locale);
 
   const inner = (
     <>
@@ -47,7 +43,7 @@ function GoalNode({ goal, children, allGoals, depth, goalLink, onSelect }: GoalN
       ) : (
         <span className="w-4" />
       )}
-      <span className="text-xs text-muted-foreground capitalize">{levelLabel}</span>
+      <span className="text-xs text-muted-foreground capitalize">{goal.level}</span>
       <span className="flex-1 truncate">{goal.title}</span>
       <StatusBadge status={goal.status} />
     </>
@@ -96,13 +92,11 @@ function GoalNode({ goal, children, allGoals, depth, goalLink, onSelect }: GoalN
 }
 
 export function GoalTree({ goals, goalLink, onSelect }: GoalTreeProps) {
-  const { locale } = useLocale();
-  const copy = getGoalCopy(locale);
   const goalIds = new Set(goals.map((g) => g.id));
   const roots = goals.filter((g) => !g.parentId || !goalIds.has(g.parentId));
 
   if (goals.length === 0) {
-    return <p className="text-sm text-muted-foreground">{copy.noGoals}</p>;
+    return <p className="text-sm text-muted-foreground">No goals.</p>;
   }
 
   return (

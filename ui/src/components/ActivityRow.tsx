@@ -1,10 +1,8 @@
 import { Link } from "@/lib/router";
-import { useLocale } from "../context/LocaleContext";
 import { Identity } from "./Identity";
 import { IssueReferenceActivitySummary } from "./IssueReferenceActivitySummary";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
-import { localizedActorLabel } from "../lib/actor-labels";
 import { formatActivityVerb } from "../lib/activity-format";
 import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@paperclipai/shared";
 import type { CompanyUserProfile } from "../lib/company-members";

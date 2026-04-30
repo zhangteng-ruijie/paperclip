@@ -20,8 +20,6 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { useAgentOrder } from "../hooks/useAgentOrder";
-import { useLocale } from "../context/LocaleContext";
-import { getShellCopy, liveRunCountLabel } from "../lib/shell-copy";
 import { AgentIcon } from "./AgentIconPicker";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import { Button } from "@/components/ui/button";
@@ -265,7 +263,7 @@ export function SidebarAgents() {
               )}
             />
             <span className="text-[10px] font-medium uppercase tracking-widest font-mono text-muted-foreground/60">
-              {copy.agents}
+              Agents
             </span>
           </CollapsibleTrigger>
           <button
@@ -274,7 +272,7 @@ export function SidebarAgents() {
               openNewAgent();
             }}
             className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label={copy.newAgent}
+            aria-label="New agent"
           >
             <Plus className="h-3 w-3" />
           </button>

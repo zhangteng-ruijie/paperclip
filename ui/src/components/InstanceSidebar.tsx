@@ -1,20 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { Clock3, Cpu, FlaskConical, Puzzle, Settings, Shield, SlidersHorizontal, UserRoundPen } from "lucide-react";
 import { NavLink } from "@/lib/router";
-import { Clock3, Cpu, FlaskConical, Settings, SlidersHorizontal } from "lucide-react";
+import { pluginsApi } from "@/api/plugins";
+import { queryKeys } from "@/lib/queryKeys";
 import { SIDEBAR_SCROLL_RESET_STATE } from "@/lib/navigation-scroll";
 import { SidebarNavItem } from "./SidebarNavItem";
-import { useLocale } from "@/context/LocaleContext";
 
 export function InstanceSidebar() {
-  const { t } = useLocale();
+  const { data: plugins } = useQuery({
+    queryKey: queryKeys.plugins.all,
+    queryFn: () => pluginsApi.list(),
+  });
 
   return (
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
       <div className="flex items-center gap-2 px-3 h-12 shrink-0">
         <Settings className="h-4 w-4 text-muted-foreground shrink-0 ml-1" />
         <span className="flex-1 text-sm font-bold text-foreground truncate">
-          {t("instance.sidebar.title")}
+          Instance Settings
         </span>
       </div>
 

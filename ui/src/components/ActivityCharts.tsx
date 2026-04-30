@@ -92,7 +92,7 @@ export function RunActivityChart(props: RunChartProps) {
   const maxValue = Math.max(...activity.map(v => v.total), 1);
   const hasData = activity.some(v => v.total > 0);
 
-  if (!hasData) return <p className="text-xs text-muted-foreground">{copy.noRunsYet}</p>;
+  if (!hasData) return <p className="text-xs text-muted-foreground">No runs yet</p>;
 
   return (
     <div>
@@ -131,8 +131,6 @@ const priorityColors: Record<string, string> = {
 const priorityOrder = ["critical", "high", "medium", "low"] as const;
 
 export function PriorityChart({ issues }: { issues: { priority: string; createdAt: Date }[] }) {
-  const locale = useDashboardLocale();
-  const copy = getDashboardCopy(locale);
   const days = getLast14Days();
   const grouped = new Map<string, Record<string, number>>();
   for (const day of days) grouped.set(day, { critical: 0, high: 0, medium: 0, low: 0 });
@@ -146,7 +144,7 @@ export function PriorityChart({ issues }: { issues: { priority: string; createdA
   const maxValue = Math.max(...Array.from(grouped.values()).map(v => Object.values(v).reduce((a, b) => a + b, 0)), 1);
   const hasData = Array.from(grouped.values()).some(v => Object.values(v).reduce((a, b) => a + b, 0) > 0);
 
-  if (!hasData) return <p className="text-xs text-muted-foreground">{copy.noIssues}</p>;
+  if (!hasData) return <p className="text-xs text-muted-foreground">No issues</p>;
 
   return (
     <div>
@@ -171,10 +169,7 @@ export function PriorityChart({ issues }: { issues: { priority: string; createdA
         })}
       </div>
       <DateLabels days={days} />
-      <ChartLegend items={priorityOrder.map((p) => ({
-        color: priorityColors[p],
-        label: priorityLegendLabel(p, locale),
-      }))} />
+      <ChartLegend items={priorityOrder.map(p => ({ color: priorityColors[p], label: p.charAt(0).toUpperCase() + p.slice(1) }))} />
     </div>
   );
 }
@@ -189,9 +184,17 @@ const statusColors: Record<string, string> = {
   backlog: "#64748b",
 };
 
+const statusLabels: Record<string, string> = {
+  todo: "To Do",
+  in_progress: "In Progress",
+  in_review: "In Review",
+  done: "Done",
+  blocked: "Blocked",
+  cancelled: "Cancelled",
+  backlog: "Backlog",
+};
+
 export function IssueStatusChart({ issues }: { issues: { status: string; createdAt: Date }[] }) {
-  const locale = useDashboardLocale();
-  const copy = getDashboardCopy(locale);
   const days = getLast14Days();
   const allStatuses = new Set<string>();
   const grouped = new Map<string, Record<string, number>>();
@@ -208,7 +211,7 @@ export function IssueStatusChart({ issues }: { issues: { status: string; created
   const maxValue = Math.max(...Array.from(grouped.values()).map(v => Object.values(v).reduce((a, b) => a + b, 0)), 1);
   const hasData = allStatuses.size > 0;
 
-  if (!hasData) return <p className="text-xs text-muted-foreground">{copy.noIssues}</p>;
+  if (!hasData) return <p className="text-xs text-muted-foreground">No issues</p>;
 
   return (
     <div>
@@ -233,10 +236,7 @@ export function IssueStatusChart({ issues }: { issues: { status: string; created
         })}
       </div>
       <DateLabels days={days} />
-      <ChartLegend items={statusOrder.map((s) => ({
-        color: statusColors[s] ?? "#6b7280",
-        label: issueStatusLegendLabel(s, locale),
-      }))} />
+      <ChartLegend items={statusOrder.map(s => ({ color: statusColors[s] ?? "#6b7280", label: statusLabels[s] ?? s }))} />
     </div>
   );
 }

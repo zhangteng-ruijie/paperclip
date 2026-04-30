@@ -16,17 +16,6 @@ import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import {
-  formatCompanySkillsAvailableCount,
-  formatImportedSkillsCount,
-  formatProjectScanSummary,
-  formatSkillCreatedBody,
-  formatSkillDeletePrompt,
-  formatSkillRemovedBody,
-  formatSkillUpdatedBody,
-  formatSkillUsedByAgents,
-  getCompanySkillsCopy,
-} from "../lib/company-skills-copy";
 import { EmptyState } from "../components/EmptyState";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor } from "../components/MarkdownEditor";
@@ -154,64 +143,43 @@ function buildTree(entries: CompanySkillFileInventoryEntry[]) {
   return root.children;
 }
 
-function sourceMeta(
-  sourceBadge: CompanySkillSourceBadge,
-  sourceLabel: string | null,
-  copy: ReturnType<typeof getCompanySkillsCopy>,
-) {
+function sourceMeta(sourceBadge: CompanySkillSourceBadge, sourceLabel: string | null) {
   const normalizedLabel = sourceLabel?.toLowerCase() ?? "";
   const isSkillsShManaged =
     normalizedLabel.includes("skills.sh") || normalizedLabel.includes("vercel-labs/skills");
 
   switch (sourceBadge) {
     case "skills_sh":
-      return {
-        icon: VercelMark,
-        label: sourceLabel ?? copy.sources.skillsShFallback,
-        managedLabel: copy.sources.skillsShManaged,
-      };
+      return { icon: VercelMark, label: sourceLabel ?? "skills.sh", managedLabel: "skills.sh managed" };
     case "github":
       return isSkillsShManaged
-        ? {
-            icon: VercelMark,
-            label: sourceLabel ?? copy.sources.skillsShFallback,
-            managedLabel: copy.sources.skillsShManaged,
-          }
-        : {
-            icon: Github,
-            label: sourceLabel ?? copy.sources.githubFallback,
-            managedLabel: copy.sources.githubManaged,
-          };
+        ? { icon: VercelMark, label: sourceLabel ?? "skills.sh", managedLabel: "skills.sh managed" }
+        : { icon: Github, label: sourceLabel ?? "GitHub", managedLabel: "GitHub managed" };
     case "url":
-      return {
-        icon: Link2,
-        label: sourceLabel ?? copy.sources.urlFallback,
-        managedLabel: copy.sources.urlManaged,
-      };
+      return { icon: Link2, label: sourceLabel ?? "URL", managedLabel: "URL managed" };
     case "local":
-      return {
-        icon: Folder,
-        label: sourceLabel ?? copy.sources.folderFallback,
-        managedLabel: copy.sources.folderManaged,
-      };
+      return { icon: Folder, label: sourceLabel ?? "Folder", managedLabel: "Folder managed" };
     case "paperclip":
-      return {
-        icon: Paperclip,
-        label: sourceLabel ?? copy.sources.paperclipFallback,
-        managedLabel: copy.sources.paperclipManaged,
-      };
+      return { icon: Paperclip, label: sourceLabel ?? "Paperclip", managedLabel: "Paperclip managed" };
     default:
-      return {
-        icon: Boxes,
-        label: sourceLabel ?? copy.sources.catalogFallback,
-        managedLabel: copy.sources.catalogManaged,
-      };
+      return { icon: Boxes, label: sourceLabel ?? "Catalog", managedLabel: "Catalog managed" };
   }
 }
 
 function shortRef(ref: string | null | undefined) {
   if (!ref) return null;
   return ref.slice(0, 7);
+}
+
+function formatProjectScanSummary(result: CompanySkillProjectScanResult) {
+  const parts = [
+    `${result.discovered} found`,
+    `${result.imported.length} imported`,
+    `${result.updated.length} updated`,
+  ];
+  if (result.conflicts.length > 0) parts.push(`${result.conflicts.length} conflicts`);
+  if (result.skipped.length > 0) parts.push(`${result.skipped.length} skipped`);
+  return `${parts.join(", ")} across ${result.scannedWorkspaces} workspace${result.scannedWorkspaces === 1 ? "" : "s"}.`;
 }
 
 function fileIcon(kind: CompanySkillFileInventoryEntry["kind"]) {
@@ -277,12 +245,10 @@ function NewSkillForm({
   onCreate,
   isPending,
   onCancel,
-  copy,
 }: {
   onCreate: (payload: CompanySkillCreateRequest) => void;
   isPending: boolean;
   onCancel: () => void;
-  copy: ReturnType<typeof getCompanySkillsCopy>;
 }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -294,31 +260,31 @@ function NewSkillForm({
         <Input
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder={copy.newSkill.namePlaceholder}
+          placeholder="Skill name"
           className="h-9 rounded-none border-0 border-b border-border px-0 shadow-none focus-visible:ring-0"
         />
         <Input
           value={slug}
           onChange={(event) => setSlug(event.target.value)}
-          placeholder={copy.newSkill.slugPlaceholder}
+          placeholder="optional-shortname"
           className="h-9 rounded-none border-0 border-b border-border px-0 shadow-none focus-visible:ring-0"
         />
         <Textarea
           value={description}
           onChange={(event) => setDescription(event.target.value)}
-          placeholder={copy.newSkill.descriptionPlaceholder}
+          placeholder="Short description"
           className="min-h-20 rounded-none border-0 border-b border-border px-0 shadow-none focus-visible:ring-0"
         />
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
-            {copy.newSkill.cancel}
+            Cancel
           </Button>
           <Button
             size="sm"
             onClick={() => onCreate({ name, slug: slug || null, description: description || null })}
             disabled={isPending || name.trim().length === 0}
           >
-            {isPending ? copy.newSkill.creating : copy.newSkill.create}
+            {isPending ? "Creating..." : "Create skill"}
           </Button>
         </div>
       </div>
@@ -425,7 +391,6 @@ function SkillList({
   onToggleDir,
   onSelectSkill,
   onSelectPath,
-  copy,
 }: {
   skills: CompanySkillListItem[];
   selectedSkillId: string | null;
@@ -437,7 +402,6 @@ function SkillList({
   onToggleDir: (skillId: string, path: string) => void;
   onSelectSkill: (skillId: string) => void;
   onSelectPath: (skillId: string, path: string) => void;
-  copy: ReturnType<typeof getCompanySkillsCopy>;
 }) {
   const filteredSkills = skills.filter((skill) => {
     const haystack = `${skill.name} ${skill.key} ${skill.slug} ${skill.sourceLabel ?? ""}`.toLowerCase();
@@ -447,7 +411,7 @@ function SkillList({
   if (filteredSkills.length === 0) {
     return (
       <div className="px-4 py-6 text-sm text-muted-foreground">
-        {copy.list.noMatches}
+        No skills match this filter.
       </div>
     );
   }
@@ -457,7 +421,7 @@ function SkillList({
       {filteredSkills.map((skill) => {
         const expanded = expandedSkillId === skill.id;
         const tree = buildTree(skill.fileInventory);
-        const source = sourceMeta(skill.sourceBadge, skill.sourceLabel, copy);
+        const source = sourceMeta(skill.sourceBadge, skill.sourceLabel);
         const SourceIcon = source.icon;
 
         return (
@@ -492,7 +456,7 @@ function SkillList({
                 type="button"
                 className="flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-sm text-muted-foreground opacity-80 transition-[background-color,color,opacity] hover:bg-accent hover:text-foreground group-hover:opacity-100"
                 onClick={() => onToggleSkill(skill.id)}
-                aria-label={`${expanded ? copy.list.collapse : copy.list.expand} ${skill.name}`}
+                aria-label={expanded ? `Collapse ${skill.name}` : `Expand ${skill.name}`}
               >
                 {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
               </button>
@@ -544,7 +508,6 @@ function SkillPane({
   deletePending,
   onSave,
   savePending,
-  copy,
 }: {
   loading: boolean;
   detail: CompanySkillDetail | null | undefined;
@@ -566,7 +529,6 @@ function SkillPane({
   deletePending: boolean;
   onSave: () => void;
   savePending: boolean;
-  copy: ReturnType<typeof getCompanySkillsCopy>;
 }) {
   const { pushToast } = useToastActions();
 
@@ -577,19 +539,21 @@ function SkillPane({
     return (
       <EmptyState
         icon={Boxes}
-        message={copy.pane.selectSkill}
+        message="Select a skill to inspect its files."
       />
     );
   }
 
-  const source = sourceMeta(detail.sourceBadge, detail.sourceLabel, copy);
+  const source = sourceMeta(detail.sourceBadge, detail.sourceLabel);
   const SourceIcon = source.icon;
   const usedBy = detail.usedByAgents;
   const body = file?.markdown ? stripFrontmatter(file.content) : file?.content ?? "";
   const currentPin = shortRef(detail.sourceRef);
   const latestPin = shortRef(updateStatus?.latestRef);
   const removeBlocked = usedBy.length > 0;
-  const removeDisabledReason = removeBlocked ? copy.pane.removeBlocked : null;
+  const removeDisabledReason = removeBlocked
+    ? "Detach this skill from all agents before removing it."
+    : null;
 
   return (
     <div className="min-w-0">
@@ -613,7 +577,7 @@ function SkillPane({
               title={removeDisabledReason ?? undefined}
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              {deletePending ? copy.pane.removing : copy.pane.remove}
+              {deletePending ? "Removing..." : "Remove"}
             </Button>
             {detail.editable ? (
               <button
@@ -621,7 +585,7 @@ function SkillPane({
                 onClick={() => setEditMode(!editMode)}
               >
                 <Pencil className="h-3.5 w-3.5" />
-                {editMode ? copy.pane.stopEditing : copy.pane.edit}
+                {editMode ? "Stop editing" : "Edit"}
               </button>
             ) : (
               <div className="text-sm text-muted-foreground">{detail.editableReason}</div>
@@ -632,7 +596,7 @@ function SkillPane({
         <div className="mt-4 space-y-3 border-t border-border pt-4 text-sm">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{copy.pane.source}</span>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Source</span>
               <span className="flex items-center gap-2">
                 <SourceIcon className="h-3.5 w-3.5 text-muted-foreground" />
                 {detail.sourcePath ? (
@@ -640,7 +604,7 @@ function SkillPane({
                     className="truncate hover:text-foreground text-muted-foreground transition-colors cursor-pointer"
                     onClick={() => {
                       navigator.clipboard.writeText(detail.sourcePath!);
-                      pushToast({ title: copy.pane.copiedPath });
+                      pushToast({ title: "Copied path to workspace" });
                     }}
                   >
                     {source.label}
@@ -652,10 +616,10 @@ function SkillPane({
             </div>
             {detail.sourceType === "github" && (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{copy.pane.pin}</span>
-                <span className="font-mono text-xs">{currentPin ?? copy.pane.untracked}</span>
+                <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Pin</span>
+                <span className="font-mono text-xs">{currentPin ?? "untracked"}</span>
                 {updateStatus?.trackingRef && (
-                  <span className="text-xs text-muted-foreground">{copy.pane.tracking} {updateStatus.trackingRef}</span>
+                  <span className="text-xs text-muted-foreground">tracking {updateStatus.trackingRef}</span>
                 )}
                 <Button
                   variant="ghost"
@@ -664,7 +628,7 @@ function SkillPane({
                   disabled={checkUpdatesPending || updateStatusLoading}
                 >
                   <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", (checkUpdatesPending || updateStatusLoading) && "animate-spin")} />
-                  {copy.pane.checkForUpdates}
+                  Check for updates
                 </Button>
                 {updateStatus?.supported && updateStatus.hasUpdate && (
                   <Button
@@ -673,11 +637,11 @@ function SkillPane({
                     disabled={installUpdatePending}
                   >
                     <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", installUpdatePending && "animate-spin")} />
-                    {copy.pane.installUpdate}{latestPin ? ` ${latestPin}` : ""}
+                    Install update{latestPin ? ` ${latestPin}` : ""}
                   </Button>
                 )}
                 {updateStatus?.supported && !updateStatus.hasUpdate && !updateStatusLoading && (
-                  <span className="text-xs text-muted-foreground">{copy.pane.upToDate}</span>
+                  <span className="text-xs text-muted-foreground">Up to date</span>
                 )}
                 {!updateStatus?.supported && updateStatus?.reason && (
                   <span className="text-xs text-muted-foreground">{updateStatus.reason}</span>
@@ -685,18 +649,18 @@ function SkillPane({
               </div>
             )}
             <div className="flex items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{copy.pane.key}</span>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Key</span>
               <span className="font-mono text-xs">{detail.key}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{copy.pane.mode}</span>
-              <span>{detail.editable ? copy.pane.editable : copy.pane.readOnly}</span>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Mode</span>
+              <span>{detail.editable ? "Editable" : "Read only"}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
-            <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{copy.pane.usedBy}</span>
+            <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Used by</span>
             {usedBy.length === 0 ? (
-              <span className="text-muted-foreground">{copy.pane.noAgentsAttached}</span>
+              <span className="text-muted-foreground">No agents attached</span>
             ) : (
               <div className="flex flex-wrap gap-x-3 gap-y-1">
                 {usedBy.map((agent) => (
@@ -728,7 +692,7 @@ function SkillPane({
                 >
                   <span className="flex items-center gap-1.5">
                     <Eye className="h-3.5 w-3.5" />
-                    {copy.pane.view}
+                    View
                   </span>
                 </button>
                 <button
@@ -737,7 +701,7 @@ function SkillPane({
                 >
                   <span className="flex items-center gap-1.5">
                     <Code2 className="h-3.5 w-3.5" />
-                    {copy.pane.code}
+                    Code
                   </span>
                 </button>
               </div>
@@ -745,11 +709,11 @@ function SkillPane({
             {editMode && file?.editable && (
               <>
                 <Button variant="ghost" size="sm" onClick={() => setEditMode(false)} disabled={savePending}>
-                  {copy.pane.cancel}
+                  Cancel
                 </Button>
                 <Button size="sm" onClick={onSave} disabled={savePending}>
                   <Save className="mr-1.5 h-3.5 w-3.5" />
-                  {savePending ? copy.pane.saving : copy.pane.save}
+                  {savePending ? "Saving..." : "Save"}
                 </Button>
               </>
             )}
@@ -761,7 +725,7 @@ function SkillPane({
         {fileLoading ? (
           <PageSkeleton variant="detail" />
         ) : !file ? (
-          <div className="text-sm text-muted-foreground">{copy.empty.selectFile}</div>
+          <div className="text-sm text-muted-foreground">Select a file to inspect.</div>
         ) : editMode && file.editable ? (
           file.markdown ? (
             <MarkdownEditor
@@ -817,10 +781,10 @@ export function CompanySkills() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: copy.breadcrumbs.skills, href: "/skills" },
-      ...(routeSkillId ? [{ label: copy.breadcrumbs.detail }] : []),
+      { label: "Skills", href: "/skills" },
+      ...(routeSkillId ? [{ label: "Detail" }] : []),
     ]);
-  }, [copy.breadcrumbs.detail, copy.breadcrumbs.skills, routeSkillId, setBreadcrumbs]);
+  }, [routeSkillId, setBreadcrumbs]);
 
   const skillsQuery = useQuery({
     queryKey: queryKeys.companySkills.list(selectedCompanyId ?? ""),
@@ -929,19 +893,19 @@ export function CompanySkills() {
       if (result.imported[0]) navigate(skillRoute(result.imported[0].id));
       pushToast({
         tone: "success",
-        title: copy.toasts.importedTitle,
-        body: formatImportedSkillsCount(result.imported.length, locale),
+        title: "Skills imported",
+        body: `${result.imported.length} skill${result.imported.length === 1 ? "" : "s"} added.`,
       });
       if (result.warnings[0]) {
-        pushToast({ tone: "warn", title: copy.toasts.importWarningsTitle, body: result.warnings[0] });
+        pushToast({ tone: "warn", title: "Import warnings", body: result.warnings[0] });
       }
       setSource("");
     },
     onError: (error) => {
       pushToast({
         tone: "error",
-        title: copy.toasts.importFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.importFailedBody,
+        title: "Skill import failed",
+        body: error instanceof Error ? error.message : "Failed to import skill source.",
       });
     },
   });
@@ -954,15 +918,15 @@ export function CompanySkills() {
       setCreateOpen(false);
       pushToast({
         tone: "success",
-        title: copy.toasts.createdTitle,
-        body: formatSkillCreatedBody(skill.name, locale),
+        title: "Skill created",
+        body: `${skill.name} is now editable in the Paperclip workspace.`,
       });
     },
     onError: (error) => {
       pushToast({
         tone: "error",
-        title: copy.toasts.creationFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.creationFailedBody,
+        title: "Skill creation failed",
+        body: error instanceof Error ? error.message : "Failed to create skill.",
       });
     },
   });
@@ -970,28 +934,28 @@ export function CompanySkills() {
   const scanProjects = useMutation({
     mutationFn: () => companySkillsApi.scanProjects(selectedCompanyId!),
     onMutate: () => {
-      setScanStatusMessage(copy.status.scanningProjects);
+      setScanStatusMessage("Scanning project workspaces for skills...");
     },
     onSuccess: async (result) => {
-      setScanStatusMessage(copy.status.refreshingList);
+      setScanStatusMessage("Refreshing skills list...");
       await queryClient.invalidateQueries({ queryKey: queryKeys.companySkills.list(selectedCompanyId!) });
-      const summary = formatProjectScanSummary(result, locale);
+      const summary = formatProjectScanSummary(result);
       setScanStatusMessage(summary);
       pushToast({
         tone: "success",
-        title: copy.toasts.scanCompleteTitle,
+        title: "Project skill scan complete",
         body: summary,
       });
       if (result.conflicts[0]) {
         pushToast({
           tone: "warn",
-          title: copy.toasts.conflictsTitle,
+          title: "Skill conflicts found",
           body: result.conflicts[0].reason,
         });
       } else if (result.warnings[0]) {
         pushToast({
           tone: "warn",
-          title: copy.toasts.scanWarningsTitle,
+          title: "Scan warnings",
           body: result.warnings[0],
         });
       }
@@ -1000,8 +964,8 @@ export function CompanySkills() {
       setScanStatusMessage(null);
       pushToast({
         tone: "error",
-        title: copy.toasts.scanFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.scanFailedBody,
+        title: "Project skill scan failed",
+        body: error instanceof Error ? error.message : "Failed to scan project workspaces.",
       });
     },
   });
@@ -1023,15 +987,15 @@ export function CompanySkills() {
       setEditMode(false);
       pushToast({
         tone: "success",
-        title: copy.toasts.savedTitle,
+        title: "Skill saved",
         body: result.path,
       });
     },
     onError: (error) => {
       pushToast({
         tone: "error",
-        title: copy.toasts.saveFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.saveFailedBody,
+        title: "Save failed",
+        body: error instanceof Error ? error.message : "Failed to save skill file.",
       });
     },
   });
@@ -1048,15 +1012,15 @@ export function CompanySkills() {
       navigate(skillRoute(skill.id, selectedPath));
       pushToast({
         tone: "success",
-        title: copy.toasts.updatedTitle,
-        body: formatSkillUpdatedBody(skill.name, skill.sourceRef, locale),
+        title: "Skill updated",
+        body: skill.sourceRef ? `Pinned to ${shortRef(skill.sourceRef)}` : skill.name,
       });
     },
     onError: (error) => {
       pushToast({
         tone: "error",
-        title: copy.toasts.updateFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.updateFailedBody,
+        title: "Update failed",
+        body: error instanceof Error ? error.message : "Failed to install skill update.",
       });
     },
   });
@@ -1086,21 +1050,21 @@ export function CompanySkills() {
       navigate("/skills", { replace: true });
       pushToast({
         tone: "success",
-        title: copy.toasts.removedTitle,
-        body: formatSkillRemovedBody(skill.name, locale),
+        title: "Skill removed",
+        body: `${skill.name} was removed from the company skill library.`,
       });
     },
     onError: (error) => {
       pushToast({
         tone: "error",
-        title: copy.toasts.removeFailedTitle,
-        body: error instanceof Error ? error.message : copy.toasts.removeFailedBody,
+        title: "Remove failed",
+        body: error instanceof Error ? error.message : "Failed to remove skill.",
       });
     },
   });
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Boxes} message={copy.empty.noCompanySelected} />;
+    return <EmptyState icon={Boxes} message="Select a company to manage skills." />;
   }
 
   function handleAddSkillSource() {
@@ -1117,42 +1081,44 @@ export function CompanySkills() {
       <Dialog open={deleteOpen} onOpenChange={closeDeleteDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{copy.dialogs.removeTitle}</DialogTitle>
-            <DialogDescription>{copy.dialogs.removeDescription}</DialogDescription>
+            <DialogTitle>Remove skill</DialogTitle>
+            <DialogDescription>
+              Remove this skill from the company library. If any agents still use it, removal will be blocked until it is detached.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
             <p>
               {deleteTargetDetail
-                ? formatSkillDeletePrompt(deleteTargetDetail.name, locale)
-                : copy.dialogs.aboutToRemoveFallback}
+                ? `You are about to remove ${deleteTargetDetail.name}.`
+                : "You are about to remove this skill."}
             </p>
             {deleteTargetDetail?.usedByAgents?.length ? (
               <div className="rounded-md border border-border px-3 py-3 text-muted-foreground">
-                {formatSkillUsedByAgents(deleteTargetDetail.usedByAgents.map((agent) => agent.name), locale)}
+                Currently used by {deleteTargetDetail.usedByAgents.map((agent) => agent.name).join(", ")}.
               </div>
             ) : null}
             {(deleteTargetDetail?.usedByAgents.length ?? 0) > 0 ? (
               <p className="text-muted-foreground">
-                {copy.dialogs.detachBeforeRemoving}
+                Detach this skill from all agents to enable removal.
               </p>
             ) : null}
           </div>
           <DialogFooter>
             {(deleteTargetDetail?.usedByAgents.length ?? 0) > 0 ? (
               <Button variant="ghost" onClick={() => closeDeleteDialog(false)}>
-                {copy.dialogs.close}
+                Close
               </Button>
             ) : (
               <>
                 <Button variant="ghost" onClick={() => closeDeleteDialog(false)} disabled={deleteSkill.isPending}>
-                  {copy.dialogs.cancel}
+                  Cancel
                 </Button>
                 <Button
                   variant="destructive"
                   onClick={() => deleteSkill.mutate()}
                   disabled={deleteSkill.isPending || !deleteTargetSkillId}
                 >
-                  {deleteSkill.isPending ? copy.pane.removing : copy.pane.removeSkill}
+                  {deleteSkill.isPending ? "Removing..." : "Remove skill"}
                 </Button>
               </>
             )}
@@ -1163,8 +1129,10 @@ export function CompanySkills() {
       <Dialog open={emptySourceHelpOpen} onOpenChange={setEmptySourceHelpOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{copy.dialogs.addSourceTitle}</DialogTitle>
-            <DialogDescription>{copy.dialogs.addSourceDescription}</DialogDescription>
+            <DialogTitle>Add a skill source</DialogTitle>
+            <DialogDescription>
+              Paste a local path, GitHub URL, or `skills.sh` command into the field first.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
             <a
@@ -1174,9 +1142,9 @@ export function CompanySkills() {
               className="flex items-start justify-between rounded-md border border-border px-3 py-3 text-foreground no-underline transition-colors hover:bg-accent/40"
             >
               <span>
-                <span className="block font-medium">{copy.dialogs.browseSkillsSh}</span>
+                <span className="block font-medium">Browse skills.sh</span>
                 <span className="mt-1 block text-muted-foreground">
-                  {copy.dialogs.browseSkillsShDescription}
+                  Find install commands and paste one here.
                 </span>
               </span>
               <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1188,9 +1156,9 @@ export function CompanySkills() {
               className="flex items-start justify-between rounded-md border border-border px-3 py-3 text-foreground no-underline transition-colors hover:bg-accent/40"
             >
               <span>
-                <span className="block font-medium">{copy.dialogs.searchGithub}</span>
+                <span className="block font-medium">Search GitHub</span>
                 <span className="mt-1 block text-muted-foreground">
-                  {copy.dialogs.searchGithubDescription}
+                  Look for repositories with `SKILL.md`, then paste the repo URL here.
                 </span>
               </span>
               <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1205,9 +1173,9 @@ export function CompanySkills() {
           <div className="border-b border-border px-4 py-3">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <h1 className="text-base font-semibold">{copy.list.title}</h1>
+                <h1 className="text-base font-semibold">Skills</h1>
                 <p className="text-xs text-muted-foreground">
-                  {formatCompanySkillsAvailableCount(skillsQuery.data?.length ?? 0, locale)}
+                  {skillsQuery.data?.length ?? 0} available
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -1216,7 +1184,7 @@ export function CompanySkills() {
                   size="icon-sm"
                   onClick={() => scanProjects.mutate()}
                   disabled={scanProjects.isPending}
-                  title={copy.list.scanWorkspace}
+                  title="Scan project workspaces for skills"
                 >
                   <RefreshCw className={cn("h-4 w-4", scanProjects.isPending && "animate-spin")} />
                 </Button>
@@ -1231,7 +1199,7 @@ export function CompanySkills() {
               <input
                 value={skillFilter}
                 onChange={(event) => setSkillFilter(event.target.value)}
-                placeholder={copy.list.filter}
+                placeholder="Filter skills"
                 className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
             </div>
@@ -1240,7 +1208,7 @@ export function CompanySkills() {
               <input
                 value={source}
                 onChange={(event) => setSource(event.target.value)}
-                placeholder={copy.list.sourcePlaceholder}
+                placeholder="Paste path, GitHub URL, or skills.sh command"
                 className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
               <Button
@@ -1249,7 +1217,7 @@ export function CompanySkills() {
                 onClick={handleAddSkillSource}
                 disabled={importSkill.isPending}
               >
-                {importSkill.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : copy.list.add}
+                {importSkill.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Add"}
               </Button>
             </div>
             {scanStatusMessage && (
@@ -1264,7 +1232,6 @@ export function CompanySkills() {
               onCreate={(payload) => createSkill.mutate(payload)}
               isPending={createSkill.isPending}
               onCancel={() => setCreateOpen(false)}
-              copy={copy}
             />
           )}
 
@@ -1293,7 +1260,6 @@ export function CompanySkills() {
               }}
               onSelectSkill={(currentSkillId) => setExpandedSkillId(currentSkillId)}
               onSelectPath={() => {}}
-              copy={copy}
             />
           )}
         </aside>
@@ -1322,7 +1288,6 @@ export function CompanySkills() {
             deletePending={deleteSkill.isPending}
             onSave={() => saveFile.mutate()}
             savePending={saveFile.isPending}
-            copy={copy}
           />
         </div>
       </div>

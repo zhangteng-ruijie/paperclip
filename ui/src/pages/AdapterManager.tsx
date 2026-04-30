@@ -9,21 +9,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Cpu, Plus, Power, Trash2, FolderOpen, Package, RefreshCw, Download } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useLocale } from "@/context/LocaleContext";
 import { adaptersApi } from "@/api/adapters";
 import type { AdapterInfo } from "@/api/adapters";
 import { getAdapterLabel } from "@/adapters/adapter-display-registry";
 import { queryKeys } from "@/lib/queryKeys";
-import {
-  formatAdapterInstalledBody,
-  formatAdapterModelsCount,
-  formatAdapterOverriddenBy,
-  formatAdapterReinstalledBody,
-  formatAdapterReloadedBody,
-  formatAdapterReinstallDescription,
-  formatAdapterRemoveDescription,
-  getInstanceAdminCopy,
-} from "@/lib/instance-admin-copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,8 +50,6 @@ function AdapterRow({
   toggleTitleDisabled,
   /** Custom label for the disabled badge (defaults to "Hidden from menus"). */
   disabledBadgeLabel,
-  copy,
-  locale,
 }: {
   adapter: AdapterInfo;
   canRemove: boolean;
@@ -78,8 +65,6 @@ function AdapterRow({
   toggleTitleEnabled?: string;
   toggleTitleDisabled?: string;
   disabledBadgeLabel?: string;
-  copy: ReturnType<typeof getInstanceAdminCopy>;
-  locale: string | null | undefined;
 }) {
   return (
     <li>
@@ -89,11 +74,11 @@ function AdapterRow({
             <span className={cn("font-medium", adapter.disabled && "text-muted-foreground line-through")}>
               {adapter.label || getAdapterLabel(adapter.type)}
             </span>
-            <Badge variant="outline">{adapter.source === "external" ? copy.adapters.externalBadge : copy.adapters.builtInBadge}</Badge>
+            <Badge variant="outline">{adapter.source === "external" ? "External" : "Built-in"}</Badge>
             {adapter.source === "external" && (
               adapter.isLocalPath
-                ? <span title={copy.adapters.installedFromLocalPath}><FolderOpen className="h-4 w-4 text-amber-500" /></span>
-                : <span title={copy.adapters.installedFromNpm}><Package className="h-4 w-4 text-red-500" /></span>
+                ? <span title="Installed from local path"><FolderOpen className="h-4 w-4 text-amber-500" /></span>
+                : <span title="Installed from npm"><Package className="h-4 w-4 text-red-500" /></span>
             )}
             {adapter.version && (
               <Badge variant="secondary" className="font-mono text-[10px]">
@@ -102,17 +87,17 @@ function AdapterRow({
             )}
             {adapter.overriddenBuiltin && (
               <Badge variant="secondary" className="text-blue-600 border-blue-400">
-                {copy.adapters.overridesBuiltin}
+                Overrides built-in
               </Badge>
             )}
             {overriddenBy && (
               <Badge variant="secondary" className="text-blue-600 border-blue-400">
-                {formatAdapterOverriddenBy(overriddenBy, locale)}
+                Overridden by {overriddenBy}
               </Badge>
             )}
             {adapter.disabled && (
               <Badge variant="secondary" className="text-amber-600 border-amber-400">
-                {disabledBadgeLabel ?? copy.adapters.hiddenFromMenus}
+                {disabledBadgeLabel ?? "Hidden from menus"}
               </Badge>
             )}
           </div>
@@ -121,7 +106,7 @@ function AdapterRow({
             {adapter.packageName && adapter.packageName !== adapter.type && (
               <> · {adapter.packageName}</>
             )}
-            {" · "}{formatAdapterModelsCount(adapter.modelsCount, locale)}
+            {" · "}{adapter.modelsCount} models
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -130,7 +115,7 @@ function AdapterRow({
               variant="outline"
               size="icon-sm"
               className="h-8 w-8"
-              title={`${copy.adapters.reinstallAdapter} (${copy.adapters.reinstallAdapterHint})`}
+              title="Reinstall adapter (pull latest from npm)"
               disabled={isReinstalling}
               onClick={() => onReinstall(adapter.type)}
             >
@@ -142,7 +127,7 @@ function AdapterRow({
               variant="outline"
               size="icon-sm"
               className="h-8 w-8"
-              title={`${copy.adapters.reloadAdapter} (${copy.adapters.reloadAdapterHint})`}
+              title="Reload adapter (hot-swap)"
               disabled={isReloading}
               onClick={() => onReload(adapter.type)}
             >
@@ -154,8 +139,8 @@ function AdapterRow({
             size="icon-sm"
             className="h-8 w-8"
             title={adapter.disabled
-              ? (toggleTitleEnabled ?? copy.adapters.showInMenus)
-              : (toggleTitleDisabled ?? copy.adapters.hideFromMenus)}
+              ? (toggleTitleEnabled ?? "Show in agent menus")
+              : (toggleTitleDisabled ?? "Hide from agent menus")}
             disabled={isToggling}
             onClick={() => onToggle(adapter.type, !adapter.disabled)}
           >
@@ -166,7 +151,7 @@ function AdapterRow({
               variant="outline"
               size="icon-sm"
               className="h-8 w-8 text-destructive hover:text-destructive"
-              title={copy.adapters.removeAdapter}
+              title="Remove adapter"
               onClick={() => onRemove(adapter.type)}
             >
               <Trash2 className="h-4 w-4" />
@@ -193,16 +178,12 @@ function ReinstallDialog({
   isReinstalling,
   onConfirm,
   onCancel,
-  copy,
-  locale,
 }: {
   adapter: AdapterInfo | null;
   open: boolean;
   isReinstalling: boolean;
   onConfirm: () => void;
   onCancel: () => void;
-  copy: ReturnType<typeof getInstanceAdminCopy>;
-  locale: string | null | undefined;
 }) {
   const { data: latestVersion, isLoading: isFetchingVersion } = useQuery({
     queryKey: ["npm-latest-version", adapter?.packageName],
@@ -220,44 +201,49 @@ function ReinstallDialog({
     <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{copy.adapters.reinstallAdapter}</DialogTitle>
-          <DialogDescription>{formatAdapterReinstallDescription(adapter?.packageName, locale)}</DialogDescription>
+          <DialogTitle>Reinstall Adapter</DialogTitle>
+          <DialogDescription>
+            This will pull the latest version of{" "}
+            <strong>{adapter?.packageName}</strong> from npm and hot-swap
+            the running adapter module. Existing agents will use the new
+            version on their next run.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="rounded-md border bg-muted/50 px-4 py-3 text-sm space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{copy.adapters.package}</span>
+            <span className="text-muted-foreground">Package</span>
             <span className="font-mono">{adapter?.packageName}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{copy.adapters.current}</span>
+            <span className="text-muted-foreground">Current</span>
             <span className="font-mono">
-              {adapter?.version ? `v${adapter.version}` : copy.adapters.unknownVersion}
+              {adapter?.version ? `v${adapter.version}` : "unknown"}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">{copy.adapters.latestOnNpm}</span>
+            <span className="text-muted-foreground">Latest on npm</span>
             <span className="font-mono">
               {isFetchingVersion
-                ? copy.adapters.checkingVersion
+                ? "checking..."
                 : latestVersion
                   ? `v${latestVersion}`
-                  : copy.adapters.unavailableVersion}
+                  : "unavailable"}
             </span>
           </div>
           {isUpToDate && (
             <p className="text-xs text-muted-foreground pt-1">
-              {copy.adapters.alreadyLatest}
+              Already on the latest version.
             </p>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onCancel} disabled={isReinstalling}>
-            {copy.adapters.cancel}
+            Cancel
           </Button>
           <Button disabled={isReinstalling} onClick={onConfirm}>
-            {isReinstalling ? copy.adapters.reinstalling : copy.adapters.reinstall}
+            {isReinstalling ? "Reinstalling..." : "Reinstall"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -268,8 +254,6 @@ function ReinstallDialog({
 export function AdapterManager() {
   const { selectedCompany } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const copy = getInstanceAdminCopy(locale);
   const queryClient = useQueryClient();
   const { pushToast } = useToastActions();
 
@@ -282,11 +266,11 @@ export function AdapterManager() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
-      { label: copy.adapters.breadcrumbSettings, href: "/instance/settings/general" },
-      { label: copy.adapters.breadcrumbAdapters },
+      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
+      { label: "Settings", href: "/instance/settings/general" },
+      { label: "Adapters" },
     ]);
-  }, [copy.adapters.breadcrumbAdapters, copy.adapters.breadcrumbSettings, copy.company, selectedCompany?.name, setBreadcrumbs]);
+  }, [selectedCompany?.name, setBreadcrumbs]);
 
   const { data: adapters, isLoading } = useQuery({
     queryKey: queryKeys.adapters.all,
@@ -307,13 +291,13 @@ export function AdapterManager() {
       setInstallVersion("");
       setIsLocalPath(false);
       pushToast({
-        title: copy.adapters.adapterInstalled,
-        body: formatAdapterInstalledBody(result.type, result.version, locale),
+        title: "Adapter installed",
+        body: `Type "${result.type}" registered successfully.${result.version ? ` (v${result.version})` : ""}`,
         tone: "success",
       });
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.installFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Install failed", body: err.message, tone: "error" });
     },
   });
 
@@ -321,10 +305,10 @@ export function AdapterManager() {
     mutationFn: (type: string) => adaptersApi.remove(type),
     onSuccess: () => {
       invalidate();
-      pushToast({ title: copy.adapters.adapterRemoved, tone: "success" });
+      pushToast({ title: "Adapter removed", tone: "success" });
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.removalFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Removal failed", body: err.message, tone: "error" });
     },
   });
 
@@ -335,7 +319,7 @@ export function AdapterManager() {
       invalidate();
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.toggleFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Toggle failed", body: err.message, tone: "error" });
     },
   });
 
@@ -346,7 +330,7 @@ export function AdapterManager() {
       invalidate();
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.overrideToggleFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Override toggle failed", body: err.message, tone: "error" });
     },
   });
 
@@ -357,13 +341,13 @@ export function AdapterManager() {
       invalidateDynamicParser(result.type);
       invalidateConfigSchemaCache(result.type);
       pushToast({
-        title: copy.adapters.adapterReloaded,
-        body: formatAdapterReloadedBody(result.type, result.version, locale),
+        title: "Adapter reloaded",
+        body: `Type "${result.type}" reloaded.${result.version ? ` (v${result.version})` : ""}`,
         tone: "success",
       });
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.reloadFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Reload failed", body: err.message, tone: "error" });
     },
   });
 
@@ -374,13 +358,13 @@ export function AdapterManager() {
       invalidateDynamicParser(result.type);
       invalidateConfigSchemaCache(result.type);
       pushToast({
-        title: copy.adapters.adapterReinstalled,
-        body: formatAdapterReinstalledBody(result.type, result.version, locale),
+        title: "Adapter reinstalled",
+        body: `Type "${result.type}" updated from npm.${result.version ? ` (v${result.version})` : ""}`,
         tone: "success",
       });
     },
     onError: (err: Error) => {
-      pushToast({ title: copy.adapters.reinstallFailed, body: err.message, tone: "error" });
+      pushToast({ title: "Reinstall failed", body: err.message, tone: "error" });
     },
   });
 
@@ -404,7 +388,7 @@ export function AdapterManager() {
       menuDisabled: !!a.disabled,
     }));
 
-  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">{copy.adapters.loadingAdapters}</div>;
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading adapters...</div>;
 
   const isMutating = installMutation.isPending || removeMutation.isPending || toggleMutation.isPending || overrideMutation.isPending || reloadMutation.isPending || reinstallMutation.isPending;
 
@@ -414,9 +398,9 @@ export function AdapterManager() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Cpu className="h-6 w-6 text-muted-foreground" />
-          <h1 className="text-xl font-semibold">{copy.adapters.managerTitle}</h1>
+          <h1 className="text-xl font-semibold">Adapters</h1>
           <Badge variant="outline" className="text-amber-600 border-amber-400">
-            {copy.adapters.alphaBadge}
+            Alpha
           </Badge>
         </div>
 
@@ -424,13 +408,15 @@ export function AdapterManager() {
           <DialogTrigger asChild>
             <Button size="sm" className="gap-2">
               <Plus className="h-4 w-4" />
-              {copy.adapters.installAdapter}
+              Install Adapter
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{copy.adapters.installAdapterTitle}</DialogTitle>
-              <DialogDescription>{copy.adapters.installAdapterDescription}</DialogDescription>
+              <DialogTitle>Install External Adapter</DialogTitle>
+              <DialogDescription>
+                Add an adapter from npm or a local path. The adapter package must export <code className="text-xs bg-muted px-1 py-0.5 rounded">createServerAdapter()</code>.
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               {/* Source toggle */}
@@ -446,7 +432,7 @@ export function AdapterManager() {
                   onClick={() => setIsLocalPath(false)}
                 >
                   <Package className="h-3.5 w-3.5" />
-                  {copy.adapters.sourceNpmPackage}
+                  npm package
                 </button>
                 <button
                   type="button"
@@ -459,43 +445,45 @@ export function AdapterManager() {
                   onClick={() => setIsLocalPath(true)}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
-                  {copy.adapters.sourceLocalPath}
+                  Local path
                 </button>
               </div>
 
               {isLocalPath ? (
+                /* Local path input */
                 <div className="grid gap-2">
-                  <Label htmlFor="adapterLocalPath">{copy.adapters.pathToAdapterPackage}</Label>
+                  <Label htmlFor="adapterLocalPath">Path to adapter package</Label>
                   <div className="flex gap-2">
                     <Input
                       id="adapterLocalPath"
                       className="flex-1 font-mono text-xs"
-                      placeholder={copy.adapters.localPathPlaceholder}
+                      placeholder="/mnt/e/Projects/my-adapter  or  E:\Projects\my-adapter"
                       value={installPackage}
                       onChange={(e) => setInstallPackage(e.target.value)}
                     />
                     <ChoosePathButton />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {copy.adapters.localPathHint}
+                    Accepts Linux, WSL, and Windows paths. Windows paths are auto-converted.
                   </p>
                 </div>
               ) : (
+                /* npm package input */
                 <>
                   <div className="grid gap-2">
-                    <Label htmlFor="adapterPackageName">{copy.adapters.packageName}</Label>
+                    <Label htmlFor="adapterPackageName">Package Name</Label>
                     <Input
                       id="adapterPackageName"
-                      placeholder={copy.adapters.packageNamePlaceholder}
+                      placeholder="my-paperclip-adapter"
                       value={installPackage}
                       onChange={(e) => setInstallPackage(e.target.value)}
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="adapterVersion">{copy.adapters.versionOptional}</Label>
+                    <Label htmlFor="adapterVersion">Version (optional)</Label>
                     <Input
                       id="adapterVersion"
-                      placeholder={copy.adapters.versionPlaceholder}
+                      placeholder="latest"
                       value={installVersion}
                       onChange={(e) => setInstallVersion(e.target.value)}
                     />
@@ -504,7 +492,7 @@ export function AdapterManager() {
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setInstallDialogOpen(false)}>{copy.adapters.cancel}</Button>
+              <Button variant="outline" onClick={() => setInstallDialogOpen(false)}>Cancel</Button>
               <Button
                 onClick={() =>
                   installMutation.mutate({
@@ -515,7 +503,7 @@ export function AdapterManager() {
                 }
                 disabled={!installPackage || installMutation.isPending}
               >
-                {installMutation.isPending ? copy.adapters.installing : copy.adapters.install}
+                {installMutation.isPending ? "Installing..." : "Install"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -527,9 +515,10 @@ export function AdapterManager() {
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
           <div className="space-y-1 text-sm">
-            <p className="font-medium text-foreground">{copy.adapters.externalAdaptersAlpha}</p>
+            <p className="font-medium text-foreground">External adapters are alpha.</p>
             <p className="text-muted-foreground">
-              {copy.adapters.externalAdaptersAlphaDescription}
+              The adapter plugin system is under active development. APIs and storage format may change.
+              Use the power icon to hide adapters from agent menus without removing them.
             </p>
           </div>
         </div>
@@ -539,16 +528,16 @@ export function AdapterManager() {
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <Cpu className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-base font-semibold">{copy.adapters.externalAdapters}</h2>
+          <h2 className="text-base font-semibold">External Adapters</h2>
         </div>
 
         {externalAdapters.length === 0 ? (
           <Card className="bg-muted/30">
             <CardContent className="flex flex-col items-center justify-center py-10">
               <Cpu className="h-10 w-10 text-muted-foreground mb-4" />
-              <p className="text-sm font-medium">{copy.adapters.noExternalAdaptersInstalled}</p>
+              <p className="text-sm font-medium">No external adapters installed</p>
               <p className="text-xs text-muted-foreground mt-1">
-                {copy.adapters.noExternalAdaptersHint}
+                Install an adapter package to extend model support.
               </p>
             </CardContent>
           </Card>
@@ -576,15 +565,13 @@ export function AdapterManager() {
                   }
                   onRemove={(type) => setRemoveType(type)}
                   onReload={(type) => reloadMutation.mutate(type)}
-                  onReinstall={!adapter.isLocalPath ? () => setReinstallTarget(adapter) : undefined}
+                  onReinstall={!adapter.isLocalPath ? (type) => setReinstallTarget(adapter) : undefined}
                   isToggling={isBuiltinOverride ? overrideMutation.isPending : toggleMutation.isPending}
                   isReloading={reloadMutation.isPending}
                   isReinstalling={reinstallMutation.isPending}
-                  toggleTitleDisabled={isBuiltinOverride ? copy.adapters.pauseExternalOverride : undefined}
-                  toggleTitleEnabled={isBuiltinOverride ? copy.adapters.resumeExternalOverride : undefined}
-                  disabledBadgeLabel={isBuiltinOverride ? copy.adapters.overridePaused : undefined}
-                  copy={copy}
-                  locale={locale}
+                  toggleTitleDisabled={isBuiltinOverride ? "Pause external override" : undefined}
+                  toggleTitleEnabled={isBuiltinOverride ? "Resume external override" : undefined}
+                  disabledBadgeLabel={isBuiltinOverride ? "Override paused" : undefined}
                 />
               );
             })}
@@ -596,11 +583,11 @@ export function AdapterManager() {
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <Cpu className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-base font-semibold">{copy.adapters.builtInAdapters}</h2>
+          <h2 className="text-base font-semibold">Built-in Adapters</h2>
         </div>
 
         {builtinAdapters.length === 0 && overriddenBuiltins.length === 0 ? (
-          <div className="text-sm text-muted-foreground">{copy.adapters.noBuiltInAdaptersFound}</div>
+          <div className="text-sm text-muted-foreground">No built-in adapters found.</div>
         ) : (
           <ul className="divide-y rounded-md border bg-card">
             {builtinAdapters.map((adapter) => (
@@ -611,8 +598,6 @@ export function AdapterManager() {
                 onToggle={(type, disabled) => toggleMutation.mutate({ type, disabled })}
                 onRemove={() => {}}
                 isToggling={isMutating}
-                copy={copy}
-                locale={locale}
               />
             ))}
             {overriddenBuiltins.map((virtual) => (
@@ -637,8 +622,6 @@ export function AdapterManager() {
                 onRemove={() => {}}
                 isToggling={isMutating}
                 overriddenBy={virtual.overridePaused ? undefined : virtual.overriddenBy}
-                copy={copy}
-                locale={locale}
               />
             ))}
           </ul>
@@ -652,17 +635,18 @@ export function AdapterManager() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{copy.adapters.removeAdapterTitle}</DialogTitle>
+            <DialogTitle>Remove Adapter</DialogTitle>
             <DialogDescription>
-              {formatAdapterRemoveDescription(
-                removeType ?? "",
-                Boolean(removeType && adapters?.find((a) => a.type === removeType)?.packageName),
-                locale,
+              Are you sure you want to remove the <strong>{removeType}</strong> adapter?
+              It will be unregistered and removed from the adapter store.
+              {removeType && adapters?.find((a) => a.type === removeType)?.packageName && (
+                <> npm packages will be cleaned up from disk.</>
               )}
+              {" "}This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRemoveType(null)}>{copy.adapters.cancel}</Button>
+            <Button variant="outline" onClick={() => setRemoveType(null)}>Cancel</Button>
             <Button
               variant="destructive"
               disabled={removeMutation.isPending}
@@ -674,7 +658,7 @@ export function AdapterManager() {
                 }
               }}
             >
-              {removeMutation.isPending ? copy.adapters.removing : copy.adapters.removeAdapter}
+              {removeMutation.isPending ? "Removing..." : "Remove"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -684,8 +668,6 @@ export function AdapterManager() {
         adapter={reinstallTarget}
         open={reinstallTarget !== null}
         isReinstalling={reinstallMutation.isPending}
-        copy={copy}
-        locale={locale}
         onConfirm={() => {
           if (reinstallTarget) {
             reinstallMutation.mutate(reinstallTarget.type, {

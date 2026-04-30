@@ -4,10 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
 import { agentUrl } from "../lib/utils";
-import { getOrgChartCopy, orgRoleLabel, translateOrgAdapterLabel, translateOrgCopy } from "../lib/org-chart-copy";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -175,8 +173,6 @@ const defaultDotColor = "#a3a3a3";
 export function OrgChart() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const copy = getOrgChartCopy(locale);
   const navigate = useNavigate();
 
   const { data: orgTree, isLoading } = useQuery({
@@ -198,8 +194,8 @@ export function OrgChart() {
   }, [agents]);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: copy.orgChart }]);
-  }, [setBreadcrumbs, copy]);
+    setBreadcrumbs([{ label: "Org Chart" }]);
+  }, [setBreadcrumbs]);
 
   // Layout computation
   const layout = useMemo(() => layoutForest(orgTree ?? []), [orgTree]);
@@ -433,7 +429,7 @@ export function OrgChart() {
   }, [pan, zoom]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Network} message={copy.selectCompany} />;
+    return <EmptyState icon={Network} message="Select a company to view the org chart." />;
   }
 
   if (isLoading) {
@@ -441,7 +437,7 @@ export function OrgChart() {
   }
 
   if (orgTree && orgTree.length === 0) {
-    return <EmptyState icon={Network} message={copy.noHierarchy} />;
+    return <EmptyState icon={Network} message="No organizational hierarchy defined." />;
   }
 
   return (
@@ -625,3 +621,7 @@ export function OrgChart() {
 }
 
 const roleLabels: Record<string, string> = AGENT_ROLE_LABELS;
+
+function roleLabel(role: string): string {
+  return roleLabels[role] ?? role;
+}

@@ -48,7 +48,7 @@ export function InlineEditor({
   onSave,
   as: Tag = "span",
   className,
-  placeholder,
+  placeholder = "Click to edit...",
   multiline = false,
   nullable = false,
   imageUploadHandler,
@@ -56,9 +56,6 @@ export function InlineEditor({
   mentions,
   foldable = false,
 }: InlineEditorProps) {
-  const { locale } = useLocale();
-  const copy = getEditorCopy(locale);
-  const resolvedPlaceholder = placeholder ?? copy.inlineEditor.clickToEdit;
   const [editing, setEditing] = useState(false);
   const [multilineEditing, setMultilineEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -353,12 +350,12 @@ export function InlineEditor({
             )}
           >
             {autosaveState === "saving"
-              ? copy.inlineEditor.autosaving
+              ? "Autosaving..."
               : autosaveState === "saved"
-                ? copy.inlineEditor.saved
+                ? "Saved"
                 : autosaveState === "error"
-                  ? copy.inlineEditor.couldNotSave
-                  : ""}
+                  ? "Could not save"
+                  : "Idle"}
           </span>
         </div>
       </div>
@@ -403,7 +400,7 @@ export function InlineEditor({
       )}
       onClick={() => setEditing(true)}
     >
-      {value || resolvedPlaceholder}
+      {value || placeholder}
     </DisplayTag>
   );
 }

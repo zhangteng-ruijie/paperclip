@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
-import { useLocale } from "../context/LocaleContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -57,23 +56,11 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-import {
-  formatIssueComposerOptionsTitle,
-  formatIssueComposerOpenIssueLabel,
-  formatIssueComposerUploadWarningBody,
-  formatIssueComposerUploadWarningTitle,
-  getIssueComposerCopy,
-  issueComposerExecutionWorkspaceModes,
-  issueComposerPriorityOptions,
-  issueComposerStatusOptions,
-  issueComposerThinkingEffortOptions,
-} from "../lib/issue-composer-copy";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
 import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
-import { formatStatusLabel } from "./StatusBadge";
 
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
@@ -108,6 +95,32 @@ type StagedIssueFile = {
 
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+
+const ISSUE_THINKING_EFFORT_OPTIONS = {
+  claude_local: [
+    { value: "", label: "Default" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+  ],
+  codex_local: [
+    { value: "", label: "Default" },
+    { value: "minimal", label: "Minimal" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "X-High" },
+  ],
+  opencode_local: [
+    { value: "", label: "Default" },
+    { value: "minimal", label: "Minimal" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "X-High" },
+    { value: "max", label: "Max" },
+  ],
+} as const;
 
 function buildAssigneeAdapterOverrides(input: {
   adapterType: string | null | undefined;
@@ -214,6 +227,27 @@ function formatFileSize(file: File) {
   if (file.size < 1024 * 1024) return `${(file.size / 1024).toFixed(1)} KB`;
   return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const statuses = [
+  { value: "backlog", label: "Backlog", color: issueStatusText.backlog ?? issueStatusTextDefault },
+  { value: "todo", label: "Todo", color: issueStatusText.todo ?? issueStatusTextDefault },
+  { value: "in_progress", label: "In Progress", color: issueStatusText.in_progress ?? issueStatusTextDefault },
+  { value: "in_review", label: "In Review", color: issueStatusText.in_review ?? issueStatusTextDefault },
+  { value: "done", label: "Done", color: issueStatusText.done ?? issueStatusTextDefault },
+];
+
+const priorities = [
+  { value: "critical", label: "Critical", icon: AlertTriangle, color: priorityColor.critical ?? priorityColorDefault },
+  { value: "high", label: "High", icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault },
+  { value: "medium", label: "Medium", icon: Minus, color: priorityColor.medium ?? priorityColorDefault },
+  { value: "low", label: "Low", icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault },
+];
+
+const EXECUTION_WORKSPACE_MODES = [
+  { value: "shared_workspace", label: "Project default" },
+  { value: "isolated_workspace", label: "New isolated workspace" },
+  { value: "reuse_existing", label: "Reuse existing workspace" },
+] as const;
 
 function defaultProjectWorkspaceIdForProject(project: { workspaces?: Array<{ id: string; isPrimary: boolean }>; executionWorkspacePolicy?: { defaultProjectWorkspaceId?: string | null } | null } | null | undefined) {
   if (!project) return "";
@@ -401,8 +435,6 @@ export function NewIssueDialog() {
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-  const { locale } = useLocale();
-  const copy = getIssueComposerCopy(locale);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
@@ -463,38 +495,6 @@ export function NewIssueDialog() {
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
-  const statusLabels = issueComposerStatusOptions(locale);
-  const statuses = [
-    { value: "backlog", label: statusLabels[0].label, color: issueStatusText.backlog ?? issueStatusTextDefault },
-    { value: "todo", label: statusLabels[1].label, color: issueStatusText.todo ?? issueStatusTextDefault },
-    { value: "in_progress", label: statusLabels[2].label, color: issueStatusText.in_progress ?? issueStatusTextDefault },
-    { value: "in_review", label: statusLabels[3].label, color: issueStatusText.in_review ?? issueStatusTextDefault },
-    { value: "done", label: statusLabels[4].label, color: issueStatusText.done ?? issueStatusTextDefault },
-  ] as const;
-  const priorityLabels = issueComposerPriorityOptions(locale);
-  const priorities = [
-    {
-      value: "critical",
-      label: priorityLabels[0].label,
-      icon: AlertTriangle,
-      color: priorityColor.critical ?? priorityColorDefault,
-    },
-    { value: "high", label: priorityLabels[1].label, icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault },
-    {
-      value: "medium",
-      label: priorityLabels[2].label,
-      icon: Minus,
-      color: priorityColor.medium ?? priorityColorDefault,
-    },
-    { value: "low", label: priorityLabels[3].label, icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault },
-  ] as const;
-  const executionWorkspaceModes = issueComposerExecutionWorkspaceModes(locale);
-  const thinkingEffortOptions =
-    assigneeAdapterType === "codex_local"
-      ? issueComposerThinkingEffortOptions("codex_local", locale)
-      : assigneeAdapterType === "opencode_local"
-        ? issueComposerThinkingEffortOptions("opencode_local", locale)
-        : issueComposerThinkingEffortOptions("claude_local", locale);
   const mentionOptions = useMemo<MentionOption[]>(() => {
     return buildMarkdownMentionOptions({
       agents,
@@ -552,11 +552,11 @@ export function NewIssueDialog() {
         const prefix = (companies.find((company) => company.id === companyId)?.issuePrefix ?? "").trim();
         const issueRef = issue.identifier ?? issue.id;
         pushToast({
-          title: formatIssueComposerUploadWarningTitle(issueRef, locale),
-          body: formatIssueComposerUploadWarningBody(failures.length, locale),
+          title: `Created ${issueRef} with upload warnings`,
+          body: `${failures.length} staged ${failures.length === 1 ? "file" : "files"} could not be added.`,
           tone: "warn",
           action: prefix
-            ? { label: formatIssueComposerOpenIssueLabel(issueRef, locale), href: `/${prefix}/issues/${issueRef}` }
+            ? { label: `Open ${issueRef}`, href: `/${prefix}/issues/${issueRef}` }
             : undefined,
         });
       }
@@ -568,7 +568,7 @@ export function NewIssueDialog() {
 
   const uploadDescriptionImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!effectiveCompanyId) throw new Error(copy.noCompanySelected);
+      if (!effectiveCompanyId) throw new Error("No company selected");
       return assetsApi.uploadImage(effectiveCompanyId, file, "issues/drafts");
     },
   });
@@ -776,14 +776,14 @@ export function NewIssueDialog() {
 
     const validThinkingValues =
       assigneeAdapterType === "codex_local"
-        ? issueComposerThinkingEffortOptions("codex_local", locale)
+        ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
         : assigneeAdapterType === "opencode_local"
-          ? issueComposerThinkingEffortOptions("opencode_local", locale)
-          : issueComposerThinkingEffortOptions("claude_local", locale);
+          ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
+          : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
     if (!validThinkingValues.some((option) => option.value === assigneeThinkingEffort)) {
       setAssigneeThinkingEffort("");
     }
-  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort, locale]);
+  }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -997,7 +997,20 @@ export function NewIssueDialog() {
     && currentProjectSupportsExecutionWorkspace
     && Boolean(parentExecutionWorkspaceId)
     && !isUsingParentExecutionWorkspace;
-  const assigneeOptionsTitle = formatIssueComposerOptionsTitle(assigneeAdapterType, locale);
+  const assigneeOptionsTitle =
+    assigneeAdapterType === "claude_local"
+      ? "Claude options"
+      : assigneeAdapterType === "codex_local"
+        ? "Codex options"
+        : assigneeAdapterType === "opencode_local"
+          ? "OpenCode options"
+        : "Agent options";
+  const thinkingEffortOptions =
+    assigneeAdapterType === "codex_local"
+      ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
+      : assigneeAdapterType === "opencode_local"
+        ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
+      : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const recentAssigneeOptionIds = useMemo(
     () => recentAssigneeIds.map((id) => assigneeValueFromSelection({ assigneeAgentId: id })),
@@ -1032,7 +1045,7 @@ export function NewIssueDialog() {
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
   const canDiscardDraft = hasDraft || hasSavedDraft;
   const createIssueErrorMessage =
-    createIssue.error instanceof Error ? createIssue.error.message : copy.failedToCreateIssue;
+    createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
 
@@ -1173,7 +1186,7 @@ export function NewIssueDialog() {
               </PopoverContent>
             </Popover>
             <span className="text-muted-foreground/60">&rsaquo;</span>
-            <span>{isSubIssueMode ? copy.header.newSubIssue : copy.header.newIssue}</span>
+            <span>{isSubIssueMode ? "New sub-issue" : "New issue"}</span>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -1212,10 +1225,10 @@ export function NewIssueDialog() {
             />
           </div>
 
-        <div className="px-4 pb-2 shrink-0">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
-              <span className="min-w-[3rem] shrink-0 text-center">{copy.context.assigneeLabel}</span>
+          <div className="px-4 pb-2">
+            <div className="overflow-x-auto overscroll-x-contain">
+              <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
+              <span className="w-6 shrink-0 text-center">For</span>
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={assigneeValue}
@@ -1223,9 +1236,9 @@ export function NewIssueDialog() {
                 recentOptionIds={recentAssigneeOptionIds}
                 placeholder="Assignee"
                 disablePortal
-                noneLabel={copy.context.noAssignee}
-                searchPlaceholder={copy.context.searchAssignees}
-                emptyMessage={copy.context.noAssigneesFound}
+                noneLabel="No assignee"
+                searchPlaceholder="Search assignees..."
+                emptyMessage="No assignees found."
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1251,7 +1264,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     )
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.assigneePlaceholder}</span>
+                    <span className="text-muted-foreground">Assignee</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1267,7 +1280,7 @@ export function NewIssueDialog() {
                   );
                 }}
               />
-              <span>{copy.context.projectLabel}</span>
+              <span>in</span>
               <InlineEntitySelector
                 ref={projectSelectorRef}
                 value={projectId}
@@ -1275,9 +1288,9 @@ export function NewIssueDialog() {
                 recentOptionIds={recentProjectIds}
                 placeholder="Project"
                 disablePortal
-                noneLabel={copy.context.noProject}
-                searchPlaceholder={copy.context.searchProjects}
-                emptyMessage={copy.context.noProjectsFound}
+                noneLabel="No project"
+                searchPlaceholder="Search projects..."
+                emptyMessage="No projects found."
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1292,7 +1305,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.projectPlaceholder}</span>
+                    <span className="text-muted-foreground">Project</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1316,7 +1329,7 @@ export function NewIssueDialog() {
                   <button
                     type="button"
                     className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent/50 transition-colors"
-                      title={copy.context.addReviewerOrApprover}
+                    title="Add reviewer or approver"
                   >
                     <MoreHorizontal className="h-4 w-4" />
                   </button>
@@ -1334,7 +1347,7 @@ export function NewIssueDialog() {
                     }}
                   >
                     <Eye className="h-3 w-3" />
-                    {copy.context.reviewer}
+                    Reviewer
                   </button>
                   <button
                     className={cn(
@@ -1348,7 +1361,7 @@ export function NewIssueDialog() {
                     }}
                   >
                     <ShieldCheck className="h-3 w-3" />
-                    {copy.context.approver}
+                    Approver
                   </button>
                 </PopoverContent>
               </Popover>
@@ -1365,9 +1378,9 @@ export function NewIssueDialog() {
                 recentOptionIds={recentAssigneeOptionIds}
                 placeholder="Reviewer"
                 disablePortal
-                noneLabel={copy.context.noReviewer}
-                searchPlaceholder={copy.context.searchReviewers}
-                emptyMessage={copy.context.noReviewersFound}
+                noneLabel="No reviewer"
+                searchPlaceholder="Search reviewers..."
+                emptyMessage="No reviewers found."
                 onChange={setReviewerValue}
                 renderTriggerValue={(option) =>
                   option ? (
@@ -1381,7 +1394,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.reviewer}</span>
+                    <span className="text-muted-foreground">Reviewer</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1410,9 +1423,9 @@ export function NewIssueDialog() {
                 recentOptionIds={recentAssigneeOptionIds}
                 placeholder="Approver"
                 disablePortal
-                noneLabel={copy.context.noApprover}
-                searchPlaceholder={copy.context.searchApprovers}
-                emptyMessage={copy.context.noApproversFound}
+                noneLabel="No approver"
+                searchPlaceholder="Search approvers..."
+                emptyMessage="No approvers found."
                 onChange={setApproverValue}
                 renderTriggerValue={(option) =>
                   option ? (
@@ -1426,7 +1439,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.approver}</span>
+                    <span className="text-muted-foreground">Approver</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1451,7 +1464,7 @@ export function NewIssueDialog() {
             <div className="max-w-full rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <ListTree className="h-3.5 w-3.5 shrink-0" />
-                <span className="shrink-0">{copy.context.subIssueOf}</span>
+                <span className="shrink-0">Sub-issue of</span>
                 <span className="font-medium text-foreground">{parentIssueLabel}</span>
               </div>
               {newIssueDefaults.parentTitle ? (
@@ -1466,9 +1479,9 @@ export function NewIssueDialog() {
           {currentProject && currentProjectSupportsExecutionWorkspace && (
             <div className="px-4 py-3 space-y-2">
             <div className="space-y-1.5">
-              <div className="text-xs font-medium">{copy.executionWorkspace.title}</div>
+              <div className="text-xs font-medium">Execution workspace</div>
               <div className="text-[11px] text-muted-foreground">
-                {copy.executionWorkspace.description}
+                Control whether this issue runs in the shared workspace, a new isolated workspace, or an existing one.
               </div>
               <select
                 className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
@@ -1480,7 +1493,7 @@ export function NewIssueDialog() {
                   }
                 }}
               >
-                {executionWorkspaceModes.map((option) => (
+                {EXECUTION_WORKSPACE_MODES.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -1492,27 +1505,22 @@ export function NewIssueDialog() {
                   value={selectedExecutionWorkspaceId}
                   onChange={(e) => setSelectedExecutionWorkspaceId(e.target.value)}
                 >
-                  <option value="">{copy.executionWorkspace.chooseExistingWorkspace}</option>
+                  <option value="">Choose an existing workspace</option>
                   {deduplicatedReusableWorkspaces.map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>
-                      {workspace.name} · {formatStatusLabel(workspace.status, locale)} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}
+                      {workspace.name} · {workspace.status} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}
                     </option>
                   ))}
                 </select>
               )}
               {executionWorkspaceMode === "reuse_existing" && selectedReusableExecutionWorkspace && (
                 <div className="text-[11px] text-muted-foreground">
-                  {copy.executionWorkspace.reuseSummary(
-                    selectedReusableExecutionWorkspace.name,
-                    selectedReusableExecutionWorkspace.branchName
-                      ?? selectedReusableExecutionWorkspace.cwd
-                      ?? copy.executionWorkspace.existingWorkspaceFallback,
-                  )}
+                  Reusing {selectedReusableExecutionWorkspace.name} from {selectedReusableExecutionWorkspace.branchName ?? selectedReusableExecutionWorkspace.cwd ?? "existing execution workspace"}.
                 </div>
               )}
               {showParentWorkspaceWarning ? (
                 <div className="rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-100">
-                  {copy.executionWorkspace.parentWorkspaceWarning(parentExecutionWorkspaceLabel)}
+                  Warning: this sub-issue will no longer use the parent issue workspace{parentExecutionWorkspaceLabel ? ` (${parentExecutionWorkspaceLabel})` : ""}.
                 </div>
               ) : null}
             </div>
@@ -1531,20 +1539,20 @@ export function NewIssueDialog() {
             {assigneeOptionsOpen && (
               <div className="mt-2 rounded-md border border-border p-3 bg-muted/20 space-y-3">
                 <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">{copy.assigneeOptions.model}</div>
+                  <div className="text-xs text-muted-foreground">Model</div>
                   <InlineEntitySelector
                     value={assigneeModelOverride}
                     options={modelOverrideOptions}
-                    placeholder={copy.assigneeOptions.defaultModel}
+                    placeholder="Default model"
                     disablePortal
-                    noneLabel={copy.assigneeOptions.defaultModel}
-                    searchPlaceholder={copy.assigneeOptions.searchModels}
-                    emptyMessage={copy.assigneeOptions.noModelsFound}
+                    noneLabel="Default model"
+                    searchPlaceholder="Search models..."
+                    emptyMessage="No models found."
                     onChange={setAssigneeModelOverride}
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">{copy.assigneeOptions.thinkingEffort}</div>
+                  <div className="text-xs text-muted-foreground">Thinking effort</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {thinkingEffortOptions.map((option) => (
                       <button
@@ -1562,7 +1570,7 @@ export function NewIssueDialog() {
                 </div>
                 {assigneeAdapterType === "claude_local" && (
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
-                    <div className="text-xs text-muted-foreground">{copy.assigneeOptions.enableChrome}</div>
+                    <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
                     <ToggleSwitch
                       checked={assigneeChrome}
                       onCheckedChange={() => setAssigneeChrome((value) => !value)}
@@ -1601,7 +1609,7 @@ export function NewIssueDialog() {
               <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
               {stagedDocuments.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">{copy.attachments.documents}</div>
+                  <div className="text-xs font-medium text-muted-foreground">Documents</div>
                   <div className="space-y-2">
                     {stagedDocuments.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
@@ -1625,7 +1633,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title={copy.attachments.removeDocument}
+                          title="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1637,7 +1645,7 @@ export function NewIssueDialog() {
 
               {stagedAttachments.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">{copy.attachments.attachments}</div>
+                  <div className="text-xs font-medium text-muted-foreground">Attachments</div>
                   <div className="space-y-2">
                     {stagedAttachments.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
@@ -1656,7 +1664,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title={copy.attachments.removeAttachment}
+                          title="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1709,7 +1717,7 @@ export function NewIssueDialog() {
                 ) : (
                   <>
                     <Minus className="h-3 w-3 text-muted-foreground" />
-                    {copy.toolbar.priority}
+                    Priority
                   </>
                 )}
               </button>
@@ -1751,7 +1759,7 @@ export function NewIssueDialog() {
             disabled={createIssue.isPending}
           >
             <Paperclip className="h-3 w-3" />
-            {copy.toolbar.upload}
+            Upload
           </button>
 
           {/* More (dates) */}
@@ -1764,11 +1772,11 @@ export function NewIssueDialog() {
             <PopoverContent className="w-44 p-1" align="start">
               <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
-                {copy.toolbar.startDate}
+                Start date
               </button>
               <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
-                {copy.toolbar.dueDate}
+                Due date
               </button>
             </PopoverContent>
           </Popover>
@@ -1783,14 +1791,14 @@ export function NewIssueDialog() {
             onClick={discardDraft}
             disabled={createIssue.isPending || !canDiscardDraft}
           >
-            {copy.toolbar.discardDraft}
+            Discard Draft
           </Button>
           <div className="flex items-center gap-3">
             <div className="min-h-5 text-right">
               {createIssue.isPending ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  {copy.footer.creatingIssue}
+                  Creating issue...
                 </span>
               ) : createIssue.isError ? (
                 <span className="text-xs text-destructive">{createIssueErrorMessage}</span>
@@ -1805,7 +1813,7 @@ export function NewIssueDialog() {
             >
               <span className="inline-flex items-center justify-center gap-1.5">
                 {createIssue.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                <span>{createIssue.isPending ? copy.footer.creating : isSubIssueMode ? copy.footer.createSubIssue : copy.footer.createIssue}</span>
+                <span>{createIssue.isPending ? "Creating..." : isSubIssueMode ? "Create Sub-Issue" : "Create Issue"}</span>
               </span>
             </Button>
           </div>

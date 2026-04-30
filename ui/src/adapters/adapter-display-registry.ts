@@ -18,8 +18,6 @@ import {
 import { OpenCodeLogoIcon } from "@/components/OpenCodeLogoIcon";
 import { HermesIcon } from "@/components/HermesIcon";
 
-type AdapterDisplayLocale = string | null | undefined;
-
 // ---------------------------------------------------------------------------
 // Type suffix parsing
 // ---------------------------------------------------------------------------
@@ -51,35 +49,6 @@ export interface AdapterDisplayInfo {
   recommended?: boolean;
   comingSoon?: boolean;
   disabledLabel?: string;
-}
-
-function isZhLocale(locale: AdapterDisplayLocale) {
-  return locale === "zh-CN";
-}
-
-function getLocalizedAdapterDescription(type: string, fallback: string, locale: AdapterDisplayLocale) {
-  if (!isZhLocale(locale)) return fallback;
-
-  return {
-    claude_local: "本地 Claude Agent",
-    codex_local: "本地 Codex Agent",
-    gemini_local: "本地 Gemini Agent",
-    opencode_local: "本地多模型 Agent",
-    hermes_local: "本地 Hermes CLI Agent",
-    pi_local: "本地 Pi Agent",
-    cursor: "本地 Cursor Agent",
-    openclaw_gateway: "通过网关协议调用 OpenClaw",
-    process: "内部进程适配器",
-    http: "内部 HTTP 适配器",
-  }[type] ?? fallback;
-}
-
-function getLocalizedDisabledLabel(type: string, fallback: string | undefined, locale: AdapterDisplayLocale) {
-  if (!fallback || !isZhLocale(locale)) return fallback;
-
-  return {
-    openclaw_gateway: "请在 App 内配置 OpenClaw",
-  }[type] ?? fallback;
 }
 
 const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
@@ -170,23 +139,15 @@ export function getAdapterLabels(): Record<string, string> {
   return suffixed;
 }
 
-export function getAdapterDisplay(type: string, locale?: AdapterDisplayLocale): AdapterDisplayInfo {
+export function getAdapterDisplay(type: string): AdapterDisplayInfo {
   const known = adapterDisplayMap[type];
-  if (known) {
-    return {
-      ...known,
-      description: getLocalizedAdapterDescription(type, known.description, locale),
-      disabledLabel: getLocalizedDisabledLabel(type, known.disabledLabel, locale),
-    };
-  }
+  if (known) return known;
 
   const suffix = getTypeSuffix(type);
   const label = withSuffix(humanizeType(type), suffix);
   return {
     label,
-    description: isZhLocale(locale)
-      ? (suffix ? `外部 ${suffix} 适配器` : "外部适配器")
-      : (suffix ? `External ${suffix} adapter` : "External adapter"),
+    description: suffix ? `External ${suffix} adapter` : "External adapter",
     icon: Cpu,
   };
 }

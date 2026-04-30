@@ -28,7 +28,6 @@ import { queryKeys } from "../lib/queryKeys";
 import { buildRoutineTriggerPatch } from "../lib/routine-trigger-patch";
 import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { timeAgo } from "../lib/timeAgo";
-import { currentTimeZone, formatDateTime } from "../lib/utils";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -118,7 +117,11 @@ function formatActivityDetailValue(value: unknown): string {
 }
 
 function getLocalTimezone(): string {
-  return currentTimeZone();
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return "UTC";
+  }
 }
 
 function buildRoutineMutationPayload(input: {
@@ -175,7 +178,7 @@ function TriggerEditor({
         </div>
         <span className="text-xs text-muted-foreground">
           {trigger.kind === "schedule" && trigger.nextRunAt
-            ? `Next: ${formatDateTime(trigger.nextRunAt)}`
+            ? `Next: ${new Date(trigger.nextRunAt).toLocaleString()}`
             : trigger.kind === "webhook"
               ? "Webhook"
               : "API"}

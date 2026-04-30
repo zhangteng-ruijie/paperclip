@@ -8,7 +8,6 @@ import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
-import { getShellCopy } from "../lib/shell-copy";
 import {
   CommandDialog,
   CommandEmpty,
@@ -40,7 +39,6 @@ export function CommandPalette() {
   const { selectedCompanyId } = useCompany();
   const { openNewIssue, openNewAgent } = useDialogActions();
   const { isMobile, setSidebarOpen } = useSidebar();
-  const copy = getShellCopy(locale);
   const searchQuery = query.trim();
 
   useEffect(() => {
@@ -106,20 +104,16 @@ export function CommandPalette() {
     <CommandDialog open={open} onOpenChange={(v) => {
         setOpen(v);
         if (v && isMobile) setSidebarOpen(false);
-      }}
-      title={copy.commandPaletteTitle}
-      description={copy.commandPaletteDescription}
-      closeLabel={copy.commandPaletteCloseLabel}
-    >
+      }}>
       <CommandInput
-        placeholder={copy.commandPaletteSearchPlaceholder}
+        placeholder="Search issues, agents, projects..."
         value={query}
         onValueChange={setQuery}
       />
       <CommandList>
-        <CommandEmpty>{copy.commandPaletteNoResults}</CommandEmpty>
+        <CommandEmpty>No results found.</CommandEmpty>
 
-        <CommandGroup heading={copy.commandPaletteActions}>
+        <CommandGroup heading="Actions">
           <CommandItem
             onSelect={() => {
               setOpen(false);
@@ -127,7 +121,7 @@ export function CommandPalette() {
             }}
           >
             <SquarePen className="mr-2 h-4 w-4" />
-            {copy.createNewIssue}
+            Create new issue
             <span className="ml-auto text-xs text-muted-foreground">C</span>
           </CommandItem>
           <CommandItem
@@ -137,55 +131,55 @@ export function CommandPalette() {
             }}
           >
             <Plus className="mr-2 h-4 w-4" />
-            {copy.createNewAgent}
+            Create new agent
           </CommandItem>
           <CommandItem onSelect={() => go("/projects")}>
             <Plus className="mr-2 h-4 w-4" />
-            {copy.createNewProject}
+            Create new project
           </CommandItem>
         </CommandGroup>
 
         <CommandSeparator />
 
-        <CommandGroup heading={copy.commandPalettePages}>
+        <CommandGroup heading="Pages">
           <CommandItem onSelect={() => go("/dashboard")}>
             <LayoutDashboard className="mr-2 h-4 w-4" />
-            {copy.dashboard}
+            Dashboard
           </CommandItem>
           <CommandItem onSelect={() => go("/inbox")}>
             <Inbox className="mr-2 h-4 w-4" />
-            {copy.inbox}
+            Inbox
           </CommandItem>
           <CommandItem onSelect={() => go("/issues")}>
             <CircleDot className="mr-2 h-4 w-4" />
-            {copy.issues}
+            Issues
           </CommandItem>
           <CommandItem onSelect={() => go("/projects")}>
             <Hexagon className="mr-2 h-4 w-4" />
-            {copy.projects}
+            Projects
           </CommandItem>
           <CommandItem onSelect={() => go("/goals")}>
             <Target className="mr-2 h-4 w-4" />
-            {copy.goals}
+            Goals
           </CommandItem>
           <CommandItem onSelect={() => go("/agents")}>
             <Bot className="mr-2 h-4 w-4" />
-            {copy.agents}
+            Agents
           </CommandItem>
           <CommandItem onSelect={() => go("/costs")}>
             <DollarSign className="mr-2 h-4 w-4" />
-            {copy.costs}
+            Costs
           </CommandItem>
           <CommandItem onSelect={() => go("/activity")}>
             <History className="mr-2 h-4 w-4" />
-            {copy.activity}
+            Activity
           </CommandItem>
         </CommandGroup>
 
         {visibleIssues.length > 0 && (
           <>
             <CommandSeparator />
-            <CommandGroup heading={copy.issues}>
+            <CommandGroup heading="Issues">
               {visibleIssues.slice(0, 10).map((issue) => (
                 <CommandItem
                   key={issue.id}
@@ -214,7 +208,7 @@ export function CommandPalette() {
         {agents.length > 0 && (
           <>
             <CommandSeparator />
-            <CommandGroup heading={copy.agents}>
+            <CommandGroup heading="Agents">
               {agents.slice(0, 10).map((agent) => (
                 <CommandItem key={agent.id} onSelect={() => go(agentUrl(agent))}>
                   <Bot className="mr-2 h-4 w-4" />
@@ -229,7 +223,7 @@ export function CommandPalette() {
         {projects.length > 0 && (
           <>
             <CommandSeparator />
-            <CommandGroup heading={copy.projects}>
+            <CommandGroup heading="Projects">
               {projects.slice(0, 10).map((project) => (
                 <CommandItem key={project.id} onSelect={() => go(projectUrl(project))}>
                   <Hexagon className="mr-2 h-4 w-4" />

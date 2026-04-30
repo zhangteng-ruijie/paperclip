@@ -7,9 +7,7 @@ import { agentsApi } from "../api/agents";
 import { buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { queryKeys } from "../lib/queryKeys";
-import { activityTypeLabel, getActivityPageCopy } from "../lib/activity-format";
 import { EmptyState } from "../components/EmptyState";
 import { ActivityRow } from "../components/ActivityRow";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -48,13 +46,11 @@ function activityEntityTitle(event: ActivityEvent) {
 export function Activity() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
   const [filter, setFilter] = useState("all");
-  const copy = getActivityPageCopy(locale);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: copy.activity }]);
-  }, [setBreadcrumbs, copy]);
+    setBreadcrumbs([{ label: "Activity" }]);
+  }, [setBreadcrumbs]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: [...queryKeys.activity(selectedCompanyId!), { limit: ACTIVITY_PAGE_LIMIT }],
@@ -105,7 +101,7 @@ export function Activity() {
   }, [data]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={History} message={copy.selectCompany} />;
+    return <EmptyState icon={History} message="Select a company to view activity." />;
   }
 
   if (isLoading) {
@@ -126,13 +122,13 @@ export function Activity() {
       <div className="flex items-center justify-end">
         <Select value={filter} onValueChange={setFilter}>
           <SelectTrigger className="w-[140px] h-8 text-xs">
-            <SelectValue placeholder={copy.filterByType} />
+            <SelectValue placeholder="Filter by type" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{copy.allTypes}</SelectItem>
+            <SelectItem value="all">All types</SelectItem>
             {entityTypes.map((type) => (
               <SelectItem key={type} value={type}>
-                {activityTypeLabel(type, locale)}
+                {type.charAt(0).toUpperCase() + type.slice(1)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -142,7 +138,7 @@ export function Activity() {
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
       {filtered && filtered.length === 0 && (
-        <EmptyState icon={History} message={copy.noActivityYet} />
+        <EmptyState icon={History} message="No activity yet." />
       )}
 
       {filtered && filtered.length > 0 && (

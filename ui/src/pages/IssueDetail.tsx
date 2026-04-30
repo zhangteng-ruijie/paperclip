@@ -18,7 +18,6 @@ import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildCompanyUserInlineOptions, buildCompanyUserLabelMap, buildCompanyUserProfileMap, buildMarkdownMentionOptions } from "../lib/company-members";
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
@@ -60,15 +59,7 @@ import {
 } from "../lib/optimistic-issue-comments";
 import { clearIssueExecutionRun, removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import {
-  formatIssueDetailTokenSummary,
-  getIssueDetailCopy,
-  issueFeedbackToastTitle,
-} from "../lib/issue-detail-copy";
-import { getIssuesCopy } from "../lib/issues-copy";
-import { getShellCopy } from "../lib/shell-copy";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { localizedActorLabel } from "../lib/actor-labels";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
@@ -1537,8 +1528,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.list(context.selectedCompanyId), context.previousList);
       }
       pushToast({
-        title: issueDetailCopy.issueUpdateFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToSaveIssueChanges,
+        title: "Issue update failed",
+        body: err instanceof Error ? err.message : "Unable to save issue changes",
         tone: "error",
       });
     },
@@ -1667,18 +1658,14 @@ export function IssueDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
       }
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalApproved
-          : issueDetailCopy.approvalRejected,
+        title: variables.action === "approve" ? "Approval approved" : "Approval rejected",
         tone: "success",
       });
     },
     onError: (err, variables) => {
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalFailed
-          : issueDetailCopy.rejectionFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToUpdateApproval,
+        title: variables.action === "approve" ? "Approval failed" : "Rejection failed",
+        body: err instanceof Error ? err.message : "Unable to update approval",
         tone: "error",
       });
     },
@@ -1773,8 +1760,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -1979,8 +1966,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -2051,8 +2038,8 @@ export function IssueDetail() {
       invalidateIssueDetail();
       invalidateIssueRunState();
       pushToast({
-        title: issueDetailCopy.interruptRequested,
-        body: issueDetailCopy.interruptRequestedBody,
+        title: "Interrupt requested",
+        body: "The active run is stopping so queued comments can continue next.",
         tone: "success",
       });
     },
@@ -2065,8 +2052,8 @@ export function IssueDetail() {
         setLocallyQueuedCommentRunIds(context.previousLocalQueuedCommentRunIds);
       }
       pushToast({
-        title: issueDetailCopy.interruptFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToInterruptRun,
+        title: "Interrupt failed",
+        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
         tone: "error",
       });
     },
@@ -2166,11 +2153,14 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
       pushToast({
-        title: issueFeedbackToastTitle({
-          locale,
-          sharingPreferenceAtSubmit: variables.sharingPreferenceAtSubmit,
-          allowSharing: variables.allowSharing,
-        }),
+        title:
+          variables.sharingPreferenceAtSubmit === "prompt"
+            ? variables.allowSharing
+              ? "Feedback saved. Future votes will share"
+              : "Feedback saved. Future votes will stay local"
+            : variables.allowSharing
+              ? "Feedback saved and sharing enabled"
+              : "Feedback saved",
         tone: "success",
       });
     },
@@ -2179,8 +2169,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.feedbackVotes(issueId!), context.previousVotes);
       }
       pushToast({
-        title: issueDetailCopy.failedToSaveFeedback,
-        body: err instanceof Error ? err.message : issueDetailCopy.unknownError,
+        title: "Failed to save feedback",
+        body: err instanceof Error ? err.message : "Unknown error",
         tone: "error",
       });
     },
@@ -2188,7 +2178,7 @@ export function IssueDetail() {
 
   const uploadAttachment = useMutation({
     mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error(issueDetailCopy.noCompanySelected);
+      if (!selectedCompanyId) throw new Error("No company selected");
       return issuesApi.uploadAttachment(selectedCompanyId, issueId!, file);
     },
     onSuccess: () => {
@@ -2197,7 +2187,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.uploadFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Upload failed");
     },
   });
 
@@ -2222,7 +2212,7 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.documentImportFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
     },
   });
 
@@ -2234,7 +2224,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.deleteFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Delete failed");
     },
   });
 
@@ -2243,12 +2233,12 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssueCollections();
       navigate(sourceBreadcrumb.href.startsWith("/inbox") ? sourceBreadcrumb.href : "/inbox", { replace: true });
-      pushToast({ title: issueDetailCopy.issueArchivedFromInbox, tone: "success" });
+      pushToast({ title: "Issue archived from inbox", tone: "success" });
     },
     onError: (err) => {
       pushToast({
-        title: issueDetailCopy.archiveFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToArchiveIssue,
+        title: "Archive failed",
+        body: err instanceof Error ? err.message : "Unable to archive this issue from the inbox",
         tone: "error",
       });
     },
@@ -2503,7 +2493,7 @@ export function IssueDetail() {
     const md = `# ${issue.identifier}: ${title}\n\n${body}`.trimEnd();
     await navigator.clipboard.writeText(md);
     setCopied(true);
-    pushToast({ title: issueDetailCopy.copiedToClipboard, tone: "success" });
+    pushToast({ title: "Copied to clipboard", tone: "success" });
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -2783,10 +2773,10 @@ export function IssueDetail() {
         )}
       >
         <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-        {uploadAttachment.isPending || importMarkdownDocument.isPending ? shell.uploading : (
+        {uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading..." : (
           <>
-            <span className="hidden sm:inline">{shell.uploadAttachment}</span>
-            <span className="sm:hidden">{shell.upload}</span>
+            <span className="hidden sm:inline">Upload attachment</span>
+            <span className="sm:hidden">Upload</span>
           </>
         )}
       </Button>
@@ -2825,7 +2815,7 @@ export function IssueDetail() {
       {issue.hiddenAt && (
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <EyeOff className="h-4 w-4 shrink-0" />
-          {shell.hiddenIssue}
+          This issue is hidden
         </div>
       )}
       {activePauseHold && (
@@ -2915,7 +2905,7 @@ export function IssueDetail() {
                 <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
               </span>
-              {shell.live}
+              Live
             </span>
           )}
 
@@ -2925,7 +2915,7 @@ export function IssueDetail() {
               className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0 hover:bg-violet-500/20 transition-colors"
             >
               <Repeat className="h-3 w-3" />
-              {shell.routine}
+              Routine
             </Link>
           )}
 
@@ -2954,7 +2944,7 @@ export function IssueDetail() {
           ) : (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50 px-1 -mx-1 py-0.5">
               <Hexagon className="h-3 w-3 shrink-0" />
-              {shell.noProject}
+              No project
             </span>
           )}
 
@@ -3019,7 +3009,7 @@ export function IssueDetail() {
               variant="ghost"
               size="icon-xs"
               onClick={copyIssueToClipboard}
-              title={shell.copyIssueMarkdown}
+              title="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -3031,7 +3021,7 @@ export function IssueDetail() {
                 panelVisible ? "opacity-0 pointer-events-none w-0 overflow-hidden" : "opacity-100",
               )}
               onClick={() => setPanelVisible(true)}
-              title={shell.showProperties}
+              title="Show properties"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
@@ -3123,7 +3113,7 @@ export function IssueDetail() {
                 }}
               >
                 <EyeOff className="h-3 w-3" />
-                {shell.hideIssue}
+                Hide this Issue
               </button>
             </PopoverContent>
             </Popover>
@@ -3142,7 +3132,7 @@ export function IssueDetail() {
           onSave={(description) => updateIssue.mutateAsync({ description })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
-          placeholder={shell.addDescription}
+          placeholder="Add a description..."
           multiline
           foldable
           mentions={mentionOptions}
@@ -3277,7 +3267,7 @@ export function IssueDetail() {
         onDrop={(evt) => void handleAttachmentDrop(evt)}
       >
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">{shell.attachments}</h3>
+          <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
           {attachmentUploadButton}
         </div>
 
@@ -3309,7 +3299,7 @@ export function IssueDetail() {
                     className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/60"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <p className="text-xs text-white font-medium">{shell.deletePrompt}</p>
+                    <p className="text-xs text-white font-medium">Delete?</p>
                     <div className="flex gap-1.5">
                       <button
                         type="button"
@@ -3321,7 +3311,7 @@ export function IssueDetail() {
                         }}
                         disabled={deleteAttachment.isPending}
                       >
-                        {shell.yes}
+                        Yes
                       </button>
                       <button
                         type="button"
@@ -3331,7 +3321,7 @@ export function IssueDetail() {
                           setConfirmDeleteId(null);
                         }}
                       >
-                        {shell.no}
+                        No
                       </button>
                     </div>
                   </div>
@@ -3343,7 +3333,7 @@ export function IssueDetail() {
                       e.stopPropagation();
                       setConfirmDeleteId(attachment.id);
                     }}
-                    title={shell.deleteAttachment}
+                    title="Delete attachment"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -3372,7 +3362,7 @@ export function IssueDetail() {
                     className="text-muted-foreground hover:text-destructive"
                     onClick={() => deleteAttachment.mutate(attachment.id)}
                     disabled={deleteAttachment.isPending}
-                    title={shell.deleteAttachment}
+                    title="Delete attachment"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -3406,11 +3396,11 @@ export function IssueDetail() {
         <TabsList variant="line" className="w-full justify-start gap-1">
           <TabsTrigger value="chat" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            {shell.chat}
+            Chat
           </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
-            {shell.activity}
+            Activity
           </TabsTrigger>
           <TabsTrigger value="related-work" className="gap-1.5">
             <ListTree className="h-3.5 w-3.5" />
@@ -3666,7 +3656,7 @@ export function IssueDetail() {
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
         <SheetContent side="bottom" className="max-h-[85dvh] pb-[env(safe-area-inset-bottom)]">
           <SheetHeader>
-            <SheetTitle className="text-sm">{shell.properties}</SheetTitle>
+            <SheetTitle className="text-sm">Properties</SheetTitle>
           </SheetHeader>
           <ScrollArea className="flex-1 overflow-y-auto">
             <div className="px-4 pb-4">

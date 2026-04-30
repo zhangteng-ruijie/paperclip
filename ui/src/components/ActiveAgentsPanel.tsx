@@ -6,9 +6,7 @@ import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../adapters";
 import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
-import { formatAgentRunStateLabel, getDashboardCopy } from "../lib/dashboard-copy";
 import { cn, relativeTime } from "../lib/utils";
-import { useLocale } from "../context/LocaleContext";
 import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
 import { RunChatSurface } from "./RunChatSurface";
@@ -134,7 +132,6 @@ const AgentRunCard = memo(function AgentRunCard({
   isActive: boolean;
   className?: string;
 }) {
-  const { locale } = useLocale();
   return (
     <div className={cn(
       "flex h-[320px] flex-col overflow-hidden rounded-xl border shadow-sm",
@@ -158,16 +155,7 @@ const AgentRunCard = memo(function AgentRunCard({
               <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
             </div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>
-                {formatAgentRunStateLabel(
-                  {
-                    isActive,
-                    finishedAgo: run.finishedAt ? relativeTime(run.finishedAt) : null,
-                    startedAgo: relativeTime(run.createdAt),
-                  },
-                  locale,
-                )}
-              </span>
+              <span>{isActive ? "Live now" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
             </div>
           </div>
 

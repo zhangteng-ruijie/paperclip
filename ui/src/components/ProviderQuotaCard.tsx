@@ -8,7 +8,6 @@ import { CodexSubscriptionPanel } from "./CodexSubscriptionPanel";
 import {
   billingTypeDisplayName,
   formatCents,
-  formatDateWithOptions,
   formatTokens,
   providerDisplayName,
   quotaSourceDisplayName,
@@ -368,7 +367,7 @@ export function ProviderQuotaCard({
                             </p>
                           ) : qw.resetsAt ? (
                             <p className="text-xs text-muted-foreground">
-                              resets {formatDateWithOptions(qw.resetsAt, { month: "short", day: "numeric" })}
+                              resets {new Date(qw.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                             </p>
                           ) : null}
                         </div>

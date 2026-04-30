@@ -5,17 +5,10 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
-import {
-  formatArchiveCompanyConfirmation,
-  formatFeedbackSharingStatus,
-  formatOpenClawInvitePrompt,
-  getCompanySettingsCopy,
-} from "../lib/company-settings-copy";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Settings, Check, Download, Upload } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
-import { formatDateTime } from "../lib/utils";
 import {
   Field,
   ToggleField,
@@ -103,8 +96,7 @@ export function CompanySettings() {
       let snippet: string;
       try {
         const manifest = await accessApi.getInviteOnboarding(invite.token);
-        snippet = formatOpenClawInvitePrompt({
-          locale,
+        snippet = buildAgentSnippet({
           onboardingTextUrl: absoluteUrl,
           connectionCandidates:
             manifest.onboarding.connectivity?.connectionCandidates ?? null,
@@ -113,8 +105,7 @@ export function CompanySettings() {
             null
         });
       } catch {
-        snippet = formatOpenClawInvitePrompt({
-          locale,
+        snippet = buildAgentSnippet({
           onboardingTextUrl: absoluteUrl,
           connectionCandidates: null,
           testResolutionUrl: null
@@ -135,7 +126,7 @@ export function CompanySettings() {
     },
     onError: (err) => {
       setInviteError(
-        err instanceof Error ? err.message : copy.failedToCreateInvite
+        err instanceof Error ? err.message : "Failed to create invite"
       );
     }
   });
@@ -206,15 +197,15 @@ export function CompanySettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
-      { label: copy.settings }
+      { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
+      { label: "Settings" }
     ]);
-  }, [copy.company, copy.settings, selectedCompany?.name, setBreadcrumbs]);
+  }, [setBreadcrumbs, selectedCompany?.name]);
 
   if (!selectedCompany) {
     return (
       <div className="text-sm text-muted-foreground">
-        {copy.noCompanySelected}
+        No company selected. Select a company from the switcher above.
       </div>
     );
   }
@@ -231,16 +222,16 @@ export function CompanySettings() {
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center gap-2">
         <Settings className="h-5 w-5 text-muted-foreground" />
-        <h1 className="text-lg font-semibold">{copy.title}</h1>
+        <h1 className="text-lg font-semibold">Company Settings</h1>
       </div>
 
       {/* General */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.general}
+          General
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <Field label={copy.companyName} hint={copy.companyNameHint}>
+          <Field label="Company name" hint="The display name for your company.">
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
@@ -249,14 +240,14 @@ export function CompanySettings() {
             />
           </Field>
           <Field
-            label={copy.description}
-            hint={copy.descriptionHint}
+            label="Description"
+            hint="Optional description shown in the company profile."
           >
             <input
               className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
               type="text"
               value={description}
-              placeholder={copy.descriptionPlaceholder}
+              placeholder="Optional company description"
               onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
@@ -266,7 +257,7 @@ export function CompanySettings() {
       {/* Appearance */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.appearance}
+          Appearance
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
           <div className="flex items-start gap-4">
@@ -280,8 +271,8 @@ export function CompanySettings() {
             </div>
             <div className="flex-1 space-y-3">
               <Field
-                label={copy.logo}
-                hint={copy.logoHint}
+                label="Logo"
+                hint="Upload a PNG, JPEG, WEBP, GIF, or SVG logo image."
               >
                 <div className="space-y-2">
                   <input
@@ -298,16 +289,16 @@ export function CompanySettings() {
                         onClick={handleClearLogo}
                         disabled={clearLogoMutation.isPending}
                       >
-                        {clearLogoMutation.isPending ? copy.removingLogo : copy.removeLogo}
+                        {clearLogoMutation.isPending ? "Removing..." : "Remove logo"}
                       </Button>
                     </div>
                   )}
                   {(logoUploadMutation.isError || logoUploadError) && (
                     <span className="text-xs text-destructive">
-                        {logoUploadError ??
-                          (logoUploadMutation.error instanceof Error
-                            ? logoUploadMutation.error.message
-                            : copy.logoUploadFailed)}
+                      {logoUploadError ??
+                        (logoUploadMutation.error instanceof Error
+                          ? logoUploadMutation.error.message
+                          : "Logo upload failed")}
                     </span>
                   )}
                   {clearLogoMutation.isError && (
@@ -316,13 +307,13 @@ export function CompanySettings() {
                     </span>
                   )}
                   {logoUploadMutation.isPending && (
-                    <span className="text-xs text-muted-foreground">{copy.uploadingLogo}</span>
+                    <span className="text-xs text-muted-foreground">Uploading logo...</span>
                   )}
                 </div>
               </Field>
               <Field
-                label={copy.brandColor}
-                hint={copy.brandColorHint}
+                label="Brand color"
+                hint="Sets the hue for the company icon. Leave empty for auto-generated color."
               >
                 <div className="flex items-center gap-2">
                   <input
@@ -340,7 +331,7 @@ export function CompanySettings() {
                         setBrandColor(v);
                       }
                     }}
-                    placeholder={copy.auto}
+                    placeholder="Auto"
                     className="w-28 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
                   />
                   {brandColor && (
@@ -350,7 +341,7 @@ export function CompanySettings() {
                       onClick={() => setBrandColor("")}
                       className="text-xs text-muted-foreground"
                     >
-                      {copy.clear}
+                      Clear
                     </Button>
                   )}
                 </div>
@@ -368,16 +359,16 @@ export function CompanySettings() {
             onClick={handleSaveGeneral}
             disabled={generalMutation.isPending || !companyName.trim()}
           >
-            {generalMutation.isPending ? copy.saving : copy.saveChanges}
+            {generalMutation.isPending ? "Saving..." : "Save changes"}
           </Button>
           {generalMutation.isSuccess && (
-            <span className="text-xs text-muted-foreground">{copy.saved}</span>
+            <span className="text-xs text-muted-foreground">Saved</span>
           )}
           {generalMutation.isError && (
             <span className="text-xs text-destructive">
               {generalMutation.error instanceof Error
                   ? generalMutation.error.message
-                  : copy.failedToSave}
+                  : "Failed to save"}
             </span>
           )}
         </div>
@@ -386,12 +377,12 @@ export function CompanySettings() {
       {/* Hiring */}
       <div className="space-y-4" data-testid="company-settings-team-section">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.hiring}
+          Hiring
         </div>
         <div className="rounded-md border border-border px-4 py-3">
           <ToggleField
-            label={copy.requireBoardApproval}
-            hint={copy.requireBoardApprovalHint}
+            label="Require board approval for new hires"
+            hint="New agent hires stay pending until approved by board."
             checked={!!selectedCompany.requireBoardApprovalForNewAgents}
             onChange={(v) => settingsMutation.mutate(v)}
             toggleTestId="company-settings-team-approval-toggle"
@@ -402,14 +393,14 @@ export function CompanySettings() {
       {/* Invites */}
       <div className="space-y-4" data-testid="company-settings-invites-section">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.invites}
+          Invites
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">
-              {copy.inviteDescription}
+              Generate an OpenClaw agent invite snippet.
             </span>
-            <HintIcon text={copy.inviteHint} />
+            <HintIcon text="Creates a short-lived OpenClaw agent invite and renders a copy-ready prompt." />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -419,8 +410,8 @@ export function CompanySettings() {
               disabled={inviteMutation.isPending}
             >
               {inviteMutation.isPending
-                ? copy.generatingInvite
-                : copy.generateInvitePrompt}
+                ? "Generating..."
+                : "Generate OpenClaw Invite Prompt"}
             </Button>
           </div>
           {inviteError && (
@@ -433,7 +424,7 @@ export function CompanySettings() {
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs text-muted-foreground">
-                  {copy.invitePromptTitle}
+                  OpenClaw Invite Prompt
                 </div>
                 {snippetCopied && (
                   <span
@@ -441,7 +432,7 @@ export function CompanySettings() {
                     className="flex items-center gap-1 text-xs text-green-600 animate-pulse"
                   >
                     <Check className="h-3 w-3" />
-                    {copy.copied}
+                    Copied
                   </span>
                 )}
               </div>
@@ -468,7 +459,7 @@ export function CompanySettings() {
                       }
                     }}
                   >
-                    {snippetCopied ? copy.copiedSnippet : copy.copySnippet}
+                    {snippetCopied ? "Copied snippet" : "Copy snippet"}
                   </Button>
                 </div>
               </div>
@@ -480,13 +471,12 @@ export function CompanySettings() {
       {/* Import / Export */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {copy.companyPackages}
+          Company Packages
         </div>
         <div className="rounded-md border border-border px-4 py-4">
           <p className="text-sm text-muted-foreground">
-            {copy.companyPackagesDescription}{" "}
-            <a href="/org" className="underline hover:text-foreground">{copy.orgChart}</a>{" "}
-            {copy.companyPackagesDescriptionSuffix}
+            Import and export have moved to dedicated pages accessible from the{" "}
+            <a href="/org" className="underline hover:text-foreground">Org Chart</a> header.
           </p>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="outline" asChild>
@@ -508,11 +498,12 @@ export function CompanySettings() {
       {/* Danger Zone */}
       <div className="space-y-4">
         <div className="text-xs font-medium text-destructive uppercase tracking-wide">
-          {copy.dangerZone}
+          Danger Zone
         </div>
         <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-4">
           <p className="text-sm text-muted-foreground">
-            {copy.archiveDescription}
+            Archive this company to hide it from the sidebar. This persists in
+            the database.
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -524,7 +515,9 @@ export function CompanySettings() {
               }
               onClick={() => {
                 if (!selectedCompanyId) return;
-                const confirmed = window.confirm(formatArchiveCompanyConfirmation(selectedCompany.name, locale));
+                const confirmed = window.confirm(
+                  `Archive company "${selectedCompany.name}"? It will be hidden from the sidebar.`
+                );
                 if (!confirmed) return;
                 const nextCompanyId =
                   companies.find(
@@ -539,16 +532,16 @@ export function CompanySettings() {
               }}
             >
               {archiveMutation.isPending
-                ? copy.archiving
+                ? "Archiving..."
                 : selectedCompany.status === "archived"
-                ? copy.alreadyArchived
-                : copy.archiveCompany}
+                ? "Already archived"
+                : "Archive company"}
             </Button>
             {archiveMutation.isError && (
               <span className="text-xs text-destructive">
                 {archiveMutation.error instanceof Error
                   ? archiveMutation.error.message
-                  : copy.failedToArchiveCompany}
+                  : "Failed to archive company"}
               </span>
             )}
           </div>
@@ -556,4 +549,118 @@ export function CompanySettings() {
       </div>
     </div>
   );
+}
+
+function buildAgentSnippet(input: AgentSnippetInput) {
+  const candidateUrls = buildCandidateOnboardingUrls(input);
+  const resolutionTestUrl = buildResolutionTestUrl(input);
+
+  const candidateList =
+    candidateUrls.length > 0
+      ? candidateUrls.map((u) => `- ${u}`).join("\n")
+      : "- (No candidate URLs available yet.)";
+
+  const connectivityBlock =
+    candidateUrls.length === 0
+      ? `No candidate URLs are available. Ask your user to configure a reachable hostname in Paperclip, then retry.
+Suggested steps:
+- choose a hostname that resolves to the Paperclip host from your runtime
+- run: pnpm paperclipai allowed-hostname <host>
+- restart Paperclip
+- verify with: curl -fsS http://<host>:3100/api/health
+- regenerate this invite snippet`
+      : `If none are reachable, ask your user to add a reachable hostname in Paperclip, restart, and retry.
+Suggested command:
+- pnpm paperclipai allowed-hostname <host>
+Then verify with: curl -fsS <base-url>/api/health`;
+
+  const resolutionLine = resolutionTestUrl
+    ? `\nYou MUST test Paperclip-to-gateway reachability, call: ${resolutionTestUrl}?url=<urlencoded-gateway-url> (using the hostname that worked above). Do not assume your 172.x is necessarily reachable from Paperclip. Test it. `
+    : "";
+
+  return `You're invited to join a Paperclip organization.
+
+The URLs you should try are:
+${candidateList}
+
+Connectivity guidance:
+If you are running on a different machine than Paperclip, Paperclip must be reachable at one of the hostnames used above.
+Verify the hostname works from your runtime with: GET <base-url>/api/health
+
+${connectivityBlock}
+
+For your "agentName", just use your own agent name (OpenClaw or whatever your name is) and send it directly.
+You also need to send a gateway URL that Paperclip can access. Check your config and include that URL.${resolutionLine}
+
+---
+
+This onboarding flow is for OpenClaw Gateway.
+When you submit the join request, use:
+- \`adapterType: "openclaw_gateway"\`
+- \`agentDefaultsPayload.url\` as your \`ws://\` or \`wss://\` gateway URL
+- \`agentDefaultsPayload.headers["x-openclaw-token"]\` with your gateway token
+- (legacy accepted) \`agentDefaultsPayload.headers["x-openclaw-auth"]\`
+- Keep device auth enabled (recommended). If \`devicePrivateKeyPem\` is omitted, Paperclip will generate and persist one during join so pairing approvals remain stable.
+- Only use \`disableDeviceAuth=true\` for special environments where pairing cannot be completed.
+
+Do NOT use \`/v1/responses\` or \`/hooks/*\` in this join flow.
+
+Before you do anything, please respond to your user that you understand the instructions and you're going to work on them. Then do the step above in another session called "paperclip-onboarding" and then tell your user when you're done. Update your user in intermediate steps along the way so they know what's going on.
+
+Then after you've connected to Paperclip (exchanged keys etc.) you MUST review and follow the onboarding instructions in onboarding.txt they give you.
+
+`;
+}
+
+function buildCandidateOnboardingUrls(input: AgentSnippetInput): string[] {
+  const candidates = (input.connectionCandidates ?? [])
+    .map((candidate) => candidate.trim())
+    .filter(Boolean);
+  const urls = new Set<string>();
+  let onboardingUrl: URL | null = null;
+
+  try {
+    onboardingUrl = new URL(input.onboardingTextUrl);
+    urls.add(onboardingUrl.toString());
+  } catch {
+    const trimmed = input.onboardingTextUrl.trim();
+    if (trimmed) {
+      urls.add(trimmed);
+    }
+  }
+
+  if (!onboardingUrl) {
+    for (const candidate of candidates) {
+      urls.add(candidate);
+    }
+    return Array.from(urls);
+  }
+
+  const onboardingPath = `${onboardingUrl.pathname}${onboardingUrl.search}`;
+  for (const candidate of candidates) {
+    try {
+      const base = new URL(candidate);
+      urls.add(`${base.origin}${onboardingPath}`);
+    } catch {
+      urls.add(candidate);
+    }
+  }
+
+  return Array.from(urls);
+}
+
+function buildResolutionTestUrl(input: AgentSnippetInput): string | null {
+  const explicit = input.testResolutionUrl?.trim();
+  if (explicit) return explicit;
+
+  try {
+    const onboardingUrl = new URL(input.onboardingTextUrl);
+    const testPath = onboardingUrl.pathname.replace(
+      /\/onboarding\.txt$/,
+      "/test-resolution"
+    );
+    return `${onboardingUrl.origin}${testPath}`;
+  } catch {
+    return null;
+  }
 }

@@ -6,8 +6,6 @@ import { GOAL_STATUSES, GOAL_LEVELS } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { useCompany } from "../context/CompanyContext";
-import { useLocale } from "../context/LocaleContext";
-import { getGoalCopy, goalLevelLabel, goalStatusLabel } from "../lib/goal-copy";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "./StatusBadge";
 import { formatDate, cn, agentUrl } from "../lib/utils";
@@ -29,9 +27,7 @@ function PropertyRow({ label, children }: { label: string; children: React.React
   );
 }
 
-function label(s: string, locale: string): string {
-  if ((GOAL_LEVELS as readonly string[]).includes(s)) return goalLevelLabel(s, locale);
-  if ((GOAL_STATUSES as readonly string[]).includes(s)) return goalStatusLabel(s, locale);
+function label(s: string): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -47,7 +43,6 @@ function PickerButton({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const { locale } = useLocale();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -67,8 +62,8 @@ function PickerButton({
               setOpen(false);
             }}
           >
-             {label(opt, locale)}
-            </Button>
+            {label(opt)}
+          </Button>
         ))}
       </PopoverContent>
     </Popover>
@@ -77,8 +72,6 @@ function PickerButton({
 
 export function GoalProperties({ goal, onUpdate }: GoalPropertiesProps) {
   const { selectedCompanyId } = useCompany();
-  const { locale } = useLocale();
-  const copy = getGoalCopy(locale);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
@@ -103,7 +96,7 @@ export function GoalProperties({ goal, onUpdate }: GoalPropertiesProps) {
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <PropertyRow label={copy.status}>
+        <PropertyRow label="Status">
           {onUpdate ? (
             <PickerButton
               current={goal.status}
@@ -117,21 +110,21 @@ export function GoalProperties({ goal, onUpdate }: GoalPropertiesProps) {
           )}
         </PropertyRow>
 
-        <PropertyRow label={copy.level}>
+        <PropertyRow label="Level">
           {onUpdate ? (
             <PickerButton
               current={goal.level}
               options={GOAL_LEVELS}
               onChange={(level) => onUpdate({ level })}
             >
-              <span className="text-sm">{goalLevelLabel(goal.level, locale)}</span>
+              <span className="text-sm capitalize">{goal.level}</span>
             </PickerButton>
           ) : (
-            <span className="text-sm">{goalLevelLabel(goal.level, locale)}</span>
+            <span className="text-sm capitalize">{goal.level}</span>
           )}
         </PropertyRow>
 
-        <PropertyRow label={copy.owner}>
+        <PropertyRow label="Owner">
           {ownerAgent ? (
             <Link
               to={agentUrl(ownerAgent)}
@@ -140,12 +133,12 @@ export function GoalProperties({ goal, onUpdate }: GoalPropertiesProps) {
               {ownerAgent.name}
             </Link>
           ) : (
-            <span className="text-sm text-muted-foreground">{copy.none}</span>
+            <span className="text-sm text-muted-foreground">None</span>
           )}
         </PropertyRow>
 
         {goal.parentId && (
-          <PropertyRow label={copy.parentGoalLabel}>
+          <PropertyRow label="Parent Goal">
             <Link
               to={`/goals/${goal.parentId}`}
               className="text-sm hover:underline"
@@ -159,10 +152,10 @@ export function GoalProperties({ goal, onUpdate }: GoalPropertiesProps) {
       <Separator />
 
       <div className="space-y-1">
-        <PropertyRow label={copy.created}>
+        <PropertyRow label="Created">
           <span className="text-sm">{formatDate(goal.createdAt)}</span>
         </PropertyRow>
-        <PropertyRow label={copy.updated}>
+        <PropertyRow label="Updated">
           <span className="text-sm">{formatDate(goal.updatedAt)}</span>
         </PropertyRow>
       </div>

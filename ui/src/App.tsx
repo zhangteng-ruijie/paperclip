@@ -144,7 +144,6 @@ function LegacySettingsRedirect() {
 }
 
 function OnboardingRoutePage() {
-  const { t } = useLocale();
   const { companies } = useCompany();
   const { openOnboarding } = useDialogActions();
   const { companyPrefix } = useParams<{ companyPrefix?: string }>();
@@ -153,15 +152,15 @@ function OnboardingRoutePage() {
     : null;
 
   const title = matchedCompany
-    ? t("app.onboarding.addAnotherAgentTitle", { company: matchedCompany.name })
+    ? `Add another agent to ${matchedCompany.name}`
     : companies.length > 0
-      ? t("app.onboarding.createAnotherCompanyTitle")
-      : t("app.onboarding.createFirstCompanyTitle");
+      ? "Create another company"
+      : "Create your first company";
   const description = matchedCompany
-    ? t("app.onboarding.addAnotherAgentDescription")
+    ? "Run onboarding again to add an agent and a starter task for this company."
     : companies.length > 0
-      ? t("app.onboarding.createAnotherCompanyDescription")
-      : t("app.onboarding.createFirstCompanyDescription");
+      ? "Run onboarding again to create another company and seed its first agent."
+      : "Get started by creating a company and your first agent.";
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -176,7 +175,7 @@ function OnboardingRoutePage() {
                 : openOnboarding()
             }
           >
-            {matchedCompany ? t("app.onboarding.addAgent") : t("app.onboarding.start")}
+            {matchedCompany ? "Add Agent" : "Start Onboarding"}
           </Button>
         </div>
       </div>
@@ -185,12 +184,11 @@ function OnboardingRoutePage() {
 }
 
 function CompanyRootRedirect() {
-  const { t } = useLocale();
   const { companies, selectedCompany, loading } = useCompany();
   const location = useLocation();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -210,12 +208,11 @@ function CompanyRootRedirect() {
 }
 
 function UnprefixedBoardRedirect() {
-  const { t } = useLocale();
   const location = useLocation();
   const { companies, selectedCompany, loading } = useCompany();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -245,12 +242,12 @@ function NoCompaniesStartPage() {
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{t("app.noCompanies.title")}</h1>
+        <h1 className="text-xl font-semibold">Create your first company</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          {t("app.noCompanies.description")}
+          Get started by creating a company.
         </p>
         <div className="mt-4">
-          <Button onClick={() => openOnboarding()}>{t("app.noCompanies.newCompany")}</Button>
+          <Button onClick={() => openOnboarding()}>New Company</Button>
         </div>
       </div>
     </div>
