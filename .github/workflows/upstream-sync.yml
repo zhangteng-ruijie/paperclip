@@ -1,0 +1,330 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run upstream sync in dry-run mode without pushing a bot branch or opening a PR.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: upstream-sync-zh-enterprise
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BASE_BRANCH: zh-enterprise
+      MAINTENANCE_REF: origin/zh-enterprise
+      UPSTREAM_REF: upstream/master
+      LLM_API_BASE: ${{ vars.LLM_API_BASE }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure upstream remote
+        run: |
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream https://github.com/paperclipai/paperclip.git
+          else
+            git remote add upstream https://github.com/paperclipai/paperclip.git
+          fi
+
+      - name: Fetch sync refs
+        run: |
+          git fetch --no-tags upstream master:refs/remotes/upstream/master
+          git fetch --no-tags origin zh-enterprise:refs/remotes/origin/zh-enterprise
+
+      - name: Check whether upstream SHA is already handled
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          branch_name="bot-upgrade/$(git rev-parse --short=12 upstream/master)"
+          echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor upstream/master origin/zh-enterprise; then
+            echo "skip_sync=true" >> "$GITHUB_OUTPUT"
+            echo "existing_pr_url=" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=upstream-already-merged" >> "$GITHUB_OUTPUT"
+            echo "Upstream ref upstream/master is already contained in origin/zh-enterprise"
+            exit 0
+          fi
+
+          existing_pr="$(
+            gh pr list -R "$GH_REPO" --state all --base zh-enterprise --head "$branch_name" --json url,headRepositoryOwner,mergedAt,state \
+              --jq ".[] | select(.headRepositoryOwner.login == \"$REPO_OWNER\") | select(.state == \"OPEN\" or .mergedAt != null) | .url" |
+            head -n 1
+          )"
+
+          if [ -n "$existing_pr" ]; then
+            echo "skip_sync=true" >> "$GITHUB_OUTPUT"
+            echo "existing_pr_url=$existing_pr" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=existing-pr" >> "$GITHUB_OUTPUT"
+            echo "Upstream SHA already handled by $existing_pr"
+          else
+            echo "skip_sync=false" >> "$GITHUB_OUTPUT"
+            echo "existing_pr_url=" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git identity
+        if: steps.preflight.outputs.skip_sync != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        run: |
+          git config user.name "upstream-sync-bot"
+          git config user.email "upstream-sync-bot@users.noreply.github.com"
+
+      - name: Run upstream sync
+        id: sync
+        if: steps.preflight.outputs.skip_sync != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            pnpm sync:upstream -- --dry-run
+          else
+            pnpm sync:upstream
+          fi
+
+      - name: Upload upstream sync artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-sync-artifacts
+          path: |
+            ${{ steps.sync.outputs.report_path }}
+            ${{ steps.sync.outputs.pr_body_path }}
+            ${{ steps.sync.outputs.validation_log_path }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write upstream sync summary
+        if: always()
+        env:
+          SKIP_SYNC: ${{ steps.preflight.outputs.skip_sync }}
+          SKIP_REASON: ${{ steps.preflight.outputs.skip_reason }}
+          EXISTING_PR_URL: ${{ steps.preflight.outputs.existing_pr_url }}
+          MANUAL_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          BRANCH_NAME: ${{ steps.sync.outputs.branch_name || steps.preflight.outputs.branch_name }}
+          STATUS: ${{ steps.sync.outputs.status }}
+          VALIDATION_STATUS: ${{ steps.sync.outputs.validation_status }}
+          READY_FOR_PR: ${{ steps.sync.outputs.ready_for_pr }}
+        run: |
+          {
+            echo "## Upstream Sync"
+            echo "- branch: \`${BRANCH_NAME:-<unknown>}\`"
+            if [ "$SKIP_SYNC" = "true" ] && [ "$MANUAL_DRY_RUN" != "true" ]; then
+              case "$SKIP_REASON" in
+                existing-pr)
+                  echo "- result: already handled by existing PR"
+                  echo "- existing PR: ${EXISTING_PR_URL}"
+                  ;;
+                upstream-already-merged)
+                  echo "- result: upstream SHA already merged into \`zh-enterprise\`"
+                  ;;
+                *)
+                  echo "- result: already handled"
+                  ;;
+              esac
+            else
+              if [ "$SKIP_SYNC" = "true" ] && [ -n "$EXISTING_PR_URL" ]; then
+                echo "- preflight: existing PR found, manual dry-run override applied"
+                echo "- existing PR: ${EXISTING_PR_URL}"
+              fi
+              echo "- status: \`${STATUS:-<empty>}\`"
+              echo "- validation: \`${VALIDATION_STATUS:-<empty>}\`"
+              echo "- ready_for_pr: \`${READY_FOR_PR:-false}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require PR automation token
+        if: steps.sync.outputs.ready_for_pr == 'true'
+        env:
+          PR_AUTOMATION_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
+        run: |
+          if [ -z "$PR_AUTOMATION_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_BOT_TOKEN is required to push bot branches and trigger upstream-sync PR validation."
+            exit 1
+          fi
+
+      - name: Commit low-risk translation edits
+        if: steps.sync.outputs.ready_for_pr == 'true'
+        run: |
+          git add -A
+          git reset -- reports >/dev/null 2>&1 || true
+
+          if git diff --cached --quiet; then
+            echo "No additional working-tree changes to commit before push."
+            exit 0
+          fi
+
+          git commit -m "chore(i18n): apply low-risk upstream sync edits"
+
+      - name: Push bot branch
+        if: steps.sync.outputs.ready_for_pr == 'true'
+        env:
+          BRANCH_NAME: ${{ steps.sync.outputs.branch_name }}
+          PUSH_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
+        run: |
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+          git fetch --no-tags origin "$BRANCH_NAME:refs/remotes/origin/$BRANCH_NAME" || true
+          git push --force-with-lease origin "$BRANCH_NAME"
+
+      - name: Create or update pull request
+        id: upsert-pr
+        if: steps.sync.outputs.ready_for_pr == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_BOT_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          BRANCH_NAME: ${{ steps.sync.outputs.branch_name }}
+          PR_BODY_PATH: ${{ steps.sync.outputs.pr_body_path }}
+        run: |
+          upstream_sha="${BRANCH_NAME#bot-upgrade/}"
+          pr_title="chore(upstream): sync ${upstream_sha} into zh-enterprise"
+
+          git fetch --no-tags origin "zh-enterprise:refs/remotes/origin/zh-enterprise"
+
+          branch_visible=false
+          for attempt in 1 2 3; do
+            if git fetch --no-tags origin "$BRANCH_NAME:refs/remotes/origin/$BRANCH_NAME"; then
+              branch_visible=true
+              break
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Waiting for origin/$BRANCH_NAME to become visible after push..."
+              sleep 5
+            fi
+          done
+
+          if [ "$branch_visible" != "true" ]; then
+            echo "Remote bot branch origin/$BRANCH_NAME was pushed but is not yet fetchable."
+            exit 1
+          fi
+
+          ahead_commits="$(git rev-list --count "origin/zh-enterprise..origin/$BRANCH_NAME")"
+          if [ "$ahead_commits" = "0" ]; then
+            echo "Branch $BRANCH_NAME has no commits ahead of zh-enterprise; skipping PR creation."
+            echo "pr_url=" >> "$GITHUB_OUTPUT"
+            echo "result=no-diff" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Upstream Sync PR"
+              echo "- branch: \`$BRANCH_NAME\`"
+              echo "- result: skipped PR creation because the bot branch has no commits ahead of \`zh-enterprise\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          pr_url="$({
+            gh pr list -R "$GH_REPO" --state open --base zh-enterprise --head "$BRANCH_NAME" --json url,headRepositoryOwner \
+              --jq ".[] | select(.headRepositoryOwner.login == \"$REPO_OWNER\") | .url"
+          } | head -n 1)"
+
+          if [ -n "$pr_url" ]; then
+            gh pr edit -R "$GH_REPO" "$pr_url" --title "$pr_title" --body-file "$PR_BODY_PATH"
+            echo "Reused existing PR: $pr_url"
+          else
+            pr_head="${REPO_OWNER}:${BRANCH_NAME}"
+            pr_create_error_log="$(mktemp)"
+
+            for attempt in 1 2 3 4 5; do
+              if pr_url="$(gh pr create -R "$GH_REPO" \
+                --base zh-enterprise \
+                --head "$pr_head" \
+                --title "$pr_title" \
+                --body-file "$PR_BODY_PATH" \
+                2>"$pr_create_error_log")"; then
+                break
+              fi
+
+              if grep -Eq "Head sha can't be blank|Base sha can't be blank|No commits between|Head ref must be a branch|Base ref must be a branch" "$pr_create_error_log"; then
+                if [ "$attempt" -lt 5 ]; then
+                  echo "GitHub PR refs are not fully visible yet; retrying create in 5 seconds..."
+                  sleep 5
+                  continue
+                fi
+              fi
+
+              cat "$pr_create_error_log" >&2
+              rm -f "$pr_create_error_log"
+              exit 1
+            done
+
+            if [ -z "$pr_url" ]; then
+              cat "$pr_create_error_log" >&2
+              rm -f "$pr_create_error_log"
+              exit 1
+            fi
+
+            rm -f "$pr_create_error_log"
+
+            echo "Created new PR: $pr_url"
+          fi
+
+          echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "result=updated-or-created" >> "$GITHUB_OUTPUT"
+
+      - name: Fail when sync needs maintainer action
+        if: always()
+        env:
+          SKIP_SYNC: ${{ steps.preflight.outputs.skip_sync }}
+          MANUAL_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          STATUS: ${{ steps.sync.outputs.status }}
+          VALIDATION_STATUS: ${{ steps.sync.outputs.validation_status }}
+          STEP_OUTCOME: ${{ steps.sync.outcome }}
+        run: |
+          echo "upstream-sync step outcome: $STEP_OUTCOME"
+          echo "status: ${STATUS:-<empty>}"
+          echo "validation_status: ${VALIDATION_STATUS:-<empty>}"
+
+          if [ "$SKIP_SYNC" = "true" ] && [ "$MANUAL_DRY_RUN" != "true" ]; then
+            exit 0
+          fi
+
+          case "$STATUS" in
+            no-op)
+              exit 0
+              ;;
+            dry-run|replayed)
+              if [ "$VALIDATION_STATUS" = "passed" ]; then
+                exit 0
+              fi
+              ;;
+          esac
+
+          echo "Upstream sync requires maintainer follow-up. See uploaded artifacts for details."
+          exit 1

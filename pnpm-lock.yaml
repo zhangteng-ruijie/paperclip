@@ -16,6 +16,9 @@ importers:
 
   .:
     devDependencies:
+      '@embedded-postgres/darwin-arm64':
+        specifier: 18.1.0-beta.15
+        version: 18.1.0-beta.15
       '@playwright/test':
         specifier: ^1.58.2
         version: 1.58.2
@@ -122,6 +125,22 @@ importers:
       acpx:
         specifier: ^0.6.1
         version: 0.6.1
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24.6.0
+        version: 24.12.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/adapters/anthropic-cloud:
+    dependencies:
+      '@paperclipai/adapter-utils':
+        specifier: workspace:*
+        version: link:../../adapter-utils
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
@@ -266,6 +285,9 @@ importers:
         specifier: ^3.4.5
         version: 3.4.8
     devDependencies:
+      '@embedded-postgres/darwin-arm64':
+        specifier: 18.1.0-beta.15
+        version: 18.1.0-beta.15
       '@types/node':
         specifier: ^24.6.0
         version: 24.12.0
@@ -470,6 +492,34 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.12.0)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@2.0.1))(lightningcss@1.30.2)(tsx@4.21.0)
+
+  packages/plugins/plugin-feishu-connector:
+    dependencies:
+      '@paperclipai/plugin-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@paperclipai/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      react:
+        specifier: '>=18'
+        version: 19.2.4
+    devDependencies:
+      '@types/node':
+        specifier: ^24.6.0
+        version: 24.12.0
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.14
+      esbuild:
+        specifier: ^0.27.3
+        version: 0.27.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.5
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.12.0)(jiti@2.6.1)(jsdom@28.1.0(@noble/hashes@2.0.1))(lightningcss@1.30.2)(tsx@4.21.0)
 
   packages/plugins/sdk:
@@ -1413,6 +1463,12 @@ packages:
 
   '@electric-sql/pglite@0.3.15':
     resolution: {integrity: sha512-Cj++n1Mekf9ETfdc16TlDi+cDDQF0W7EcbyRHYOAeZdsAe8M/FJg18itDTSwyHfar2WIezawM9o0EKaRGVKygQ==}
+
+  '@embedded-postgres/darwin-arm64@18.1.0-beta.15':
+    resolution: {integrity: sha512-pdCU/y07Ebdz8cBP8DRSBa3ORqUjEdLIlNE4qLB0cXHbRR8QSUwJA/U809qMm9rJ1ZDG2WjGgVvNniXDGbRSEA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
 
   '@embedded-postgres/darwin-arm64@18.1.0-beta.16':
     resolution: {integrity: sha512-tU/syLOamFZdXMC+p7AYczmFKIiolFlZ8y3Qb7KonX37O07ezc/OSDiQ641sheV3X0WPf9V10qyK8c81rleDdw==}
@@ -7886,6 +7942,8 @@ snapshots:
 
   '@electric-sql/pglite@0.3.15':
     optional: true
+
+  '@embedded-postgres/darwin-arm64@18.1.0-beta.15': {}
 
   '@embedded-postgres/darwin-arm64@18.1.0-beta.16':
     optional: true

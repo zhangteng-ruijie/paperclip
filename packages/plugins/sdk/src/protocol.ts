@@ -25,6 +25,7 @@ import type {
   Project,
   Issue,
   IssueComment,
+  IssueAttachment,
   IssueDocument,
   IssueDocumentSummary,
   IssueThreadInteraction,
@@ -881,6 +882,20 @@ export interface WorkerToHostMethods {
     params: { issueId: string; body: string; companyId: string; authorAgentId?: string },
     result: IssueComment,
   ];
+  "issues.attachments.create": [
+    params: {
+      issueId: string;
+      companyId: string;
+      filename: string;
+      contentType: string;
+      bodyBase64: string;
+      issueCommentId?: string | null;
+      actorAgentId?: string | null;
+      actorUserId?: string | null;
+      actorRunId?: string | null;
+    },
+    result: IssueAttachment,
+  ];
   "issues.createInteraction": [
     params: {
       issueId: string;
@@ -951,7 +966,7 @@ export interface WorkerToHostMethods {
     result: Array<{ sessionId: string; agentId: string; companyId: string; status: "active" | "closed"; createdAt: string }>,
   ];
   "agents.sessions.sendMessage": [
-    params: { sessionId: string; companyId: string; prompt: string; reason?: string },
+    params: { sessionId: string; companyId: string; prompt: string; reason?: string; issueId?: string; taskId?: string },
     result: { runId: string },
   ];
   "agents.sessions.close": [

@@ -7,6 +7,34 @@ import { SIDEBAR_SCROLL_RESET_STATE } from "@/lib/navigation-scroll";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 
+type SidebarPluginRecord = {
+  pluginKey?: string | null;
+  packageName?: string | null;
+  manifestJson?: {
+    displayName?: string | null;
+  } | null;
+};
+
+function isFeishuPlugin(plugin: SidebarPluginRecord): boolean {
+  const haystack = [
+    plugin.pluginKey,
+    plugin.packageName,
+    plugin.manifestJson?.displayName,
+  ].filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes("feishu") || haystack.includes("lark") || haystack.includes("飞书");
+}
+
+function PluginNavIcon({ plugin }: { plugin: SidebarPluginRecord }) {
+  if (isFeishuPlugin(plugin)) {
+    return (
+      <span className="h-3.5 w-3.5 shrink-0 rounded-[4px] bg-blue-600 text-[10px] font-bold leading-[14px] text-white text-center">
+        飞
+      </span>
+    );
+  }
+  return <Puzzle className="h-3.5 w-3.5 shrink-0" />;
+}
+
 export function InstanceSidebar() {
   const { data: plugins } = useQuery({
     queryKey: queryKeys.plugins.all,
@@ -41,14 +69,17 @@ export function InstanceSidebar() {
                   state={SIDEBAR_SCROLL_RESET_STATE}
                   className={({ isActive }) =>
                     [
-                      "rounded-md px-2 py-1.5 text-xs transition-colors",
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors",
                       isActive
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                     ].join(" ")
                   }
                 >
-                  {plugin.manifestJson.displayName ?? plugin.packageName}
+                  <PluginNavIcon plugin={plugin} />
+                  <span className="min-w-0 flex-1 truncate">
+                    {plugin.manifestJson.displayName ?? plugin.packageName}
+                  </span>
                 </NavLink>
               ))}
             </div>

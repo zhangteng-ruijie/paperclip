@@ -21,7 +21,8 @@ import { test, expect, request as pwRequest, type APIRequestContext } from "@pla
  *     the in_review state the signoff policy requires).
  */
 
-const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3199);
+// Use port 3100 to match playwright.config.ts default
+const PORT = Number(process.env.PAPERCLIP_E2E_PORT ?? 3100);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const COMPANY_NAME = `E2E-Signoff-${Date.now()}`;
 
@@ -296,7 +297,7 @@ test.describe("Signoff execution policy", () => {
 
     // Step 2: Navigate to issue in UI and verify execution label
     await page.goto(`/${ctx.companyPrefix}/issues/${issue.identifier}`);
-    await expect(page.locator("text=Review pending")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: '待审核' })).toBeVisible({ timeout: 10_000 });
 
     // Step 3: Reviewer approves → should route to approver
     const step3Res = await agentPatch(
@@ -314,7 +315,7 @@ test.describe("Signoff execution policy", () => {
 
     // Step 4: Verify UI shows approval pending
     await page.reload();
-    await expect(page.locator("text=Approval pending")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('text=审批待处理')).toBeVisible({ timeout: 10_000 });
 
     // Step 5: Approver approves → should complete
     const step5Res = await agentPatch(

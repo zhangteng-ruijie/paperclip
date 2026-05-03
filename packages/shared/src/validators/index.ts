@@ -10,6 +10,11 @@ export {
   type PatchInstanceExperimentalSettings,
   type IssueGraphLivenessAutoRecoveryRequest,
 } from "./instance.js";
+export {
+  paperclipCurrencyPreferenceSchema,
+  paperclipTimeZonePreferenceSchema,
+  paperclipUiLocalePreferenceSchema,
+} from "./locale.js";
 
 export {
   upsertBudgetPolicySchema,

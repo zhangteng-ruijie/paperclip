@@ -19,6 +19,7 @@ import type {
   Project,
   Issue,
   IssueComment,
+  IssueAttachment,
   IssueDocument,
   IssueDocumentSummary,
   IssueRelationIssueSummary,
@@ -83,6 +84,7 @@ export type {
   Project,
   Issue,
   IssueComment,
+  IssueAttachment,
   IssueDocument,
   IssueDocumentSummary,
   IssueRelationIssueSummary,
@@ -1089,6 +1091,7 @@ export interface PluginIssueSummariesClient {
  * - `issues.orchestration.read` for orchestration summaries
  * - `issue.comments.read` for `listComments`
  * - `issue.comments.create` for `createComment`
+ * - `issue.attachments.create` for `createAttachment`
  * - `issue.interactions.create` for `createInteraction`, `suggestTasks`, `askUserQuestions`, and `requestConfirmation`
  * - `issue.documents.read` for `documents.list` and `documents.get`
  * - `issue.documents.write` for `documents.upsert` and `documents.delete`
@@ -1194,6 +1197,15 @@ export interface PluginIssuesClient {
     companyId: string,
     options?: { authorAgentId?: string },
   ): Promise<IssueComment>;
+  createAttachment(input: {
+    issueId: string;
+    companyId: string;
+    filename: string;
+    contentType: string;
+    bodyBase64: string;
+    issueCommentId?: string | null;
+    actor?: PluginIssueMutationActor;
+  }): Promise<IssueAttachment>;
   createInteraction(
     issueId: string,
     interaction: CreateIssueThreadInteraction,
@@ -1307,6 +1319,8 @@ export interface PluginAgentSessionsClient {
   sendMessage(sessionId: string, companyId: string, opts: {
     prompt: string;
     reason?: string;
+    issueId?: string;
+    taskId?: string;
     onEvent?: (event: AgentSessionEvent) => void;
   }): Promise<AgentSessionSendResult>;
 

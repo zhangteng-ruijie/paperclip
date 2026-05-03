@@ -31,6 +31,7 @@
     "release:github": "./scripts/create-github-release.sh",
     "release:rollback": "./scripts/rollback-latest.sh",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
@@ -47,6 +48,7 @@
     "perf:issue-chat-long-thread": "node scripts/measure-issue-chat-long-thread.mjs"
   },
   "devDependencies": {
+    "@embedded-postgres/darwin-arm64": "18.1.0-beta.15",
     "@playwright/test": "^1.58.2",
     "cross-env": "^10.1.0",
     "esbuild": "^0.27.3",

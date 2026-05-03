@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
+  agentTaskSessions,
   agentWakeupRequests,
   agents,
   companies,
@@ -55,6 +56,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     await db.delete(activityLog);
     await db.delete(costEvents);
     await db.delete(heartbeatRuns);
+    await db.delete(agentTaskSessions);
     await db.delete(agentWakeupRequests);
     await db.delete(issueRelations);
     await db.delete(issues);
@@ -264,6 +266,27 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
         reason: "mission_advance",
       }),
     ).rejects.toThrow("Issue is blocked by unresolved blockers");
+  });
+
+  it("normalizes custom plugin agent session task keys into the plugin namespace", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent();
+    const services = buildHostServices(db, "plugin-record-id", "paperclip.feishu-connector", createEventBusStub());
+
+    const session = await services.agentSessions.create({
+      companyId,
+      agentId,
+      taskKey: "feishu:news-bot:oc_boss:root:om_1",
+    });
+
+    const [stored] = await db
+      .select()
+      .from(agentTaskSessions)
+      .where(eq(agentTaskSessions.id, session.sessionId));
+
+    expect(stored?.taskKey).toBe("plugin:paperclip.feishu-connector:session:feishu:news-bot:oc_boss:root:om_1");
+    await expect(services.agentSessions.list({ companyId, agentId })).resolves.toEqual([
+      expect.objectContaining({ sessionId: session.sessionId }),
+    ]);
   });
 
   it("narrows orchestration cost summaries by subtree and billing code", async () => {
