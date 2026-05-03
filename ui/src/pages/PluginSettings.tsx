@@ -25,6 +25,7 @@ import {
   getDefaultValues,
   type JsonSchemaNode,
 } from "@/components/JsonSchemaForm";
+import { formatRuntimeDateTime, formatRuntimeTime } from "@/lib/runtime-locale";
 
 /**
  * PluginSettings page component.
@@ -414,7 +415,7 @@ export function PluginSettings() {
 
                       <div className="flex items-center gap-1.5 border-t border-border/50 pt-2 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
-                        Last checked: {new Date(dashboardData.checkedAt).toLocaleTimeString()}
+                        Last checked: {formatRuntimeTime(dashboardData.checkedAt)}
                       </div>
                     </>
                   ) : (
@@ -449,7 +450,7 @@ export function PluginSettings() {
                                   : "text-muted-foreground"
                           }`}
                         >
-                          <span className="shrink-0 text-muted-foreground/50">{new Date(entry.createdAt).toLocaleTimeString()}</span>
+                          <span className="shrink-0 text-muted-foreground/50">{formatRuntimeTime(entry.createdAt)}</span>
                           <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px]">{entry.level}</Badge>
                           <span className="truncate" title={entry.message}>{entry.message}</span>
                         </div>
@@ -825,7 +826,7 @@ function formatRelativeTime(isoString: string): string {
  * Format a unix timestamp (ms since epoch) to a locale string.
  */
 function formatTimestamp(epochMs: number): string {
-  return new Date(epochMs).toLocaleString();
+  return formatRuntimeDateTime(epochMs);
 }
 
 /**

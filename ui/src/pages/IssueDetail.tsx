@@ -61,6 +61,7 @@ import {
 import { clearIssueExecutionRun, removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { formatRuntimeNumber } from "../lib/runtime-locale";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
@@ -1036,7 +1037,7 @@ function IssueDetailActivityTab({
               {hasIssueTreeCost && issueTreeCostSummary ? (
                 <div className="flex flex-wrap gap-3">
                   <span className="font-medium text-foreground">
-                    Including sub-issues {(issueTreeCostSummary.costCents / 100).toLocaleString(undefined, {
+                    Including sub-issues {formatRuntimeNumber(issueTreeCostSummary.costCents / 100, {
                       style: "currency",
                       currency: "USD",
                       minimumFractionDigits: 4,

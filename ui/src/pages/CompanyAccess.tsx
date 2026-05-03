@@ -26,6 +26,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { formatRuntimeDateTime } from "@/lib/runtime-locale";
 
 const permissionLabels: Record<PermissionKey, string> = {
   "agents:create": "Create agents",
@@ -327,7 +328,7 @@ export function CompanyAccess() {
                       ? `${request.invite.allowedJoinTypes} join invite${request.invite.humanRole ? ` • default role ${request.invite.humanRole}` : ""}`
                       : "Invite metadata unavailable"
                   }
-                  detail={`Submitted ${new Date(request.createdAt).toLocaleString()}`}
+                  detail={`Submitted ${formatRuntimeDateTime(request.createdAt)}`}
                   approveLabel="Approve human"
                   rejectLabel="Reject human"
                   disabled={joinRequestActionPending}

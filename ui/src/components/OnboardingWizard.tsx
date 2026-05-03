@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { cn } from "../lib/utils";
+import { formatRuntimeTime } from "../lib/runtime-locale";
 import {
   extractModelName,
   extractProviderIdWithFallback
@@ -1316,7 +1317,7 @@ function AdapterEnvironmentResult({
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium">{statusLabel}</span>
         <span className="opacity-80">
-          {new Date(result.testedAt).toLocaleTimeString()}
+          {formatRuntimeTime(result.testedAt)}
         </span>
       </div>
       <div className="mt-1.5 space-y-1">

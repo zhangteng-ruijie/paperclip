@@ -16,6 +16,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { projectRouteRef, projectWorkspaceUrl } from "../lib/utils";
+import { formatRuntimeDateTime } from "../lib/runtime-locale";
 
 type WorkspaceFormState = {
   name: string;
@@ -613,7 +614,7 @@ export function ProjectWorkspaceDetail() {
               ) : "None"}
             </DetailRow>
             <DetailRow label="Default ref">{workspace.defaultRef ?? "None"}</DetailRow>
-            <DetailRow label="Updated">{new Date(workspace.updatedAt).toLocaleString()}</DetailRow>
+            <DetailRow label="Updated">{formatRuntimeDateTime(workspace.updatedAt)}</DetailRow>
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-5">

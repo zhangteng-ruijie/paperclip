@@ -9,6 +9,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
+import { formatRuntimeDateTime } from "@/lib/runtime-locale";
 
 const inviteRoleOptions = [
   {
@@ -320,7 +321,7 @@ export function CompanyInvites() {
                         ) : null}
                       </td>
                       <td className="px-5 py-3 align-top text-muted-foreground">
-                        {new Date(invite.createdAt).toLocaleString()}
+                        {formatRuntimeDateTime(invite.createdAt)}
                       </td>
                       <td className="px-5 py-3 align-top">
                         {invite.relatedJoinRequestId ? (

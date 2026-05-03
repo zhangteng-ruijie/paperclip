@@ -9,6 +9,7 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useCompany } from "@/context/CompanyContext";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { formatRuntimeDate } from "@/lib/runtime-locale";
 
 export function InstanceAccess() {
   const { companies } = useCompany();
@@ -234,7 +235,7 @@ export function InstanceAccess() {
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {new Date(membership.updatedAt).toLocaleDateString()}
+                        {formatRuntimeDate(membership.updatedAt)}
                       </div>
                     </div>
                   ))}

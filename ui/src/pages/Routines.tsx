@@ -18,6 +18,7 @@ import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
+import { formatRuntimeDateTime } from "../lib/runtime-locale";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
@@ -73,7 +74,7 @@ function autoResizeTextarea(element: HTMLTextAreaElement | null) {
 
 function formatLastRunTimestamp(value: Date | string | null | undefined) {
   if (!value) return "Never";
-  return new Date(value).toLocaleString();
+  return formatRuntimeDateTime(value);
 }
 
 function nextRoutineStatus(currentStatus: string, enabled: boolean) {

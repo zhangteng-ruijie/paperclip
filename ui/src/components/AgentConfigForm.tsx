@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { FolderOpen, Heart, ChevronDown, X } from "lucide-react";
 import { asBoolean, asFiniteNumber, asObject, cn } from "../lib/utils";
+import { formatRuntimeTime } from "../lib/runtime-locale";
 import { extractModelName, extractProviderId } from "../lib/model-utils";
 import { queryKeys } from "../lib/queryKeys";
 import { useCompany } from "../context/CompanyContext";
@@ -1275,7 +1276,7 @@ export function AdapterEnvironmentResult({ result }: { result: AdapterEnvironmen
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium">{statusLabel}</span>
         <span className="text-[11px] opacity-80">
-          {new Date(result.testedAt).toLocaleTimeString()}
+          {formatRuntimeTime(result.testedAt)}
         </span>
       </div>
       <div className="mt-2 space-y-1.5">

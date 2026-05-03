@@ -27,6 +27,7 @@ import { useToastActions } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { buildRoutineTriggerPatch } from "../lib/routine-trigger-patch";
 import { buildMarkdownMentionOptions } from "../lib/company-members";
+import { formatRuntimeDateTime, getRuntimeTimeZone } from "../lib/runtime-locale";
 import { timeAgo } from "../lib/timeAgo";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "../components/EmptyState";
@@ -118,7 +119,7 @@ function formatActivityDetailValue(value: unknown): string {
 
 function getLocalTimezone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return getRuntimeTimeZone();
   } catch {
     return "UTC";
   }
@@ -178,7 +179,7 @@ function TriggerEditor({
         </div>
         <span className="text-xs text-muted-foreground">
           {trigger.kind === "schedule" && trigger.nextRunAt
-            ? `Next: ${new Date(trigger.nextRunAt).toLocaleString()}`
+            ? `Next: ${formatRuntimeDateTime(trigger.nextRunAt)}`
             : trigger.kind === "webhook"
               ? "Webhook"
               : "API"}
