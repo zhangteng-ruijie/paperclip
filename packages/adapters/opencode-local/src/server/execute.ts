@@ -40,6 +40,7 @@ import {
   runChildProcess,
   readPaperclipRuntimeSkillEntries,
   resolvePaperclipDesiredSkillNames,
+  resolvePaperclipLocale,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";

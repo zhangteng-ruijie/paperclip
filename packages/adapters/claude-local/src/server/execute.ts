@@ -30,6 +30,7 @@ import {
   applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
   readPaperclipRuntimeSkillEntries,
+  resolvePaperclipLocale,
   joinPromptSections,
   buildInvocationEnvForLogs,
   ensureAbsoluteDirectory,

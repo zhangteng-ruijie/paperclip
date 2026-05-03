@@ -8,6 +8,7 @@ import type {
   Project,
   Issue,
   IssueComment,
+  IssueAttachment,
   IssueThreadInteraction,
   CreateIssueThreadInteraction,
   IssueDocument,
@@ -69,6 +70,7 @@ export interface TestHarness {
     projects?: Project[];
     issues?: Issue[];
     issueComments?: IssueComment[];
+    issueAttachments?: IssueAttachment[];
     agents?: Agent[];
     goals?: Goal[];
   }): void;
@@ -422,6 +424,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const issues = new Map<string, Issue>();
   const blockedByIssueIds = new Map<string, string[]>();
   const issueComments = new Map<string, IssueComment[]>();
+  const issueAttachments = new Map<string, IssueAttachment[]>();
   const issueInteractions = new Map<string, IssueThreadInteraction[]>();
   const issueDocuments = new Map<string, IssueDocument>();
   const agents = new Map<string, Agent>();
@@ -820,6 +823,37 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         current.push(comment);
         issueComments.set(issueId, current);
         return comment;
+      },
+      async createAttachment(input) {
+        requireCapability(manifest, capabilitySet, "issue.attachments.create");
+        const parentIssue = issues.get(input.issueId);
+        if (!isInCompany(parentIssue, input.companyId)) {
+          throw new Error(`Issue not found: ${input.issueId}`);
+        }
+        const body = Buffer.from(input.bodyBase64, "base64");
+        const now = new Date();
+        const attachment: IssueAttachment = {
+          id: randomUUID(),
+          companyId: parentIssue.companyId,
+          issueId: input.issueId,
+          issueCommentId: input.issueCommentId ?? null,
+          assetId: randomUUID(),
+          provider: "local_disk",
+          objectKey: `issues/${input.issueId}/${input.filename}`,
+          contentType: input.contentType,
+          byteSize: body.length,
+          sha256: "test-sha256",
+          originalFilename: input.filename,
+          createdByAgentId: input.actor?.actorAgentId ?? null,
+          createdByUserId: input.actor?.actorUserId ?? null,
+          createdAt: now,
+          updatedAt: now,
+          contentPath: `/api/attachments/test/content`,
+        };
+        const current = issueAttachments.get(input.issueId) ?? [];
+        current.push(attachment);
+        issueAttachments.set(input.issueId, current);
+        return attachment;
       },
       async createInteraction(issueId, interaction, companyId, options) {
         requireCapability(manifest, capabilitySet, "issue.interactions.create");
@@ -1228,6 +1262,11 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const list = issueComments.get(row.issueId) ?? [];
         list.push(row);
         issueComments.set(row.issueId, list);
+      }
+      for (const row of input.issueAttachments ?? []) {
+        const list = issueAttachments.get(row.issueId) ?? [];
+        list.push(row);
+        issueAttachments.set(row.issueId, list);
       }
       for (const row of input.agents ?? []) agents.set(row.id, row);
       for (const row of input.goals ?? []) goals.set(row.id, row);

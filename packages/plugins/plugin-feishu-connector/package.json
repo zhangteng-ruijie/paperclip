@@ -16,6 +16,7 @@
     "prebuild": "node ../../../scripts/ensure-plugin-build-deps.mjs",
     "build": "node ./esbuild.config.mjs",
     "dev": "node ./esbuild.config.mjs --watch",
+    "pack:cloud": "node ./scripts/pack-cloud.mjs",
     "test": "vitest run --config ./vitest.config.ts",
     "typecheck": "pnpm --filter @paperclipai/plugin-sdk build && tsc --noEmit"
   },

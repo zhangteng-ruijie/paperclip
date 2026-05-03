@@ -148,8 +148,17 @@ export function PluginSettings() {
     .filter((name, index, values) => values.indexOf(name) === index);
   const driverLabel = environmentDriverNames.join(", ");
 
+  const pluginIdentityText = [
+    plugin.pluginKey,
+    plugin.packageName,
+    plugin.manifestJson.displayName,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const isFeishuPlugin = pluginIdentityText.includes("feishu")
+    || pluginIdentityText.includes("lark")
+    || pluginIdentityText.includes("飞书");
+
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className={hasCustomSettingsPage ? "space-y-6 max-w-7xl" : "space-y-6 max-w-5xl"}>
       <div className="flex items-center gap-4">
         <Link to="/instance/settings/plugins">
           <Button variant="outline" size="icon" className="h-8 w-8">
@@ -157,7 +166,13 @@ export function PluginSettings() {
           </Button>
         </Link>
         <div className="flex items-center gap-2">
-          <Puzzle className="h-6 w-6 text-muted-foreground" />
+          {isFeishuPlugin ? (
+            <span className="h-7 w-7 shrink-0 rounded-md bg-blue-600 text-center text-sm font-bold leading-7 text-white">
+              飞
+            </span>
+          ) : (
+            <Puzzle className="h-6 w-6 text-muted-foreground" />
+          )}
           <h1 className="text-xl font-semibold">{plugin.manifestJson.displayName ?? plugin.packageName}</h1>
           <Badge variant={statusVariant} className="ml-2">
             {displayStatus}
@@ -172,94 +187,96 @@ export function PluginSettings() {
         <PageTabBar
           align="start"
           items={[
-            { value: "configuration", label: "Configuration" },
-            { value: "status", label: "Status" },
+            { value: "configuration", label: "配置" },
+            { value: "status", label: "状态" },
           ]}
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as "configuration" | "status")}
         />
 
         <TabsContent value="configuration" className="space-y-6">
-          <div className="space-y-8">
-            <section className="space-y-5">
-              <h2 className="text-base font-semibold">About</h2>
-              <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-muted-foreground">Description</h3>
-                  <p className="text-sm leading-6 text-foreground/90">{pluginDescription}</p>
-                </div>
-                <div className="space-y-4 text-sm">
-                  <div className="space-y-1.5">
-                    <h3 className="font-medium text-muted-foreground">Author</h3>
-                    <p className="text-foreground">{plugin.manifestJson.author}</p>
-                  </div>
+          {hasCustomSettingsPage ? (
+            <div className="space-y-3">
+              {pluginSlots.map((slot) => (
+                <PluginSlotMount
+                  key={`${slot.pluginKey}:${slot.id}`}
+                  slot={slot}
+                  context={{
+                    companyId: selectedCompanyId,
+                    companyPrefix: companyPrefix ?? null,
+                  }}
+                  missingBehavior="placeholder"
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-8">
+              <section className="space-y-5">
+                <h2 className="text-base font-semibold">About</h2>
+                <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
                   <div className="space-y-2">
-                    <h3 className="font-medium text-muted-foreground">Categories</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {plugin.categories.length > 0 ? (
-                        plugin.categories.map((category) => (
-                          <Badge key={category} variant="outline" className="capitalize">
-                            {category}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-foreground">None</span>
-                      )}
+                    <h3 className="text-sm font-medium text-muted-foreground">Description</h3>
+                    <p className="text-sm leading-6 text-foreground/90">{pluginDescription}</p>
+                  </div>
+                  <div className="space-y-4 text-sm">
+                    <div className="space-y-1.5">
+                      <h3 className="font-medium text-muted-foreground">Author</h3>
+                      <p className="text-foreground">{plugin.manifestJson.author}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="font-medium text-muted-foreground">Categories</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {plugin.categories.length > 0 ? (
+                          plugin.categories.map((category) => (
+                            <Badge key={category} variant="outline" className="capitalize">
+                              {category}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-foreground">None</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            <Separator />
+              <Separator />
 
-            <section className="space-y-4">
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold">Settings</h2>
-              </div>
-              {hasCustomSettingsPage ? (
-                <div className="space-y-3">
-                  {pluginSlots.map((slot) => (
-                    <PluginSlotMount
-                      key={`${slot.pluginKey}:${slot.id}`}
-                      slot={slot}
-                      context={{
-                        companyId: selectedCompanyId,
-                        companyPrefix: companyPrefix ?? null,
-                      }}
-                      missingBehavior="placeholder"
-                    />
-                  ))}
+              <section className="space-y-4">
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold">Settings</h2>
                 </div>
-              ) : hasConfigSchema ? (
-                <PluginConfigForm
-                  pluginId={pluginId!}
-                  schema={configSchema!}
-                  initialValues={configData?.configJson}
-                  isLoading={configLoading}
-                  pluginStatus={plugin.status}
-                  supportsConfigTest={(plugin as unknown as { supportsConfigTest?: boolean }).supportsConfigTest === true}
-                />
-              ) : environmentDrivers.length > 0 ? (
-                <div className="rounded-md border border-border/60 bg-muted/20 px-4 py-3 text-sm">
-                  <p className="font-medium text-foreground">Configure this plugin from Company Environments.</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {driverLabel || "This plugin"} registers environment runtime settings there so credentials stay
-                    company-scoped instead of instance-global.
-                  </p>
-                  <div className="mt-3">
-                    <Link to="/company/settings/environments">
-                      <Button variant="outline" size="sm">Open Company Environments</Button>
-                    </Link>
+                {hasConfigSchema ? (
+                  <PluginConfigForm
+                    pluginId={pluginId!}
+                    schema={configSchema!}
+                    initialValues={configData?.configJson}
+                    isLoading={configLoading}
+                    pluginStatus={plugin.status}
+                    supportsConfigTest={(plugin as unknown as { supportsConfigTest?: boolean }).supportsConfigTest === true}
+                  />
+                ) : environmentDrivers.length > 0 ? (
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-4 py-3 text-sm">
+                    <p className="font-medium text-foreground">Configure this plugin from Company Environments.</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {driverLabel || "This plugin"} registers environment runtime settings there so credentials stay
+                      company-scoped instead of instance-global.
+                    </p>
+                    <div className="mt-3">
+                      <Link to="/company/settings/environments">
+                        <Button variant="outline" size="sm">Open Company Environments</Button>
+                      </Link>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  This plugin does not require any settings.
-                </p>
-              )}
-            </section>
-          </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    This plugin does not require any settings.
+                  </p>
+                )}
+              </section>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="status" className="space-y-6">

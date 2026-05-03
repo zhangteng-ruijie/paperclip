@@ -1,6 +1,8 @@
 import {
   DEFAULT_ACK_TEMPLATE,
   DEFAULT_COMPLETION_TEMPLATE,
+  DEFAULT_QUICK_REPLY_REGEX,
+  DEFAULT_QUICK_REPLY_TEXT,
 } from "./constants.js";
 import type {
   FeishuBaseSinkConfig,
@@ -12,14 +14,18 @@ import type {
 export const DEFAULT_CONFIG: Required<Pick<
   FeishuConnectorConfig,
   "larkCliBin" | "dryRunCli" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
+  | "enableQuickReply" | "quickReplyRegex" | "quickReplyText"
 >> = {
   larkCliBin: "lark-cli",
-  dryRunCli: false,
+  dryRunCli: true,
   enableEventSubscriber: false,
   eventTypes: "im.message.receive_v1",
   ackOnInbound: false,
   ackMessageTemplate: DEFAULT_ACK_TEMPLATE,
   completionMessageTemplate: DEFAULT_COMPLETION_TEMPLATE,
+  enableQuickReply: true,
+  quickReplyRegex: DEFAULT_QUICK_REPLY_REGEX,
+  quickReplyText: DEFAULT_QUICK_REPLY_TEXT,
 };
 
 function asArray<T>(value: unknown): T[] {
@@ -37,7 +43,9 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     larkCliBin: typeof source.larkCliBin === "string" && source.larkCliBin.trim()
       ? source.larkCliBin.trim()
       : DEFAULT_CONFIG.larkCliBin,
-    dryRunCli: source.dryRunCli === true,
+    dryRunCli: typeof source.dryRunCli === "boolean"
+      ? source.dryRunCli
+      : DEFAULT_CONFIG.dryRunCli,
     enableEventSubscriber: source.enableEventSubscriber === true,
     eventTypes: typeof source.eventTypes === "string" && source.eventTypes.trim()
       ? source.eventTypes.trim()
@@ -49,13 +57,20 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     completionMessageTemplate: typeof source.completionMessageTemplate === "string"
       ? source.completionMessageTemplate
       : DEFAULT_CONFIG.completionMessageTemplate,
+    enableQuickReply: source.enableQuickReply !== false,
+    quickReplyRegex: typeof source.quickReplyRegex === "string" && source.quickReplyRegex.trim()
+      ? source.quickReplyRegex.trim()
+      : DEFAULT_CONFIG.quickReplyRegex,
+    quickReplyText: typeof source.quickReplyText === "string"
+      ? source.quickReplyText
+      : DEFAULT_CONFIG.quickReplyText,
     connections: asArray<FeishuConnectionConfig>(source.connections).filter((connection) =>
       typeof connection?.id === "string" &&
       typeof connection?.profileName === "string"
     ),
     routes: asArray<FeishuRouteConfig>(source.routes).filter((route) =>
       typeof route?.id === "string" &&
-      typeof route?.companyId === "string" &&
+      (typeof route?.companyId === "string" || typeof route?.companyRef === "string") &&
       typeof route?.matchType === "string"
     ),
     baseSinks: asArray<FeishuBaseSinkConfig>(source.baseSinks).filter((sink) =>

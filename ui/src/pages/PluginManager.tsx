@@ -67,6 +67,7 @@ export function PluginManager() {
   const { pushToast } = useToastActions();
 
   const [installPackage, setInstallPackage] = useState("");
+  const [installIsLocalPath, setInstallIsLocalPath] = useState(false);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [uninstallPluginId, setUninstallPluginId] = useState<string | null>(null);
   const [uninstallPluginName, setUninstallPluginName] = useState<string>("");
@@ -103,6 +104,7 @@ export function PluginManager() {
       invalidatePluginQueries();
       setInstallDialogOpen(false);
       setInstallPackage("");
+      setInstallIsLocalPath(false);
       pushToast({ title: "Plugin installed successfully", tone: "success" });
     },
     onError: (err: Error) => {
@@ -177,24 +179,47 @@ export function PluginManager() {
             <DialogHeader>
               <DialogTitle>Install Plugin</DialogTitle>
               <DialogDescription>
-                Enter the npm package name of the plugin you wish to install.
+                Enter an npm package name, or switch to a server-local plugin folder path.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
+              <div className="flex gap-2 rounded-md border bg-muted/40 p-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!installIsLocalPath ? "default" : "ghost"}
+                  onClick={() => setInstallIsLocalPath(false)}
+                >
+                  npm package
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={installIsLocalPath ? "default" : "ghost"}
+                  onClick={() => setInstallIsLocalPath(true)}
+                >
+                  server folder
+                </Button>
+              </div>
               <div className="grid gap-2">
-                <Label htmlFor="packageName">npm Package Name</Label>
+                <Label htmlFor="packageName">{installIsLocalPath ? "Server Folder Path" : "npm Package Name"}</Label>
                 <Input
                   id="packageName"
-                  placeholder="@paperclipai/plugin-example"
+                  placeholder={installIsLocalPath ? "/opt/paperclip/plugins/plugin-feishu-connector" : "@paperclipai/plugin-example"}
                   value={installPackage}
                   onChange={(e) => setInstallPackage(e.target.value)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  {installIsLocalPath
+                    ? "The folder must exist on the Paperclip server and contain package.json plus dist/manifest.js."
+                    : "For production cloud installs, publish private plugins to your npm registry, then enter the package name here."}
+                </p>
               </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setInstallDialogOpen(false)}>Cancel</Button>
               <Button
-                onClick={() => installMutation.mutate({ packageName: installPackage })}
+                onClick={() => installMutation.mutate({ packageName: installPackage, isLocalPath: installIsLocalPath })}
                 disabled={!installPackage || installMutation.isPending}
               >
                 {installMutation.isPending ? "Installing..." : "Install"}

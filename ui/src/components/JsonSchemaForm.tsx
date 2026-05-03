@@ -45,6 +45,8 @@ export interface JsonSchemaNode {
   description?: string;
   default?: unknown;
   enum?: unknown[];
+  enumNames?: string[];
+  enumLabels?: string[];
   const?: unknown;
   format?: string;
 
@@ -119,6 +121,20 @@ export function labelFromKey(key: string, schema: JsonSchemaNode): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function propertyOrder(schema: JsonSchemaNode, fallback: number): number {
+  const raw = schema["x-order"] ?? schema.order ?? schema.propertyOrder;
+  return typeof raw === "number" ? raw : fallback;
+}
+
+function orderedPropertyEntries(
+  properties: Record<string, JsonSchemaNode>,
+): Array<[string, JsonSchemaNode]> {
+  return Object.entries(properties)
+    .map(([key, schema], index) => ({ key, schema, index }))
+    .sort((a, b) => propertyOrder(a.schema, a.index) - propertyOrder(b.schema, b.index) || a.index - b.index)
+    .map(({ key, schema }) => [key, schema]);
+}
+
 /** Produce a sensible default value for a schema node. */
 export function getDefaultForSchema(schema: JsonSchemaNode): unknown {
   if (schema.default !== undefined) return schema.default;
@@ -140,7 +156,7 @@ export function getDefaultForSchema(schema: JsonSchemaNode): unknown {
     case "object": {
       if (!schema.properties) return {};
       const obj: Record<string, unknown> = {};
-      for (const [key, propSchema] of Object.entries(schema.properties)) {
+      for (const [key, propSchema] of orderedPropertyEntries(schema.properties)) {
         obj[key] = getDefaultForSchema(propSchema);
       }
       return obj;
@@ -237,7 +253,7 @@ export function validateJsonSchemaForm(
   const properties = schema.properties ?? {};
   const requiredFields = new Set(schema.required ?? []);
 
-  for (const [key, propSchema] of Object.entries(properties)) {
+  for (const [key, propSchema] of orderedPropertyEntries(properties)) {
     const fieldPath = [...path, key];
     const errorKey = `/${fieldPath.join("/")}`;
     const value = values[key];
@@ -294,7 +310,7 @@ export function getDefaultValues(schema: JsonSchemaNode): Record<string, unknown
   const result: Record<string, unknown> = {};
   const properties = schema.properties ?? {};
 
-  for (const [key, propSchema] of Object.entries(properties)) {
+  for (const [key, propSchema] of orderedPropertyEntries(properties)) {
     const def = getDefaultForSchema(propSchema);
     if (def !== undefined) {
       result[key] = def;
@@ -428,6 +444,7 @@ const EnumField = React.memo(({
   description,
   error,
   options,
+  optionLabels,
 }: {
   value: unknown;
   onChange: (val: unknown) => void;
@@ -437,6 +454,7 @@ const EnumField = React.memo(({
   description?: string;
   error?: string;
   options: unknown[];
+  optionLabels?: string[];
 }) => (
   <FieldWrapper
     label={label}
@@ -451,12 +469,12 @@ const EnumField = React.memo(({
       disabled={disabled}
     >
       <SelectTrigger className="w-full">
-        <SelectValue placeholder="Select an option" />
+        <SelectValue placeholder="请选择" />
       </SelectTrigger>
       <SelectContent>
-        {options.map((option) => (
+        {options.map((option, index) => (
           <SelectItem key={String(option)} value={String(option)}>
-            {String(option)}
+            {optionLabels?.[index] ?? String(option)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -667,6 +685,7 @@ const ArrayField = React.memo(({
   const items = Array.isArray(value) ? value : [];
   const itemSchema = propSchema.items as JsonSchemaNode;
   const isComplex = resolveType(itemSchema) === "object";
+  const itemTitle = typeof itemSchema.title === "string" ? itemSchema.title.trim() : "";
 
   return (
     <div className="space-y-4">
@@ -694,7 +713,7 @@ const ArrayField = React.memo(({
           }}
         >
           <Plus className="mr-2 h-4 w-4" />
-          {isComplex ? "Add item" : "Add"}
+          {itemTitle ? `添加${itemTitle}` : isComplex ? "添加一项" : "添加"}
         </Button>
       </div>
 
@@ -706,7 +725,7 @@ const ArrayField = React.memo(({
           >
             <div className="flex-1">
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                Item {index + 1}
+                {itemTitle ? `${itemTitle} ${index + 1}` : `第 ${index + 1} 项`}
               </div>
               <FormField
                 propSchema={itemSchema}
@@ -739,13 +758,13 @@ const ArrayField = React.memo(({
               }}
             >
               <Trash2 className="h-4 w-4" />
-              <span className="sr-only">Remove item</span>
+              <span className="sr-only">删除这一项</span>
             </Button>
           </div>
         ))}
         {items.length === 0 && (
           <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
-            No items added yet.
+            还没有添加内容。
           </div>
         )}
       </div>
@@ -871,6 +890,7 @@ const FormField = React.memo(({
           description={propSchema.description}
           error={error}
           options={propSchema.enum ?? []}
+          optionLabels={propSchema.enumLabels ?? propSchema.enumNames}
         />
       );
 
@@ -1014,14 +1034,14 @@ export function JsonSchemaForm({
           className,
         )}
       >
-        No configuration options available.
+        暂无可配置项。
       </div>
     );
   }
 
   return (
     <div className={cn("space-y-6", className)}>
-      {Object.entries(properties).map(([key, propSchema]) => {
+      {orderedPropertyEntries(properties).map(([key, propSchema]) => {
         const value = values[key];
         const isRequired = requiredFields.has(key);
         const error = errors[`/${key}`];

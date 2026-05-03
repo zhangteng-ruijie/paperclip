@@ -34,6 +34,7 @@ import {
   ensurePathInEnv,
   readPaperclipRuntimeSkillEntries,
   resolvePaperclipDesiredSkillNames,
+  resolvePaperclipLocale,
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
