@@ -328,11 +328,11 @@ describe("NewIssueDialog", () => {
     const { root } = renderDialog(container);
     await flush();
 
-    expect(container.textContent).toContain("New sub-issue");
-    expect(container.textContent).toContain("Sub-issue of");
+    expect(container.textContent).toContain("新建子任务");
+    expect(container.textContent).toContain("父任务");
     expect(container.textContent).toContain("PAP-1");
     expect(container.textContent).toContain("Parent issue");
-    expect(container.textContent).toContain("Create Sub-Issue");
+    expect(container.textContent).toContain("创建子任务");
 
     act(() => root.unmount());
 
@@ -340,9 +340,9 @@ describe("NewIssueDialog", () => {
     const rerendered = renderDialog(container);
     await flush();
 
-    expect(container.textContent).toContain("New issue");
-    expect(container.textContent).toContain("Create Issue");
-    expect(container.textContent).not.toContain("Sub-issue of");
+    expect(container.textContent).toContain("新建任务");
+    expect(container.textContent).toContain("创建任务");
+    expect(container.textContent).not.toContain("父任务");
 
     act(() => rerendered.root.unmount());
   });
@@ -386,7 +386,7 @@ describe("NewIssueDialog", () => {
     await flush();
 
     const submitButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Create Sub-Issue"));
+      .find((button) => button.textContent?.includes("创建子任务"));
     expect(submitButton).not.toBeUndefined();
     await waitForAssertion(() => {
       expect(submitButton?.hasAttribute("disabled")).toBe(false);
@@ -426,8 +426,8 @@ describe("NewIssueDialog", () => {
     const { root } = renderDialog(container);
     await flush();
 
-    const titleInput = container.querySelector('textarea[placeholder="Issue title"]') as HTMLTextAreaElement | null;
-    const descriptionInput = container.querySelector('textarea[aria-label="Add description..."]') as HTMLTextAreaElement | null;
+    const titleInput = container.querySelector('textarea[placeholder="任务标题"]') as HTMLTextAreaElement | null;
+    const descriptionInput = container.querySelector('textarea[aria-label="添加描述..."]') as HTMLTextAreaElement | null;
     expect(titleInput).not.toBeNull();
     expect(descriptionInput).not.toBeNull();
 
@@ -449,7 +449,7 @@ describe("NewIssueDialog", () => {
     await flush();
 
     const submitButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Create Issue"));
+      .find((button) => button.textContent?.includes("创建任务"));
     expect(submitButton).not.toBeUndefined();
     await vi.waitFor(() => {
       expect(submitButton?.hasAttribute("disabled")).toBe(false);
@@ -486,7 +486,7 @@ describe("NewIssueDialog", () => {
     await flush();
 
     const submitButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Create Sub-Issue"));
+      .find((button) => button.textContent?.includes("创建子任务"));
     expect(submitButton).not.toBeUndefined();
 
     await act(async () => {
@@ -518,8 +518,8 @@ describe("NewIssueDialog", () => {
     expect(dialogContent?.className).toContain("h-[calc(100dvh-2rem)]");
     expect(dialogContent?.className).toContain("overflow-hidden");
 
-    const titleInput = container.querySelector('textarea[placeholder="Issue title"]');
-    const descriptionInput = container.querySelector('textarea[aria-label="Add description..."]');
+    const titleInput = container.querySelector('textarea[placeholder="任务标题"]');
+    const descriptionInput = container.querySelector('textarea[aria-label="添加描述..."]');
     const bodyScrollRegion = Array.from(container.querySelectorAll("div")).find((element) =>
       typeof element.className === "string" && element.className.includes("overscroll-contain"),
     );
@@ -591,7 +591,7 @@ describe("NewIssueDialog", () => {
     });
     await flush();
 
-    expect(container.textContent).toContain("will no longer use the parent issue workspace");
+    expect(container.textContent).toContain("不再使用父任务工作区");
     expect(container.textContent).toContain("Parent workspace");
 
     act(() => root.unmount());

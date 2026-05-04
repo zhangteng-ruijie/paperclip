@@ -7,8 +7,18 @@ import { Button } from "@/components/ui/button";
 
 const allStatuses = ["backlog", "todo", "in_progress", "in_review", "done", "cancelled", "blocked"];
 
+const statusLabels: Record<string, string> = {
+  backlog: "暂存",
+  todo: "待办",
+  in_progress: "进行中",
+  in_review: "评审中",
+  done: "已完成",
+  cancelled: "已取消",
+  blocked: "已阻塞",
+};
+
 function statusLabel(status: string): string {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return statusLabels[status] ?? status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 interface StatusIconProps {
@@ -20,40 +30,40 @@ interface StatusIconProps {
 }
 
 function blockedAttentionLabel(blockerAttention: IssueBlockerAttention | null | undefined) {
-  if (!blockerAttention || blockerAttention.state === "none") return "Blocked";
+  if (!blockerAttention || blockerAttention.state === "none") return "已阻塞";
 
   if (blockerAttention.reason === "active_child") {
     const count = blockerAttention.coveredBlockerCount;
     if (count === 1 && blockerAttention.sampleBlockerIdentifier) {
-      return `Blocked · waiting on active sub-issue ${blockerAttention.sampleBlockerIdentifier}`;
+      return `已阻塞 · 等待活跃子任务 ${blockerAttention.sampleBlockerIdentifier}`;
     }
-    if (count === 1) return "Blocked · waiting on 1 active sub-issue";
-    return `Blocked · waiting on ${count} active sub-issues`;
+    if (count === 1) return "已阻塞 · 等待 1 个活跃子任务";
+    return `已阻塞 · 等待 ${count} 个活跃子任务`;
   }
 
   if (blockerAttention.reason === "active_dependency") {
     const count = blockerAttention.coveredBlockerCount;
     if (count === 1 && blockerAttention.sampleBlockerIdentifier) {
-      return `Blocked · covered by active dependency ${blockerAttention.sampleBlockerIdentifier}`;
+      return `已阻塞 · 由活跃依赖 ${blockerAttention.sampleBlockerIdentifier} 覆盖`;
     }
-    if (count === 1) return "Blocked · covered by 1 active dependency";
-    return `Blocked · covered by ${count} active dependencies`;
+    if (count === 1) return "已阻塞 · 由 1 个活跃依赖覆盖";
+    return `已阻塞 · 由 ${count} 个活跃依赖覆盖`;
   }
 
   if (blockerAttention.reason === "stalled_review") {
     const count = blockerAttention.stalledBlockerCount;
     const leaf = blockerAttention.sampleStalledBlockerIdentifier ?? blockerAttention.sampleBlockerIdentifier;
-    if (count === 1 && leaf) return `Blocked · review stalled on ${leaf}`;
-    if (count === 1) return "Blocked · review stalled with no clear next step";
-    return `Blocked · ${count} reviews stalled with no clear next step`;
+    if (count === 1 && leaf) return `已阻塞 · ${leaf} 的评审停滞`;
+    if (count === 1) return "已阻塞 · 评审停滞且没有明确下一步";
+    return `已阻塞 · ${count} 个评审停滞且没有明确下一步`;
   }
 
   if (blockerAttention.reason === "attention_required") {
     const count = blockerAttention.unresolvedBlockerCount;
-    return `Blocked · ${count} unresolved ${count === 1 ? "blocker needs" : "blockers need"} attention`;
+    return `已阻塞 · ${count} 个未解决阻塞项需要关注`;
   }
 
-  return "Blocked";
+  return "已阻塞";
 }
 
 export function StatusIcon({ status, blockerAttention, onChange, className, showLabel }: StatusIconProps) {
