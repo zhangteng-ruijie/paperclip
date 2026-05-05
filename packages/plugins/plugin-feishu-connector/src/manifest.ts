@@ -73,6 +73,14 @@ const manifest: PaperclipPluginManifestV1 = {
               description: "这是飞书官方 lark-cli 里已经登录好的 profile 名。不会填时先找工程师执行 lark-cli auth login 创建。",
               default: "paperclip-news-bot",
             },
+            botAliases: {
+              type: "array",
+              title: "飞书 @ 名称/别名",
+              "x-order": 32,
+              description: "当飞书或 lark-cli 没有返回机器人显示名时，用这里判断用户是不是 @ 了当前机器人。可填多个，例如「锐思」「小锐」。",
+              items: { type: "string" },
+              default: [],
+            },
             appId: {
               type: "string",
               title: "飞书 App ID（可选）",
@@ -335,7 +343,14 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "智能体完成后的回复话术",
         "x-order": 70,
         default: DEFAULT_CONFIG.completionMessageTemplate,
-        description: "可以使用 {{issue_title}} 表示任务标题。",
+        description: "默认优先使用 Paperclip 最终评论正文。自定义时可使用 {{issue_title}}、{{issue_ref}}、{{issue_url}}。",
+      },
+      paperclipBaseUrl: {
+        type: "string",
+        title: "Paperclip 内部访问地址（可选）",
+        "x-order": 75,
+        default: DEFAULT_CONFIG.paperclipBaseUrl,
+        description: "例如 https://paperclip.company.com。只用于飞书里附带内部任务链接；没有 Paperclip 账号的人打不开。",
       },
       enableEventSubscriber: {
         type: "boolean",

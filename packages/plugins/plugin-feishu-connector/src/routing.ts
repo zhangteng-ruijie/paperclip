@@ -3,6 +3,7 @@ import type {
   FeishuConnectorConfig,
   FeishuInboundAttachment,
   FeishuInboundMessage,
+  FeishuMention,
   FeishuRouteConfig,
 } from "./types.js";
 
@@ -112,6 +113,48 @@ function dedupeAttachments(attachments: FeishuInboundAttachment[]): FeishuInboun
   return out;
 }
 
+function parseMention(value: unknown): FeishuMention | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const id = asRecord(record.id) ?? asRecord(record.user_id) ?? asRecord(record.userId) ?? {};
+  const mention: FeishuMention = {
+    name: readString(record.name, record.display_name, record.displayName, record.text),
+    openId: readString(record.open_id, record.openId, id.open_id, id.openId),
+    userId: readString(record.user_id, record.userId, id.user_id, id.userId),
+    appId: readString(record.app_id, record.appId, id.app_id, id.appId),
+    key: readString(record.key),
+  };
+  return mention.name || mention.openId || mention.userId || mention.appId || mention.key ? mention : null;
+}
+
+function collectMentions(value: unknown, out: FeishuMention[] = []): FeishuMention[] {
+  if (Array.isArray(value)) {
+    for (const item of value) collectMentions(item, out);
+    return out;
+  }
+  const mention = parseMention(value);
+  if (mention) out.push(mention);
+  return out;
+}
+
+function dedupeMentions(mentions: FeishuMention[]): FeishuMention[] {
+  const seen = new Set<string>();
+  const out: FeishuMention[] = [];
+  for (const mention of mentions) {
+    const key = [
+      mention.name,
+      mention.openId,
+      mention.userId,
+      mention.appId,
+      mention.key,
+    ].filter(Boolean).join(":");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(mention);
+  }
+  return out;
+}
+
 function extractTextFromContent(content: unknown): string | undefined {
   if (typeof content !== "string") return readString(content);
   const parsed = parseJsonRecord(content);
@@ -161,6 +204,12 @@ export function extractInboundMessage(raw: unknown, fallbackConnectionId?: strin
     ...collectAttachments(contentRecord ?? message.content),
     ...parsePlaceholderAttachments(rawText),
   ]);
+  const mentions = dedupeMentions([
+    ...collectMentions(root.mentions),
+    ...collectMentions(event.mentions),
+    ...collectMentions(message.mentions),
+    ...collectMentions(contentRecord?.mentions),
+  ]);
   const text = rawText || attachmentSummary(attachments);
 
   return {
@@ -174,7 +223,10 @@ export function extractInboundMessage(raw: unknown, fallbackConnectionId?: strin
     senderOpenId: readString(root.sender_open_id, root.senderOpenId, senderId.open_id, senderId.openId),
     senderUserId: readString(root.sender_user_id, root.senderUserId, senderId.user_id, senderId.userId),
     senderName: readString(root.sender_name, root.senderName, sender.name, sender.sender_name),
+    senderType: readString(root.sender_type, root.senderType, sender.sender_type, sender.senderType, sender.type),
+    senderAppId: readString(root.sender_app_id, root.senderAppId, senderId.app_id, senderId.appId, sender.app_id, sender.appId),
     text,
+    mentions,
     attachments,
     raw,
   };
@@ -229,12 +281,29 @@ export function describeRouteTrigger(route: FeishuRouteConfig): string {
     return route.userName ? `指定提出人「${route.userName}」` : "指定提出人";
   }
   if (route.matchType === "keyword") {
-    return route.keyword ? `消息包含「${route.keyword}」` : "消息包含关键词";
+    return route.keyword ? `包含「${route.keyword}」的飞书消息` : "包含关键词的飞书消息";
   }
   if (route.matchType === "regex") {
-    return route.regex ? `正则匹配「${route.regex}」` : "正则匹配";
+    return "匹配高级规则的飞书消息";
   }
   return "默认入口";
+}
+
+export function isLikelyInternalRouteName(value?: string | null): boolean {
+  const normalized = (value ?? "").trim().toLocaleLowerCase();
+  if (!normalized) return false;
+  if (/[\u4e00-\u9fff\s]/.test(normalized)) return false;
+  if (/^(chat|team|keyword|regex|default|route|entry|inbound)[_-]/.test(normalized)) return true;
+  if (/[_-](to|agent|bot|team|chat|keyword|regex|route|entry|inbound)([_-]|$)/.test(normalized)) return true;
+  return /^[a-z0-9]+([_-][a-z0-9]+){2,}$/.test(normalized);
+}
+
+export function describeRouteEntry(route: FeishuRouteConfig): string {
+  const explicitName = route.name?.trim();
+  if (explicitName && !isLikelyInternalRouteName(explicitName)) return explicitName;
+  const trigger = describeRouteTrigger(route);
+  const agentName = route.targetAgentName?.trim();
+  return agentName ? `${trigger} → ${agentName}` : trigger;
 }
 
 export function describeFeishuConversation(
@@ -256,7 +325,7 @@ export function feishuContextLines(
   const sender = message.senderName ?? message.senderOpenId ?? message.senderUserId ?? "unknown";
   const lines = [
     "来源：飞书",
-    route ? `接收入口：${route.id}（${describeRouteTrigger(route)}）` : undefined,
+    route ? `接收入口：${describeRouteEntry(route)}` : undefined,
     `飞书会话：${describeFeishuConversation(message, route)}`,
     `提出人：${sender}`,
     `飞书消息：${message.messageId}`,
@@ -314,10 +383,12 @@ export interface TemplateContext {
   route?: FeishuRouteConfig;
   issueId?: string;
   issueRef?: string;
+  issueUrl?: string;
   issueTitle?: string;
   agentName?: string;
   runId?: string;
   runStatus?: string;
+  estimatedDuration?: string;
 }
 
 export function renderTemplate(template: string, context: TemplateContext): string {
@@ -330,10 +401,13 @@ export function renderTemplate(template: string, context: TemplateContext): stri
     "route.id": context.route?.id ?? "",
     "issue_id": context.issueId ?? "",
     "issue_ref": context.issueRef ?? context.issueId ?? "",
+    "issue_url": context.issueUrl ?? "",
     "issue_title": context.issueTitle ?? "",
     "agent_name": context.agentName ?? context.route?.targetAgentName ?? "agent",
     "run_id": context.runId ?? "",
     "run_status": context.runStatus ?? "",
+    "eta": context.estimatedDuration ?? "",
+    "estimated_duration": context.estimatedDuration ?? "",
   };
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, key: string) => values[key.trim()] ?? "");
 }

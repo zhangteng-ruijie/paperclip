@@ -17,6 +17,7 @@ import {
   DATA_KEYS,
   DEFAULT_ACK_TEMPLATE,
   DEFAULT_COMPLETION_TEMPLATE,
+  DEFAULT_ESTIMATED_DURATION_LABEL,
   LEGACY_ACK_TEMPLATE,
   LEGACY_COMPLETION_TEMPLATE,
   PLUGIN_ID,
@@ -35,6 +36,7 @@ import {
   createIssueDescription,
   createIssueTitle,
   describeFeishuConversation,
+  describeRouteEntry,
   describeRouteTrigger,
   extractInboundMessage,
   renderTemplate,
@@ -63,6 +65,7 @@ import type {
   FeishuSessionData,
   LarkCliResult,
 } from "./types.js";
+import type { IssueComment } from "@paperclipai/shared";
 
 type RecentRecord = {
   level: "info" | "warning" | "error";
@@ -85,6 +88,9 @@ type ProductionMonitor = {
   message: string;
   checkedAt: string;
   enabledConnectionCount: number;
+  usableConnectionCount?: number;
+  missingProfileConnectionIds?: string[];
+  profileReadError?: string | null;
   enabledRouteCount: number;
   expectedSubscriberCount: number;
   activeSubscriberCount: number;
@@ -94,6 +100,11 @@ type ProductionMonitor = {
   lastEventAt: string | null;
   lastWatchdogAt: string | null;
   checks: ProductionMonitorCheck[];
+};
+
+type ProfileAvailability = {
+  availableProfileNames?: Set<string>;
+  profileReadError?: string | null;
 };
 
 type AttachedResourceResult = {
@@ -144,10 +155,15 @@ const recentRecords: RecentRecord[] = [];
 const subscribers = new Map<string, LarkEventSubscriber>();
 const guidedBindSessions = new Map<string, LarkConfigInitSession>();
 const userAuthSessions = new Map<string, UserAuthSession>();
+const connectionBotInfoCache = new Map<string, { fetchedAt: number; botName?: string | null; botOpenId?: string | null }>();
 let currentContext: PluginContext | null = null;
 let subscriberWatchdog: ReturnType<typeof setInterval> | null = null;
 let lastWatchdogAt: string | null = null;
 let lastInboundEventAt: string | null = null;
+const FINAL_REPLY_FULL_TEXT_LIMIT = 1_800;
+const FINAL_REPLY_SUMMARY_LIMIT = 900;
+const RUN_FALLBACK_DELAY_MS = process.env.NODE_ENV === "test" ? 10 : 5_000;
+const CONNECTION_BOT_INFO_TTL_MS = 10 * 60 * 1000;
 
 function record(level: RecentRecord["level"], message: string, data?: unknown): void {
   recentRecords.unshift({ level, message, data, createdAt: new Date().toISOString() });
@@ -175,6 +191,8 @@ function inboundMessageDiagnostics(
     chatName: message.chatName ?? null,
     senderName: message.senderName ?? null,
     senderOpenId: message.senderOpenId ?? null,
+    senderType: message.senderType ?? null,
+    senderAppId: message.senderAppId ?? null,
     textPreview: textPreview(message.text),
     attachmentCount: message.attachments.length,
     ...extra,
@@ -222,7 +240,7 @@ function routeMatchDiagnostic(
 
   return {
     routeId: route.id,
-    routeName: describeRouteTrigger(route),
+    routeName: describeRouteEntry(route),
     enabled: route.enabled !== false,
     trigger: describeRouteTrigger(route),
     routeConnectionId: route.connectionId ?? null,
@@ -242,33 +260,75 @@ function activeSubscriberEntries(): Array<[string, LarkEventSubscriber]> {
   return [...subscribers.entries()].filter(([, subscriber]) => subscriber.isRunning());
 }
 
+function routeListeningConnections(config: FeishuConnectorConfig): FeishuConnectionConfig[] {
+  const connections = getEnabledConnections(config);
+  const connectionById = new Map(connections.map((connection) => [connection.id, connection]));
+  const defaultConnection = connections[0] ?? null;
+  const connectionIds = new Set<string>();
+  for (const route of enabledRoutes(config)) {
+    const connectionId = route.connectionId ?? defaultConnection?.id;
+    if (connectionId && connectionById.has(connectionId)) connectionIds.add(connectionId);
+  }
+  return connections.filter((connection) => connectionIds.has(connection.id));
+}
+
 function recentRecordsSince(minutes: number): RecentRecord[] {
   const since = Date.now() - minutes * 60 * 1000;
   return recentRecords.filter((item) => Date.parse(item.createdAt) >= since);
 }
 
-function buildProductionMonitor(config: FeishuConnectorConfig): ProductionMonitor {
+function buildProductionMonitor(
+  config: FeishuConnectorConfig,
+  profileAvailability: ProfileAvailability = {},
+): ProductionMonitor {
   const connections = getEnabledConnections(config);
+  const availableProfileNames = profileAvailability.availableProfileNames;
+  const missingProfileConnections = availableProfileNames
+    ? connections.filter((connection) => !availableProfileNames.has(connection.profileName))
+    : [];
+  const usableConnectionCount = availableProfileNames
+    ? connections.length - missingProfileConnections.length
+    : undefined;
+  const listeningConnections = routeListeningConnections(config);
   const routes = enabledRoutes(config);
   const activeEntries = activeSubscriberEntries();
-  const expectedSubscriberCount = config.enableEventSubscriber === true ? connections.length : 0;
-  const activeSubscriberCount = activeEntries.length;
+  const expectedSubscriberCount = config.enableEventSubscriber === true ? listeningConnections.length : 0;
   const activeSubscriberIds = new Set(activeEntries.map(([connectionId]) => connectionId));
+  const expectedSubscriberIds = new Set(listeningConnections.map((connection) => connection.id));
+  const activeSubscriberCount = activeEntries.filter(([connectionId]) => expectedSubscriberIds.has(connectionId)).length;
   const missingSubscriberConnectionIds = config.enableEventSubscriber === true
-    ? connections.filter((connection) => !activeSubscriberIds.has(connection.id)).map((connection) => connection.id)
+    ? listeningConnections.filter((connection) => !activeSubscriberIds.has(connection.id)).map((connection) => connection.id)
     : [];
-  const recent = recentRecordsSince(30);
+  const recent = recentRecordsSince(30).filter((item) => {
+    const connectionId = typeof (item.data as Record<string, unknown> | undefined)?.connectionId === "string"
+      ? (item.data as Record<string, unknown>).connectionId as string
+      : null;
+    return !connectionId || expectedSubscriberIds.has(connectionId);
+  });
   const recentErrorCount = recent.filter((item) => item.level === "error").length;
   const recentWarningCount = recent.filter((item) => item.level === "warning").length;
+  const recentConflictCount = recent.filter((item) =>
+    item.message.includes("其他飞书机器人") || item.message.includes("抢答")
+  ).length;
   const lastEventAt = recentRecords[0]?.createdAt ?? null;
   const checks: ProductionMonitorCheck[] = [
     {
       key: "connections",
-      tone: connections.length > 0 ? "success" : "error",
+      tone: connections.length === 0
+        ? "error"
+        : missingProfileConnections.length > 0 || profileAvailability.profileReadError
+          ? "warning"
+          : "success",
       title: "飞书机器人",
-      detail: connections.length > 0
-        ? `已启用 ${connections.length} 个飞书机器人；每条入口可以单独选择。`
-        : "还没有启用飞书机器人，飞书消息无法进入 Paperclip。",
+      detail: connections.length === 0
+        ? "还没有启用飞书机器人，飞书消息无法进入 Paperclip。"
+        : profileAvailability.profileReadError
+          ? `已配置 ${connections.length} 个飞书机器人，但当前运行环境无法读取 lark-cli 授权列表：${profileAvailability.profileReadError}`
+          : missingProfileConnections.length > 0
+            ? `已配置 ${connections.length} 个飞书机器人，其中 ${missingProfileConnections.length} 个当前运行环境读不到授权/profile，需要重新绑定或换用可运行机器人。`
+            : availableProfileNames
+              ? `已启用 ${usableConnectionCount ?? connections.length} 个可运行飞书机器人；每条入口可以单独选择。`
+              : `已启用 ${connections.length} 个飞书机器人；每条入口可以单独选择。`,
     },
     {
       key: "routes",
@@ -285,7 +345,9 @@ function buildProductionMonitor(config: FeishuConnectorConfig): ProductionMonito
         : "warning",
       title: "自动监听",
       detail: config.enableEventSubscriber === true
-        ? missingSubscriberConnectionIds.length > 0
+        ? expectedSubscriberCount === 0
+          ? "监听开关已开启，但当前没有启用的业务入口，所以不会启动机器人监听。"
+          : missingSubscriberConnectionIds.length > 0
           ? `监听开关已开启，但 ${missingSubscriberConnectionIds.length} 个机器人暂时没有运行中的监听进程；监控会自动尝试拉起。`
           : `监听运行中：${activeSubscriberCount}/${expectedSubscriberCount} 个进程在线。`
         : "监听开关未开启，飞书里发消息不会自动进入 Paperclip。",
@@ -297,6 +359,14 @@ function buildProductionMonitor(config: FeishuConnectorConfig): ProductionMonito
       detail: config.dryRunCli === false
         ? "真实发送已开启，智能体完成后会回到飞书。"
         : "当前是页面模拟模式，不会真实回复飞书。",
+    },
+    {
+      key: "bot-conflict",
+      tone: recentConflictCount > 0 ? "warning" : "success",
+      title: "抢答冲突",
+      detail: recentConflictCount > 0
+        ? `最近 30 分钟检测到 ${recentConflictCount} 次其他飞书机器人可能在同一会话回复。建议只保留一个机器人监听同一入口。`
+        : "没有发现其他机器人抢答同一入口。",
     },
     {
       key: "recent-errors",
@@ -320,6 +390,9 @@ function buildProductionMonitor(config: FeishuConnectorConfig): ProductionMonito
         : "生产监控正常",
     checkedAt: new Date().toISOString(),
     enabledConnectionCount: connections.length,
+    usableConnectionCount,
+    missingProfileConnectionIds: missingProfileConnections.map((connection) => connection.id),
+    profileReadError: profileAvailability.profileReadError ?? null,
     enabledRouteCount: routes.length,
     expectedSubscriberCount,
     activeSubscriberCount,
@@ -464,6 +537,8 @@ async function enrichInboundMessage(
         senderName: enrichedMessage.senderName ?? readString(sender?.name),
         senderOpenId: enrichedMessage.senderOpenId ?? (senderIdType === "open_id" ? senderId : undefined),
         senderUserId: enrichedMessage.senderUserId ?? (senderIdType === "user_id" ? senderId : undefined),
+        senderType: enrichedMessage.senderType ?? readString(detail.sender_type, detail.senderType, sender?.type, sender?.sender_type, sender?.senderType),
+        senderAppId: enrichedMessage.senderAppId ?? readString(detail.sender_app_id, detail.senderAppId, sender?.app_id, sender?.appId),
       };
     }
   }
@@ -722,7 +797,7 @@ async function resolveRouteForRun(ctx: PluginContext, route: FeishuRouteConfig):
   }
 
   if (!companyId) {
-    throw new Error(`路由「${route.id}」没有找到公司。请填写公司名称/前缀，例如「锐捷网络」或「CMP」。`);
+    throw new Error(`入口「${describeRouteEntry(route)}」没有找到公司。请填写公司名称/前缀，例如「锐捷网络」或「CMP」。`);
   }
 
   let targetAgentId = route.targetAgentId?.trim();
@@ -741,7 +816,7 @@ async function resolveRouteForRun(ctx: PluginContext, route: FeishuRouteConfig):
   }
 
   if (agentRef && !targetAgentId) {
-    throw new Error(`路由「${route.id}」没有找到智能体「${agentRef}」。请填写左侧智能体列表里显示的名称，或填写智能体 ID。`);
+    throw new Error(`入口「${describeRouteEntry(route)}」没有找到智能体「${agentRef}」。请填写左侧智能体列表里显示的名称，或填写智能体 ID。`);
   }
 
   return {
@@ -752,12 +827,13 @@ async function resolveRouteForRun(ctx: PluginContext, route: FeishuRouteConfig):
   };
 }
 
-function dedupKey(message: FeishuInboundMessage): string {
-  return message.eventId ? `event:${message.eventId}` : `message:${message.messageId}`;
+function dedupKey(message: FeishuInboundMessage, connectionId: string): string {
+  const eventOrMessage = message.eventId ? `event:${message.eventId}` : `message:${message.messageId}`;
+  return `${connectionId}:${eventOrMessage}`;
 }
 
-async function markDeduped(ctx: PluginContext, message: FeishuInboundMessage): Promise<boolean> {
-  const stateKey = dedupKey(message);
+async function markDeduped(ctx: PluginContext, message: FeishuInboundMessage, connectionId: string): Promise<boolean> {
+  const stateKey = dedupKey(message, connectionId);
   const existing = await ctx.state.get({
     scopeKind: "instance",
     namespace: "feishu-dedup",
@@ -831,6 +907,29 @@ async function findSessionByRunId(
   return null;
 }
 
+async function findSessionByIssueId(
+  ctx: PluginContext,
+  issueId: string,
+): Promise<{ companyId: string; data: FeishuSessionData } | null> {
+  const existing = await ctx.entities.list({
+    entityType: "feishu-session",
+    limit: 500,
+    offset: 0,
+  });
+  for (const record of existing) {
+    const data = record.data as Partial<FeishuSessionData> | undefined;
+    if (
+      record.scopeId &&
+      data?.paperclipIssueId === issueId &&
+      data.connectionId &&
+      data.sessionKey
+    ) {
+      return { companyId: record.scopeId, data: data as FeishuSessionData };
+    }
+  }
+  return null;
+}
+
 async function resolveRouteFromSession(
   ctx: PluginContext,
   config: FeishuConnectorConfig,
@@ -847,6 +946,192 @@ async function resolveRouteFromSession(
     targetAgentId: session.paperclipAgentId,
     replyMode: "thread",
   };
+}
+
+function isExternalBotMessage(
+  config: FeishuConnectorConfig,
+  connection: FeishuConnectionConfig,
+  message: FeishuInboundMessage,
+): boolean {
+  const senderType = (message.senderType ?? "").toLowerCase();
+  const looksLikeBot = /app|bot|机器人/.test(senderType);
+  if (!looksLikeBot && !message.senderAppId) return false;
+
+  const currentAppIds = new Set(
+    [connection.appId?.trim()]
+      .filter((appId): appId is string => !!appId),
+  );
+  const configuredAppIds = new Set(
+    (config.connections ?? [])
+      .map((item) => item.appId?.trim())
+      .filter((appId): appId is string => !!appId),
+  );
+
+  if (!message.senderAppId) return looksLikeBot;
+  if (currentAppIds.has(message.senderAppId)) return false;
+  if (configuredAppIds.has(message.senderAppId)) return true;
+  return looksLikeBot;
+}
+
+function isCurrentBotMessage(
+  connection: FeishuConnectionConfig,
+  message: FeishuInboundMessage,
+): boolean {
+  if (!message.senderAppId || !connection.appId) return false;
+  if (message.senderAppId !== connection.appId) return false;
+  const senderType = (message.senderType ?? "").toLowerCase();
+  const looksLikeBot = /app|bot|机器人/.test(senderType);
+  return !senderType || looksLikeBot;
+}
+
+function normalizeMentionValue(value?: string | null): string | null {
+  const normalized = (value ?? "")
+    .replace(/^@+/, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLocaleLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function connectionBotAliases(connection: FeishuConnectionConfig): string[] {
+  return [...new Set((connection.botAliases ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean))];
+}
+
+function isTechnicalProfileName(value?: string | null): boolean {
+  const normalized = (value ?? "").trim().toLocaleLowerCase();
+  return !normalized
+    || normalized.startsWith("cli_")
+    || normalized.endsWith("-bot")
+    || normalized.includes(" bot")
+    || normalized.includes("feishu")
+    || normalized.includes("飞书应用")
+    || /^[0-9a-f-]{12,}$/.test(normalized);
+}
+
+function extractTextMentionNames(text: string): string[] {
+  const names: string[] = [];
+  for (const match of text.matchAll(/@([^\s,，。.!！?？、:：;；)）\]】]+)/g)) {
+    const normalized = normalizeMentionValue(match[1]);
+    if (normalized) names.push(normalized);
+  }
+  return names;
+}
+
+function inboundMentionTargets(message: FeishuInboundMessage): {
+  names: Set<string>;
+  openIds: Set<string>;
+  appIds: Set<string>;
+  rawNames: string[];
+  hasExplicitMention: boolean;
+} {
+  const names = new Set<string>();
+  const openIds = new Set<string>();
+  const appIds = new Set<string>();
+  const rawNames: string[] = [];
+
+  for (const name of extractTextMentionNames(message.text)) {
+    names.add(name);
+    rawNames.push(name);
+  }
+  for (const mention of message.mentions ?? []) {
+    const name = normalizeMentionValue(mention.name);
+    if (name) {
+      names.add(name);
+      rawNames.push(name);
+    }
+    const openId = mention.openId?.trim();
+    if (openId) openIds.add(openId);
+    const appId = mention.appId?.trim();
+    if (appId) appIds.add(appId);
+  }
+
+  return {
+    names,
+    openIds,
+    appIds,
+    rawNames: [...new Set(rawNames)],
+    hasExplicitMention: names.size > 0 || openIds.size > 0 || appIds.size > 0,
+  };
+}
+
+async function cachedConnectionBotInfo(
+  config: FeishuConnectorConfig,
+  connection: FeishuConnectionConfig,
+): Promise<{ botName?: string | null; botOpenId?: string | null }> {
+  const cacheKey = `${connection.profileName}:${connection.appId ?? ""}`;
+  const cached = connectionBotInfoCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < CONNECTION_BOT_INFO_TTL_MS) {
+    return { botName: cached.botName, botOpenId: cached.botOpenId };
+  }
+  const info: Partial<Pick<ProfileRow, "botName" | "botOpenId">> = await readBotInfo(config, connection.profileName).catch(() => ({}));
+  const row = { fetchedAt: Date.now(), botName: info.botName ?? null, botOpenId: info.botOpenId ?? null };
+  connectionBotInfoCache.set(cacheKey, row);
+  return { botName: row.botName, botOpenId: row.botOpenId };
+}
+
+async function mentionTargetMismatch(
+  config: FeishuConnectorConfig,
+  connection: FeishuConnectionConfig,
+  message: FeishuInboundMessage,
+): Promise<Record<string, unknown> | null> {
+  const targets = inboundMentionTargets(message);
+  if (!targets.hasExplicitMention) return null;
+
+  const currentNames = new Set<string>();
+  const addCurrentName = (value?: string | null) => {
+    if (isTechnicalProfileName(value)) return;
+    const normalized = normalizeMentionValue(value);
+    if (normalized) currentNames.add(normalized);
+  };
+  addCurrentName(connection.name);
+  for (const alias of connectionBotAliases(connection)) addCurrentName(alias);
+  const currentOpenIds = new Set<string>();
+  const currentAppIds = new Set<string>();
+  if (connection.appId) currentAppIds.add(connection.appId);
+
+  const connectionNameAlreadyMatches = [...targets.names].some((name) => currentNames.has(name));
+  if (!connectionNameAlreadyMatches) {
+    const botInfo = await cachedConnectionBotInfo(config, connection);
+    addCurrentName(botInfo.botName);
+    if (botInfo.botOpenId) currentOpenIds.add(botInfo.botOpenId);
+  }
+
+  const hasComparableStructuredIdentity =
+    (targets.openIds.size > 0 && currentOpenIds.size > 0)
+    || (targets.appIds.size > 0 && currentAppIds.size > 0);
+  const canIdentifyCurrentBot = currentNames.size > 0 || hasComparableStructuredIdentity;
+  if (!canIdentifyCurrentBot) return null;
+
+  const addressedToCurrentBot =
+    [...targets.names].some((name) => currentNames.has(name))
+    || [...targets.openIds].some((openId) => currentOpenIds.has(openId))
+    || [...targets.appIds].some((appId) => currentAppIds.has(appId));
+
+  if (addressedToCurrentBot) return null;
+
+  return {
+    reason: "mentioned_other_bot",
+    mentionedNames: targets.rawNames,
+    currentBotNames: [...currentNames],
+    currentBotOpenIds: [...currentOpenIds],
+    currentAppIds: [...currentAppIds],
+  };
+}
+
+function buildPaperclipIssueUrl(
+  config: FeishuConnectorConfig,
+  route: ResolvedRouteConfig,
+  issueIdentifier?: string | null,
+): string | null {
+  const base = (config.paperclipBaseUrl || process.env.PAPERCLIP_PUBLIC_BASE_URL || process.env.PAPERCLIP_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/g, "");
+  if (!base || !issueIdentifier) return null;
+  const companySegment = (route.companyRef?.trim() || issueIdentifier.split("-")[0] || route.companyId).trim();
+  if (!companySegment) return null;
+  return `${base}/${encodeURIComponent(companySegment)}/issues/${encodeURIComponent(issueIdentifier)}`;
 }
 
 async function upsertSession(
@@ -1153,6 +1438,8 @@ function renderDefaultAwareTemplate(
     issueTitle: string;
     runId?: string;
     runStatus?: string;
+    issueUrl?: string | null;
+    estimatedDuration?: string;
   },
 ): string {
   return renderTemplate(template, {
@@ -1164,6 +1451,8 @@ function renderDefaultAwareTemplate(
     agentName: context.route.targetAgentName,
     runId: context.runId,
     runStatus: context.runStatus,
+    issueUrl: context.issueUrl ?? "",
+    estimatedDuration: context.estimatedDuration ?? "",
   });
 }
 
@@ -1174,8 +1463,11 @@ function buildAckReplyText(params: {
   issueId: string;
   issueRef: string;
   issueTitle: string;
+  issueUrl?: string | null;
+  estimatedDuration?: string;
 }): string {
   const { config, message, route, issueId, issueRef, issueTitle } = params;
+  const estimatedDuration = params.estimatedDuration ?? DEFAULT_ESTIMATED_DURATION_LABEL;
   const template = config.ackMessageTemplate ?? DEFAULT_ACK_TEMPLATE;
   if (!isDefaultAckTemplate(template)) {
     return renderDefaultAwareTemplate(template, {
@@ -1184,14 +1476,96 @@ function buildAckReplyText(params: {
       issueId,
       issueRef,
       issueTitle,
+      issueUrl: params.issueUrl,
+      estimatedDuration,
     });
   }
 
   const agentName = route.targetAgentName ?? "对应智能体";
-  return [
+  const lines = [
     `已收到，交给 ${agentName} 处理。`,
     `任务：${issueRef}`,
-  ].join("\n");
+    `预计耗时：${estimatedDuration}`,
+    "完成后会在这里回复。",
+  ];
+  if (params.issueUrl) {
+    lines.push(`Paperclip 内部链接：${params.issueUrl}（需要账号权限）`);
+  }
+  return lines.join("\n");
+}
+
+function normalizeCommentBody(body: string | null | undefined): string | null {
+  const normalized = (body ?? "").replace(/\r\n/g, "\n").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function commentTime(comment: IssueComment): number {
+  const createdAt = comment.createdAt as unknown;
+  if (createdAt instanceof Date) return createdAt.getTime();
+  if (typeof createdAt === "string") return Date.parse(createdAt);
+  return 0;
+}
+
+function latestFinalComment(
+  comments: IssueComment[],
+  session: FeishuSessionData,
+  route: ResolvedRouteConfig,
+): IssueComment | null {
+  const ordered = [...comments]
+    .filter((comment) => normalizeCommentBody(comment.body))
+    .sort((a, b) => commentTime(b) - commentTime(a));
+  if (ordered.length === 0) return null;
+
+  const agentAuthored = ordered.find((comment) =>
+    !!comment.authorAgentId &&
+    (comment.authorAgentId === route.targetAgentId || comment.authorAgentId === session.paperclipAgentId)
+  );
+  return agentAuthored ?? ordered[0] ?? null;
+}
+
+function looksLikeFinalComment(body: string | null | undefined): boolean {
+  const normalized = normalizeCommentBody(body);
+  if (!normalized) return false;
+  return /完成|已完成|处理完成|交付|结论|总结|报告|已发送|已回复|done/i.test(normalized);
+}
+
+function summarizeLongFinalComment(body: string): string {
+  const normalized = body.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalized.length <= FINAL_REPLY_SUMMARY_LIMIT) return normalized;
+  const paragraphs = normalized.split(/\n{2,}/g);
+  const picked: string[] = [];
+  let length = 0;
+  for (const paragraph of paragraphs) {
+    const candidate = paragraph.trim();
+    if (!candidate) continue;
+    if (length + candidate.length > FINAL_REPLY_SUMMARY_LIMIT) break;
+    picked.push(candidate);
+    length += candidate.length + 2;
+  }
+  const summary = picked.length > 0 ? picked.join("\n\n") : normalized.slice(0, FINAL_REPLY_SUMMARY_LIMIT);
+  return `${summary.trim()}...`;
+}
+
+function buildCompletionFromFinalComment(params: {
+  issueRef: string;
+  body: string;
+  issueUrl?: string | null;
+}): string {
+  const body = params.body.trim();
+  if (body.length <= FINAL_REPLY_FULL_TEXT_LIMIT) {
+    return [`任务完成：${params.issueRef}`, "", body].join("\n");
+  }
+  const lines = [
+    `任务完成：${params.issueRef}`,
+    "",
+    summarizeLongFinalComment(body),
+    "",
+    "结果较长，我先把摘要发到这里；完整内容已保存在 Paperclip 任务评论里。",
+  ];
+  if (params.issueUrl) {
+    lines.push(`Paperclip 内部链接：${params.issueUrl}（需要账号权限）`);
+  }
+  return lines.join("\n");
 }
 
 function buildTerminalReplyText(params: {
@@ -1202,6 +1576,8 @@ function buildTerminalReplyText(params: {
   issueTitle: string;
   issueStatus?: string | null;
   issueIdentifier?: string | null;
+  issueUrl?: string | null;
+  finalCommentBody?: string | null;
   event: AgentSessionEvent;
 }): string {
   const { config, message, route, session, issueTitle, issueStatus, issueIdentifier, event } = params;
@@ -1216,6 +1592,7 @@ function buildTerminalReplyText(params: {
     issueTitle: displayTitle,
     runId: event.runId,
     runStatus: event.eventType,
+    issueUrl: params.issueUrl,
   };
   if (!isDone) {
     return renderDefaultAwareTemplate("处理失败：{{issue_title}}\n任务：{{issue_ref}}", context);
@@ -1224,6 +1601,15 @@ function buildTerminalReplyText(params: {
   const template = config.completionMessageTemplate ?? DEFAULT_COMPLETION_TEMPLATE;
   if (!isDefaultCompletionTemplate(template)) {
     return renderDefaultAwareTemplate(template, context);
+  }
+
+  const finalBody = normalizeCommentBody(params.finalCommentBody);
+  if (finalBody && (!issueStatus || issueStatus === "done" || looksLikeFinalComment(finalBody))) {
+    return buildCompletionFromFinalComment({
+      issueRef,
+      body: finalBody,
+      issueUrl: params.issueUrl,
+    });
   }
 
   if (!issueStatus || issueStatus === "done") {
@@ -1279,7 +1665,9 @@ async function replyOnAgentSessionTerminal(
 ): Promise<void> {
   if ((route.replyMode ?? "thread") === "none") return;
 
-  const replyKey = larkIdempotencyKey("done", event.runId, event.eventType);
+  const replyKey = event.eventType === "done"
+    ? larkIdempotencyKey("complete", session.paperclipIssueId)
+    : larkIdempotencyKey("terminal", event.runId, event.eventType);
   if (!(await claimTerminalReply(ctx, replyKey, event))) {
     record("info", "已跳过重复的飞书完成回复", {
       routeId: route.id,
@@ -1291,6 +1679,10 @@ async function replyOnAgentSessionTerminal(
 
   const issue = await ctx.issues.get(session.paperclipIssueId, route.companyId).catch(() => null);
   const resolvedIssueTitle = issue?.title ?? session.paperclipIssueTitle ?? issueTitle;
+  const comments = await ctx.issues.listComments(session.paperclipIssueId, route.companyId).catch(() => []);
+  const finalComment = latestFinalComment(comments, session, route);
+  const issueUrl = session.paperclipIssueUrl
+    ?? buildPaperclipIssueUrl(config, route, issue?.identifier ?? session.paperclipIssueIdentifier ?? null);
   const text = buildTerminalReplyText({
     config,
     message,
@@ -1299,6 +1691,8 @@ async function replyOnAgentSessionTerminal(
     issueTitle: resolvedIssueTitle,
     issueStatus: issue?.status,
     issueIdentifier: issue?.identifier ?? null,
+    issueUrl,
+    finalCommentBody: finalComment?.body ?? null,
     event,
   });
   const suffix = event.eventType === "done" || !event.message ? "" : `\n\n${event.message}`;
@@ -1322,6 +1716,7 @@ async function replyOnAgentSessionTerminal(
     ...session,
     paperclipIssueTitle: resolvedIssueTitle,
     paperclipIssueIdentifier: issue?.identifier ?? session.paperclipIssueIdentifier,
+    paperclipIssueUrl: issueUrl ?? session.paperclipIssueUrl,
     lastRunId: event.runId,
     lastRunStatus: event.eventType,
     lastRunFinishedAt: new Date().toISOString(),
@@ -1340,6 +1735,42 @@ async function replyOnAgentSessionTerminal(
   });
 }
 
+function scheduleTerminalFallbackReply(
+  ctx: PluginContext,
+  config: FeishuConnectorConfig,
+  connection: FeishuConnectionConfig,
+  route: ResolvedRouteConfig,
+  message: FeishuInboundMessage,
+  session: FeishuSessionData,
+  issueTitle: string,
+  event: AgentSessionEvent,
+): void {
+  const timer = setTimeout(() => {
+    void replyOnAgentSessionTerminal(
+      ctx,
+      config,
+      connection,
+      route,
+      message,
+      session,
+      issueTitle,
+      event,
+    ).catch((error) => {
+      ctx.logger.error("发送飞书完成兜底回复失败", {
+        routeId: route.id,
+        runId: event.runId,
+        error: String(error),
+      });
+      record("error", "发送飞书完成兜底回复失败", {
+        routeId: route.id,
+        runId: event.runId,
+        error: String(error),
+      });
+    });
+  }, RUN_FALLBACK_DELAY_MS);
+  timer.unref?.();
+}
+
 async function handleInboundMessage(
   ctx: PluginContext,
   raw: unknown,
@@ -1353,19 +1784,83 @@ async function handleInboundMessage(
   }
   lastInboundEventAt = new Date().toISOString();
   record("info", "收到飞书消息事件", inboundMessageDiagnostics(message, connection));
-  const duplicate = await markDeduped(ctx, message);
+
+  if (isCurrentBotMessage(connection, message)) {
+    record("info", "飞书消息来自当前机器人自身，已忽略以避免自触发", inboundMessageDiagnostics(message, connection, {
+      reason: "self_bot_message",
+      currentAppId: connection.appId ?? null,
+    }));
+    return {
+      ok: true,
+      ignored: true,
+      reason: "self_bot_message",
+      messageId: message.messageId,
+    };
+  }
+
+  const preEnrichMentionMismatch = await mentionTargetMismatch(config, connection, message);
+  if (preEnrichMentionMismatch) {
+    record("info", "飞书消息明确 @ 了其他机器人，已跳过当前连接", inboundMessageDiagnostics(message, connection, preEnrichMentionMismatch));
+    return {
+      ok: true,
+      ignored: true,
+      reason: "mentioned_other_bot",
+      messageId: message.messageId,
+      ...preEnrichMentionMismatch,
+    };
+  }
+
+  message = await enrichInboundMessage(config, connection, message);
+  if (isCurrentBotMessage(connection, message)) {
+    record("info", "飞书消息来自当前机器人自身，已忽略以避免自触发", inboundMessageDiagnostics(message, connection, {
+      reason: "self_bot_message",
+      currentAppId: connection.appId ?? null,
+    }));
+    return {
+      ok: true,
+      ignored: true,
+      reason: "self_bot_message",
+      messageId: message.messageId,
+    };
+  }
+  if (isExternalBotMessage(config, connection, message)) {
+    record("warning", "检测到其他飞书机器人可能在同一会话抢答，已忽略这条机器人消息", inboundMessageDiagnostics(message, connection, {
+      reason: "external_bot_message",
+      currentAppId: connection.appId ?? null,
+      configuredAppIds: (config.connections ?? []).map((item) => item.appId).filter(Boolean),
+    }));
+    return {
+      ok: true,
+      ignored: true,
+      conflictDetected: true,
+      reason: "external_bot_message",
+      messageId: message.messageId,
+    };
+  }
+  const mentionMismatch = await mentionTargetMismatch(config, connection, message);
+  if (mentionMismatch) {
+    record("info", "飞书消息明确 @ 了其他机器人，已跳过当前连接", inboundMessageDiagnostics(message, connection, mentionMismatch));
+    return {
+      ok: true,
+      ignored: true,
+      reason: "mentioned_other_bot",
+      messageId: message.messageId,
+      ...mentionMismatch,
+    };
+  }
+
+  const duplicate = await markDeduped(ctx, message, connection.id);
   if (duplicate) {
     record("info", "已忽略重复的飞书消息", inboundMessageDiagnostics(message, connection));
     return { ok: true, duplicate: true, messageId: message.messageId };
   }
 
-  message = await enrichInboundMessage(config, connection, message);
   const sessionKey = buildSessionKey(message, connection.id);
   const matchedRoute = resolveRoute(config, message, connection.id);
   if (matchedRoute) {
     record("info", "飞书消息已命中业务入口", inboundMessageDiagnostics(message, connection, {
       routeId: matchedRoute.id,
-      routeName: describeRouteTrigger(matchedRoute),
+      routeName: describeRouteEntry(matchedRoute),
       trigger: describeRouteTrigger(matchedRoute),
       targetAgentName: matchedRoute.targetAgentName ?? null,
       companyRef: matchedRoute.companyRef ?? matchedRoute.companyId,
@@ -1446,16 +1941,8 @@ async function handleInboundMessage(
   }
 
   const issueRef = issueDisplayRef(issueId, issueIdentifier);
-
-  const attachedResources = await attachFeishuResources(
-    ctx,
-    config,
-    connection,
-    message,
-    route.companyId,
-    issueId,
-    issueCommentId,
-  );
+  const paperclipIssueUrl = existingSession?.paperclipIssueUrl
+    ?? buildPaperclipIssueUrl(config, route, issueIdentifier);
 
   const session: FeishuSessionData = {
     connectionId: connection.id,
@@ -1468,12 +1955,55 @@ async function handleInboundMessage(
     paperclipIssueId: issueId,
     paperclipIssueIdentifier: issueIdentifier ?? undefined,
     paperclipIssueTitle: existingSession?.paperclipIssueTitle ?? issueTitle,
+    paperclipIssueUrl: paperclipIssueUrl ?? undefined,
     paperclipAgentId: route.targetAgentId,
     paperclipAgentSessionId: existingSession?.paperclipAgentSessionId,
     lastCompletionReplyKey: existingSession?.lastCompletionReplyKey,
+    createdAt: existingSession?.createdAt ?? new Date().toISOString(),
     lastMessageId: message.messageId,
     updatedAt: new Date().toISOString(),
   };
+
+  await upsertSession(ctx, route.companyId, session);
+
+  let ackResult: LarkCliResult | null = null;
+  if (config.ackOnInbound && (route.replyMode ?? "thread") !== "none") {
+    const ackText = buildAckReplyText({
+      config,
+      message,
+      route,
+      issueId,
+      issueRef,
+      issueTitle,
+      issueUrl: paperclipIssueUrl,
+      estimatedDuration: DEFAULT_ESTIMATED_DURATION_LABEL,
+    });
+    ackResult = await replyToFeishu(
+      config,
+      connection,
+      message,
+      ackText,
+      larkIdempotencyKey("ack", message.messageId),
+      (route.replyMode ?? "thread") === "thread",
+    );
+    record(ackResult?.ok ? "info" : "error", "已向飞书发送任务受理回执", {
+      routeId: route.id,
+      routeName: describeRouteEntry(route),
+      messageId: message.messageId,
+      issueId,
+      result: summarizeLarkResult(ackResult),
+    });
+  }
+
+  const attachedResources = await attachFeishuResources(
+    ctx,
+    config,
+    connection,
+    message,
+    route.companyId,
+    issueId,
+    issueCommentId,
+  );
 
   let runId: string | null = null;
   if (route.targetAgentId) {
@@ -1501,7 +2031,7 @@ async function handleInboundMessage(
       "",
       `Paperclip 任务：${issueRef}`,
       `飞书来源：${describeFeishuConversation(message, route)}`,
-      `飞书入口：${route.id}（${describeRouteTrigger(route)}）`,
+      `飞书入口：${describeRouteEntry(route)}`,
       `飞书消息：${message.messageId}`,
       message.rootMessageId && message.rootMessageId !== message.messageId
         ? `飞书话题根消息：${message.rootMessageId}`
@@ -1517,7 +2047,7 @@ async function handleInboundMessage(
       onEvent: (event) => {
         if (terminalReplyStarted || (event.eventType !== "done" && event.eventType !== "error")) return;
         terminalReplyStarted = true;
-        void replyOnAgentSessionTerminal(
+        scheduleTerminalFallbackReply(
           ctx,
           config,
           connection,
@@ -1526,18 +2056,7 @@ async function handleInboundMessage(
           session,
           issueTitle,
           event,
-        ).catch((error) => {
-          ctx.logger.error("发送飞书完成回复失败", {
-            routeId: route.id,
-            runId: event.runId,
-            error: String(error),
-          });
-          record("error", "发送飞书完成回复失败", {
-            routeId: route.id,
-            runId: event.runId,
-            error: String(error),
-          });
-        });
+        );
       },
     });
     runId = run.runId;
@@ -1557,26 +2076,6 @@ async function handleInboundMessage(
       agentName: route.targetAgentName,
     });
     baseResult = await writeBaseRecord(ctx, config, connection, sink, baseRecord);
-  }
-
-  let ackResult: LarkCliResult | null = null;
-  if (config.ackOnInbound && (route.replyMode ?? "thread") !== "none") {
-    const ackText = buildAckReplyText({
-      config,
-      message,
-      route,
-      issueId,
-      issueRef,
-      issueTitle,
-    });
-    ackResult = await replyToFeishu(
-      config,
-      connection,
-      message,
-      ackText,
-      larkIdempotencyKey("ack", message.messageId),
-      (route.replyMode ?? "thread") === "thread",
-    );
   }
 
   await ctx.activity.log({
@@ -1614,26 +2113,43 @@ async function handleInboundMessage(
   };
 }
 
-function sampleTextForRoute(route: FeishuRouteConfig): string {
-  if (route.matchType === "keyword") {
-    return `@${route.keyword || "paperclip"} 只回复 ok`;
-  }
-  if (route.matchType === "regex") {
-    if (route.regex?.includes("paperclip")) return "paperclip 只回复 ok";
-    return "@paperclip 只回复 ok";
-  }
-  return "@paperclip 只回复 ok";
+function mentionNameForSample(connection: FeishuConnectionConfig): string | null {
+  const alias = connectionBotAliases(connection)[0];
+  if (alias) return alias;
+  if (!isTechnicalProfileName(connection.name)) return connection.name?.trim() ?? null;
+  return null;
 }
 
-function testRawForRoute(route: FeishuRouteConfig): Record<string, unknown> {
-  const suffix = `${route.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+function sampleTextForRoute(route: FeishuRouteConfig, connection: FeishuConnectionConfig): string {
+  const mentionName = mentionNameForSample(connection);
+  const mention = mentionName ? `@${mentionName}` : "";
+  if (route.matchType === "keyword") {
+    const keyword = route.keyword?.trim() || "paperclip";
+    if (mentionName && normalizeMentionValue(keyword) === normalizeMentionValue(mentionName)) {
+      return `${mention} 只回复 ok`.trim();
+    }
+    return [mention, keyword, "只回复 ok"].filter(Boolean).join(" ");
+  }
+  if (route.matchType === "regex") {
+    return [mention, route.regex?.includes("paperclip") ? "paperclip" : "", "只回复 ok"].filter(Boolean).join(" ");
+  }
+  return [mention || "paperclip", "只回复 ok"].filter(Boolean).join(" ");
+}
+
+function testRawForRoute(route: FeishuRouteConfig, connection: FeishuConnectionConfig): Record<string, unknown> {
+  const trigger = route.keyword?.trim() || route.chatName?.trim() || route.userName?.trim() || route.matchType;
+  const safeTrigger = trigger
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24) || "entry";
+  const suffix = `${safeTrigger}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return {
     event_id: `evt_test_${suffix}`,
     message_id: `om_test_${suffix}`,
-    chat_id: route.chatId || `oc_test_${route.id}`,
+    chat_id: route.chatId || `oc_test_${safeTrigger}`,
     sender_open_id: route.userOpenId || "ou_paperclip_test_user",
     sender_name: "Paperclip 测试",
-    text: sampleTextForRoute(route),
+    text: sampleTextForRoute(route, connection),
   };
 }
 
@@ -1670,10 +2186,10 @@ async function reconcileConfiguredSubscribers(
   config: FeishuConnectorConfig,
   options: { restartAll?: boolean; reason?: string } = {},
 ): Promise<void> {
-  const enabledConnections = getEnabledConnections(config);
-  const enabledConnectionIds = new Set(enabledConnections.map((connection) => connection.id));
+  const listeningConnections = routeListeningConnections(config);
+  const listeningConnectionIds = new Set(listeningConnections.map((connection) => connection.id));
   for (const [connectionId, subscriber] of subscribers.entries()) {
-    if (options.restartAll || config.enableEventSubscriber !== true || !enabledConnectionIds.has(connectionId)) {
+    if (options.restartAll || config.enableEventSubscriber !== true || !listeningConnectionIds.has(connectionId)) {
       subscriber.stop();
       subscribers.delete(connectionId);
       record("info", "已停止飞书消息监听", {
@@ -1684,7 +2200,7 @@ async function reconcileConfiguredSubscribers(
     }
   }
   if (!config.enableEventSubscriber) return;
-  for (const connection of enabledConnections) {
+  for (const connection of listeningConnections) {
     const existing = subscribers.get(connection.id);
     if (existing?.isRunning()) continue;
     if (existing) {
@@ -1762,12 +2278,27 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
   ctx.data.register(DATA_KEYS.status, async () => {
     const config = await getConfig(ctx);
     await reconcileConfiguredSubscribers(ctx, config, { reason: "status-check" });
-    const monitor = buildProductionMonitor(config);
+    const shouldCheckProfiles = config.dryRunCli !== true && getEnabledConnections(config).length > 0;
+    const profilesResult = shouldCheckProfiles
+      ? await listLarkProfiles(config).catch((error) => ({
+        profiles: [] as ProfileRow[],
+        error: String(error),
+      }))
+      : { profiles: [] as ProfileRow[], error: undefined };
+    const monitor = buildProductionMonitor(config, {
+      availableProfileNames: !shouldCheckProfiles || profilesResult.error
+        ? undefined
+        : new Set(profilesResult.profiles.map((profile) => profile.name)),
+      profileReadError: profilesResult.error ?? null,
+    });
     return {
       pluginId: PLUGIN_ID,
       dryRunCli: config.dryRunCli === true,
       eventSubscriberEnabled: config.enableEventSubscriber === true,
       connectionCount: getEnabledConnections(config).length,
+      usableConnectionCount: monitor.usableConnectionCount,
+      missingProfileConnectionIds: monitor.missingProfileConnectionIds ?? [],
+      profileReadError: monitor.profileReadError ?? null,
       routeCount: (config.routes ?? []).filter((route) => route.enabled !== false).length,
       baseSinkCount: (config.baseSinks ?? []).filter((sink) => sink.enabled !== false).length,
       subscribers: [...subscribers.entries()].map(([connectionId, subscriber]) => ({
@@ -2042,9 +2573,10 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
       ...config,
       dryRunCli: true,
       enableQuickReply: true,
+      quickReplyRegex: ".+",
       quickReplyText: config.quickReplyText || "ok",
     });
-    const raw = testRawForRoute(route);
+    const raw = testRawForRoute(route, connection);
     const result = await handleInboundMessage(ctx, raw, {
       connectionId: connection.id,
       configOverride: testConfig,
@@ -2183,6 +2715,26 @@ function terminalSessionEventType(eventType: PluginEvent["eventType"]): AgentSes
   return null;
 }
 
+function readIssueIdFromEvent(event: PluginEvent): string | undefined {
+  const payload = asRecord(event.payload);
+  const issue = asRecord(payload?.issue);
+  return readString(
+    payload?.issueId,
+    payload?.issue_id,
+    issue?.id,
+    event.entityType === "issue" ? event.entityId : undefined,
+  );
+}
+
+function isAgentAuthoredComment(
+  comment: IssueComment | null,
+  session: FeishuSessionData,
+  route: ResolvedRouteConfig,
+): boolean {
+  return !!comment?.authorAgentId &&
+    (comment.authorAgentId === route.targetAgentId || comment.authorAgentId === session.paperclipAgentId);
+}
+
 async function handleAgentRunTerminalEvent(ctx: PluginContext, event: PluginEvent): Promise<void> {
   const runId = readRunIdFromEvent(event);
   const eventType = terminalSessionEventType(event.eventType);
@@ -2219,13 +2771,14 @@ async function handleAgentRunTerminalEvent(ctx: PluginContext, event: PluginEven
     rootMessageId: session.rootMessageId,
     senderOpenId: session.requesterOpenId,
     text: issue?.title ?? session.paperclipIssueTitle ?? "Paperclip 任务",
+    mentions: [],
     attachments: [],
     raw: {
       recoveredFrom: event.eventType,
       runId,
     },
   };
-  await replyOnAgentSessionTerminal(
+  scheduleTerminalFallbackReply(
     ctx,
     config,
     connection,
@@ -2245,6 +2798,74 @@ async function handleAgentRunTerminalEvent(ctx: PluginContext, event: PluginEven
   );
 }
 
+async function handleIssueCompletionEvent(ctx: PluginContext, event: PluginEvent): Promise<void> {
+  const issueId = readIssueIdFromEvent(event);
+  if (!issueId) return;
+
+  const sessionRecord = await findSessionByIssueId(ctx, issueId);
+  if (!sessionRecord) {
+    record("info", "收到 Paperclip 任务事件，但没有对应的飞书会话", {
+      eventType: event.eventType,
+      issueId,
+    });
+    return;
+  }
+
+  const config = await getConfig(ctx);
+  const session = sessionRecord.data;
+  const connection = resolveConnection(config, session.connectionId);
+  if (!connection) {
+    record("warning", "飞书完成回复失败：找不到这个任务对应的机器人", {
+      issueId,
+      connectionId: session.connectionId,
+    });
+    return;
+  }
+
+  const route = await resolveRouteFromSession(ctx, config, session, sessionRecord.companyId);
+  const issue = await ctx.issues.get(issueId, route.companyId).catch(() => null);
+  const comments = await ctx.issues.listComments(issueId, route.companyId).catch(() => []);
+  const finalComment = latestFinalComment(comments, session, route);
+  const agentFinalComment = isAgentAuthoredComment(finalComment, session, route) && looksLikeFinalComment(finalComment?.body);
+  const issueDone = issue?.status === "done";
+  if (!issueDone && !agentFinalComment) return;
+
+  const message: FeishuInboundMessage = {
+    connectionId: session.connectionId,
+    messageId: session.lastMessageId,
+    chatId: session.chatId,
+    threadId: session.threadId,
+    rootMessageId: session.rootMessageId,
+    senderOpenId: session.requesterOpenId,
+    text: issue?.title ?? session.paperclipIssueTitle ?? "Paperclip 任务",
+    mentions: [],
+    attachments: [],
+    raw: {
+      recoveredFrom: event.eventType,
+      issueId,
+    },
+  };
+
+  await replyOnAgentSessionTerminal(
+    ctx,
+    config,
+    connection,
+    route,
+    message,
+    session,
+    issue?.title ?? session.paperclipIssueTitle ?? "Paperclip 任务",
+    {
+      sessionId: session.paperclipAgentSessionId ?? "",
+      runId: session.lastRunId ?? issueId,
+      seq: 0,
+      eventType: "done",
+      stream: "system",
+      message: null,
+      payload: asRecord(event.payload),
+    },
+  );
+}
+
 async function registerEventHandlers(ctx: PluginContext): Promise<void> {
   const onRunDone = async (event: PluginEvent) => {
     record("info", "Observed Paperclip run event", {
@@ -2253,9 +2874,18 @@ async function registerEventHandlers(ctx: PluginContext): Promise<void> {
     });
     await handleAgentRunTerminalEvent(ctx, event);
   };
+  const onIssueDone = async (event: PluginEvent) => {
+    record("info", "Observed Paperclip issue event", {
+      eventType: event.eventType,
+      issueId: readIssueIdFromEvent(event) ?? event.entityId,
+    });
+    await handleIssueCompletionEvent(ctx, event);
+  };
   ctx.events.on("agent.run.finished", onRunDone);
   ctx.events.on("agent.run.failed", onRunDone);
   ctx.events.on("agent.run.cancelled", onRunDone);
+  ctx.events.on("issue.updated", onIssueDone);
+  ctx.events.on("issue.comment.created", onIssueDone);
 }
 
 const plugin: PaperclipPlugin = definePlugin({
@@ -2274,7 +2904,19 @@ const plugin: PaperclipPlugin = definePlugin({
   async onHealth(): Promise<PluginHealthDiagnostics> {
     const ctx = currentContext;
     const config = ctx ? await getConfig(ctx) : normalizeConfig({});
-    const monitor = buildProductionMonitor(config);
+    const shouldCheckProfiles = config.dryRunCli !== true && getEnabledConnections(config).length > 0;
+    const profilesResult = shouldCheckProfiles
+      ? await listLarkProfiles(config).catch((error) => ({
+        profiles: [] as ProfileRow[],
+        error: String(error),
+      }))
+      : { profiles: [] as ProfileRow[], error: undefined };
+    const monitor = buildProductionMonitor(config, {
+      availableProfileNames: !shouldCheckProfiles || profilesResult.error
+        ? undefined
+        : new Set(profilesResult.profiles.map((profile) => profile.name)),
+      profileReadError: profilesResult.error ?? null,
+    });
     return {
       status: monitor.health === "error" ? "error" : monitor.health === "warning" ? "degraded" : "ok",
       message: monitor.message,
@@ -2282,6 +2924,9 @@ const plugin: PaperclipPlugin = definePlugin({
         dryRunCli: config.dryRunCli === true,
         eventSubscriberEnabled: config.enableEventSubscriber === true,
         enabledConnections: getEnabledConnections(config).length,
+        usableConnections: monitor.usableConnectionCount,
+        missingProfileConnectionIds: monitor.missingProfileConnectionIds,
+        profileReadError: monitor.profileReadError,
         activeSubscribers: subscribers.size,
         expectedSubscribers: monitor.expectedSubscriberCount,
         missingSubscriberConnectionIds: monitor.missingSubscriberConnectionIds,
@@ -2306,16 +2951,74 @@ const plugin: PaperclipPlugin = definePlugin({
     const normalized = normalizeConfig(config);
     const warnings: string[] = [];
     const errors: string[] = [];
+    const enabledConnectionIds = new Set(getEnabledConnections(normalized).map((connection) => connection.id));
+    const enabledBaseSinkIds = new Set((normalized.baseSinks ?? []).filter((sink) => sink.enabled !== false).map((sink) => sink.id));
     if (normalized.enableEventSubscriber) {
       warnings.push("只有本地测试或单实例部署才建议开启「自动监听飞书消息」。云服务器部署建议用单独的监听服务，避免重复收消息。");
     }
+    for (const connection of getEnabledConnections(normalized)) {
+      if (isTechnicalProfileName(connection.name) && connectionBotAliases(connection).length === 0) {
+        warnings.push(`飞书机器人「${connection.name || connection.profileName}」没有填写 @ 名称。飞书没有返回官方机器人名时，@小锐/@锐思 这类多机器人群聊可能无法准确判断。`);
+      }
+    }
+    if (normalized.dryRunCli !== true && getEnabledConnections(normalized).length > 0) {
+      const result = await listLarkProfiles(normalized).catch((error) => ({
+        profiles: [] as ProfileRow[],
+        error: String(error),
+      }));
+      if (result.error) {
+        warnings.push(`无法读取当前运行环境的飞书授权/profile 列表：${result.error}。请确认 lark-cli 可用，否则飞书机器人可能无法监听或回复。`);
+      } else {
+        const availableProfileNames = new Set(result.profiles.map((profile) => profile.name));
+        const routeConnectionIds = new Set((normalized.routes ?? [])
+          .filter((route) => route.enabled !== false)
+          .map((route) => route.connectionId)
+          .filter((connectionId): connectionId is string => typeof connectionId === "string" && connectionId.trim().length > 0));
+        for (const connection of getEnabledConnections(normalized)) {
+          if (availableProfileNames.has(connection.profileName)) continue;
+          const label = connection.name || connection.profileName;
+          if (routeConnectionIds.has(connection.id)) {
+            errors.push(`入口正在使用飞书机器人「${label}」，但当前运行环境读不到它的授权/profile「${connection.profileName}」。请重新绑定，或把入口换成可运行的机器人。`);
+          } else {
+            warnings.push(`飞书机器人「${label}」已保留在机器人池里，但当前运行环境读不到它的授权/profile「${connection.profileName}」。如果还要用它，请重新绑定；不用可先停用。`);
+          }
+        }
+      }
+    }
     for (const route of normalized.routes ?? []) {
       if (route.enabled === false) continue;
-      if (!route.companyId && !route.companyRef) errors.push(`接收规则「${route.id}」缺少公司。请填写公司名称/前缀，或填写公司 ID。`);
-      if (route.matchType === "chat" && !route.chatId) errors.push(`接收规则「${route.id}」选择了群聊/会话，但没有填写飞书 chat_id。`);
-      if (route.matchType === "user" && !route.userOpenId) errors.push(`接收规则「${route.id}」选择了指定用户，但没有填写用户 open_id。`);
-      if (route.baseSinkId && !(normalized.baseSinks ?? []).some((sink) => sink.id === route.baseSinkId)) {
-        errors.push(`接收规则「${route.id}」引用了不存在的多维表格规则「${route.baseSinkId}」。`);
+      const entryName = describeRouteEntry(route);
+      if (!route.connectionId) {
+        errors.push(`入口「${entryName}」没有选择飞书机器人。请在入口里选择一个机器人，避免多个机器人同时处理同一条消息。`);
+      } else if (!enabledConnectionIds.has(route.connectionId)) {
+        errors.push(`入口「${entryName}」选择的飞书机器人不可用：${route.connectionId}。请重新选择已启用的机器人。`);
+      }
+      if (!route.companyId && !route.companyRef) errors.push(`入口「${entryName}」缺少公司。请填写公司名称/前缀，或填写公司 ID。`);
+      if (route.matchType === "chat" && !route.chatId) errors.push(`入口「${entryName}」选择了群聊/会话，但没有填写飞书 chat_id。`);
+      if (route.matchType === "user" && !route.userOpenId) errors.push(`入口「${entryName}」选择了指定用户，但没有填写用户 open_id。`);
+      if (route.matchType === "keyword" && !route.keyword?.trim()) errors.push(`入口「${entryName}」选择了关键词，但没有填写关键词。`);
+      if (route.matchType === "regex") {
+        if (!route.regex?.trim()) {
+          errors.push(`入口「${entryName}」选择了高级规则，但没有填写正则表达式。`);
+        } else {
+          try {
+            new RegExp(route.regex);
+          } catch (error) {
+            errors.push(`入口「${entryName}」的正则表达式不可用：${String(error)}`);
+          }
+        }
+      }
+      if (!route.targetAgentId && !route.targetAgentRef && !route.targetAgentName) {
+        warnings.push(`入口「${entryName}」没有指定智能体；它只会创建 Paperclip 任务，不会自动交给智能体处理。`);
+      }
+      if (route.baseSinkId && !enabledBaseSinkIds.has(route.baseSinkId)) {
+        errors.push(`入口「${entryName}」引用了不存在的多维表格规则「${route.baseSinkId}」。`);
+      }
+    }
+    for (const sink of normalized.baseSinks ?? []) {
+      if (sink.enabled === false) continue;
+      if (sink.connectionId && !enabledConnectionIds.has(sink.connectionId)) {
+        errors.push(`多维表格规则「${sink.id}」选择的飞书机器人不可用：${sink.connectionId}。`);
       }
     }
     return { ok: errors.length === 0, warnings, errors };

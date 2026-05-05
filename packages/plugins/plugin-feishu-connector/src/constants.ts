@@ -34,5 +34,6 @@ export const LEGACY_ACK_TEMPLATE = "已收到，我会交给 {{agent_name}} 处�
 export const LEGACY_COMPLETION_TEMPLATE = "任务已完成：{{issue_title}}";
 export const DEFAULT_ACK_TEMPLATE = "已收到，交给 {{agent_name}} 处理。\n任务：{{issue_ref}}";
 export const DEFAULT_COMPLETION_TEMPLATE = "处理完成：{{issue_title}}";
+export const DEFAULT_ESTIMATED_DURATION_LABEL = "3-8 分钟";
 export const DEFAULT_QUICK_REPLY_REGEX = "^(只回复\\s*ok|回复\\s*ok|ping)$";
 export const DEFAULT_QUICK_REPLY_TEXT = "ok";

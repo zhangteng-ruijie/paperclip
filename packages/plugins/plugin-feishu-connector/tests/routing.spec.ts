@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildBaseRecord,
   buildSessionKey,
+  describeRouteEntry,
   extractInboundMessage,
+  isLikelyInternalRouteName,
   resolveRoute,
 } from "../src/routing.js";
 import {
@@ -59,6 +61,27 @@ describe("Feishu routing helpers", () => {
     ]);
   });
 
+  it("extracts Feishu mention targets from message content", () => {
+    const message = extractInboundMessage({
+      message_id: "om_mention",
+      chat_id: "oc_boss",
+      content: JSON.stringify({
+        text: "@_user_1 请看下",
+        mentions: [
+          {
+            key: "@_user_1",
+            name: "小锐",
+            id: { open_id: "ou_xiaorui", user_id: "u_xiaorui" },
+          },
+        ],
+      }),
+    });
+
+    expect(message.mentions).toEqual([
+      expect.objectContaining({ name: "小锐", openId: "ou_xiaorui", userId: "u_xiaorui", key: "@_user_1" }),
+    ]);
+  });
+
   it("routes by chat before default and builds stable session keys", () => {
     const config: FeishuConnectorConfig = {
       routes: [
@@ -96,6 +119,21 @@ describe("Feishu routing helpers", () => {
 
     expect(resolveRoute(keywordConfig, message, "news-bot")?.id).toBe("paperclip-keyword");
     expect(resolveRoute(regexConfig, message, "news-bot")?.id).toBe("paperclip-regex");
+  });
+
+  it("hides technical route ids from user-facing entry names", () => {
+    const route = {
+      id: "route-1",
+      name: "chat-team-to-liu",
+      matchType: "keyword" as const,
+      keyword: "小思",
+      targetAgentName: "张工",
+      companyRef: "TC",
+    };
+
+    expect(isLikelyInternalRouteName("chat-team-to-liu")).toBe(true);
+    expect(describeRouteEntry(route)).toBe("包含「小思」的飞书消息 → 张工");
+    expect(describeRouteEntry({ ...route, name: "老板资讯群入口" })).toBe("老板资讯群入口");
   });
 
   it("renders Base records from templates", () => {

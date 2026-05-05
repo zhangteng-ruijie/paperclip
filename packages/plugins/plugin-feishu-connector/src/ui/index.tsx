@@ -7,6 +7,7 @@ import {
 } from "@paperclipai/plugin-sdk/ui";
 import { ACTION_KEYS, DATA_KEYS, PLUGIN_ID } from "../constants.js";
 import { DEFAULT_CONFIG } from "../config.js";
+import { isLikelyInternalRouteName } from "../routing.js";
 import type {
   FeishuBaseSinkConfig,
   FeishuConnectionConfig,
@@ -18,6 +19,9 @@ type ConnectorStatus = {
   dryRunCli: boolean;
   eventSubscriberEnabled: boolean;
   connectionCount: number;
+  usableConnectionCount?: number;
+  missingProfileConnectionIds?: string[];
+  profileReadError?: string | null;
   routeCount: number;
   baseSinkCount: number;
   subscribers: Array<{ connectionId: string; profileName?: string; pid: number | null; killed: boolean; running?: boolean }>;
@@ -26,6 +30,9 @@ type ConnectorStatus = {
     message: string;
     checkedAt: string;
     enabledConnectionCount: number;
+    usableConnectionCount?: number;
+    missingProfileConnectionIds?: string[];
+    profileReadError?: string | null;
     enabledRouteCount: number;
     expectedSubscriberCount: number;
     activeSubscriberCount: number;
@@ -109,6 +116,7 @@ type ConfigRecord = FeishuConnectorConfig & Record<string, unknown>;
 
 type BindFormState = {
   displayName: string;
+  botAliases: string;
   profileName: string;
   appId: string;
   appSecret: string;
@@ -1211,12 +1219,51 @@ function normalizeText(value: string | undefined | null): string {
   return (value ?? "").trim().toLowerCase();
 }
 
+function normalizeMentionLabel(value: string | undefined | null): string {
+  return normalizeText(value).replace(/^@+/, "").replace(/\s+/g, "");
+}
+
+function splitBotAliases(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,，、\n]/g)
+      : [];
+  return [...new Set(values
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().replace(/^@+/, ""))
+    .filter(Boolean))];
+}
+
+function isPlaceholderBotName(value: string | undefined | null): boolean {
+  const normalized = normalizeText(value);
+  return !normalized
+    || normalized === "飞书机器人"
+    || normalized === "飞书应用"
+    || normalized.startsWith("cli_")
+    || normalized.includes("飞书应用")
+    || /^[0-9a-f-]{12,}$/.test(normalized);
+}
+
+function connectionAliasList(connection?: FeishuConnectionConfig | null): string[] {
+  return splitBotAliases(connection?.botAliases);
+}
+
+function formatBotAliases(connection?: FeishuConnectionConfig | null): string {
+  return connectionAliasList(connection).join("、");
+}
+
 function normalizeUiConfig(input: Record<string, unknown> | null | undefined): ConfigRecord {
   const source = (input ?? {}) as ConfigRecord;
   return {
     ...DEFAULT_CONFIG,
     ...source,
-    connections: Array.isArray(source.connections) ? source.connections : [],
+    connections: Array.isArray(source.connections)
+      ? source.connections.map((connection) => ({
+        ...connection,
+        botAliases: splitBotAliases((connection as FeishuConnectionConfig).botAliases),
+      }))
+      : [],
     routes: Array.isArray(source.routes) ? source.routes : [],
     baseSinks: Array.isArray(source.baseSinks) ? source.baseSinks : [],
   };
@@ -1290,10 +1337,22 @@ function profileDisplayName(profile?: ProfileOption | null): string {
   return profile.botName || (profile.user ? `飞书应用（${profile.user}）` : profile.name || "飞书应用");
 }
 
+function primaryMentionName(connection?: FeishuConnectionConfig, profile?: ProfileOption | null): string {
+  const realBotName = profile?.botName?.trim();
+  if (realBotName) return realBotName;
+  const alias = connectionAliasList(connection)[0];
+  if (alias) return alias;
+  const connectionName = connection?.name?.trim();
+  if (connectionName && !isPlaceholderBotName(connectionName)) return connectionName;
+  return "机器人";
+}
+
 function appLabel(connection?: FeishuConnectionConfig, profile?: ProfileOption | null): string {
   const realBotName = profile?.botName ?? null;
+  const alias = connectionAliasList(connection)[0];
   const connectionName = connection?.name?.trim();
   if (realBotName) return realBotName;
+  if (alias) return alias;
   if (connectionName) return connectionName;
   if (profile?.user) return `飞书应用（${profile.user}）`;
   if (profile?.name) return profile.name;
@@ -1303,6 +1362,8 @@ function appLabel(connection?: FeishuConnectionConfig, profile?: ProfileOption |
 function appMeta(connection?: FeishuConnectionConfig, profile?: ProfileOption | null): string {
   const parts: string[] = [];
   if (connection?.name && profile?.botName && connection.name !== profile.botName) parts.push(`页面备注：${connection.name}`);
+  const aliases = formatBotAliases(connection);
+  if (aliases) parts.push(`飞书 @ 名称：${aliases}`);
   if (profile?.user) parts.push(`授权用户：${profile.user}`);
   const appId = connection?.appId || profile?.appId;
   if (appId) parts.push(`App ID：${appId}`);
@@ -1311,20 +1372,25 @@ function appMeta(connection?: FeishuConnectionConfig, profile?: ProfileOption | 
 }
 
 function routeTitle(route: FeishuRouteConfig, index: number): string {
+  const withAgent = (label: string) => route.targetAgentName?.trim()
+    ? `${label} → ${route.targetAgentName.trim()}`
+    : label;
+  const explicitName = route.name?.trim();
+  if (explicitName && !isLikelyInternalRouteName(explicitName)) return explicitName;
   if (route.matchType === "keyword" && route.keyword) {
-    return `包含“${route.keyword}”的飞书消息`;
+    return withAgent(`包含「${route.keyword}」的飞书消息`);
   }
   if (route.matchType === "regex") {
     if (route.regex?.includes("锐思") && route.regex?.includes("paperclip")) {
-      return "高级入口：关键词“锐思 / paperclip”";
+      return withAgent("高级入口：关键词“锐思 / paperclip”");
     }
-    return "匹配高级规则的飞书消息";
+    return withAgent("匹配高级规则的飞书消息");
   }
   if (route.matchType === "chat") {
-    return route.chatName ? `来自“${route.chatName}”的消息` : route.chatId ? `来自指定会话的消息` : "指定飞书会话里的消息";
+    return withAgent(route.chatName ? `来自“${route.chatName}”的消息` : route.chatId ? "来自指定会话的消息" : "指定飞书会话里的消息");
   }
   if (route.matchType === "user") {
-    return route.userName ? `${route.userName} 发来的消息` : route.userOpenId ? "指定人员发来的消息" : "指定发消息人的需求";
+    return withAgent(route.userName ? `${route.userName} 发来的消息` : route.userOpenId ? "指定人员发来的消息" : "指定发消息人的需求");
   }
   if (route.matchType === "default") return "其他未匹配消息";
   return `接收规则 ${index + 1}`;
@@ -1352,19 +1418,38 @@ function baseSinkLabel(baseSinks: FeishuBaseSinkConfig[], sinkId?: string): stri
   return `${sink.tableIdOrName || sink.id}`;
 }
 
-function feishuSmokeText(route?: FeishuRouteConfig | null): string {
-  if (!route) return "@paperclip 只回复 ok";
-  if (route.matchType === "keyword") return `@${route.keyword || "paperclip"} 只回复 ok`;
-  if (route.matchType === "regex" && route.regex?.includes("paperclip")) return "paperclip 只回复 ok";
-  return "@paperclip 只回复 ok";
+function feishuTriggerText(
+  route?: FeishuRouteConfig | null,
+  connection?: FeishuConnectionConfig,
+  profile?: ProfileOption | null,
+): string {
+  const botName = primaryMentionName(connection, profile);
+  const mention = `@${botName}`;
+  if (!route) return `${mention} paperclip`;
+  if (route.matchType === "keyword") {
+    const keyword = route.keyword?.trim() || "paperclip";
+    return normalizeMentionLabel(keyword) === normalizeMentionLabel(botName)
+      ? mention
+      : `${mention} ${keyword}`;
+  }
+  if (route.matchType === "regex" && route.regex?.includes("paperclip")) return `${mention} paperclip`;
+  return mention;
 }
 
-function feishuTaskTestText(route?: FeishuRouteConfig | null): string {
-  const trigger = route?.matchType === "keyword"
-    ? `@${route.keyword || "paperclip"}`
-    : route?.matchType === "regex" && route.regex?.includes("paperclip")
-      ? "paperclip"
-      : "@paperclip";
+function feishuSmokeText(
+  route?: FeishuRouteConfig | null,
+  connection?: FeishuConnectionConfig,
+  profile?: ProfileOption | null,
+): string {
+  return `${feishuTriggerText(route, connection, profile)} 只回复 ok`;
+}
+
+function feishuTaskTestText(
+  route?: FeishuRouteConfig | null,
+  connection?: FeishuConnectionConfig,
+  profile?: ProfileOption | null,
+): string {
+  const trigger = feishuTriggerText(route, connection, profile);
   return `${trigger} 请创建一个 Paperclip 测试任务，完成后回复我；如果我带了图片或文件，也请一起处理。`;
 }
 
@@ -1609,6 +1694,7 @@ function connectionFromProfile(input: {
   return {
     id: input.index === 0 ? baseId : `${baseId}-${input.index + 1}`,
     name: input.displayName?.trim() || `飞书机器人 ${input.index + 1}`,
+    botAliases: input.displayName && !isPlaceholderBotName(input.displayName) ? [input.displayName.trim()] : [],
     profileName: input.profileName,
     appId: input.appId,
     enabled: true,
@@ -1688,6 +1774,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   const [showFeishuTestGuide, setShowFeishuTestGuide] = useState(false);
   const [bindForm, setBindForm] = useState<BindFormState>({
     displayName: "飞书机器人",
+    botAliases: "",
     profileName: "",
     appId: "",
     appSecret: "",
@@ -1779,9 +1866,9 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   const connectionToFix = firstMissingRouteSummary?.route.connectionId
     ? connections.find((connection) => connection.id === firstMissingRouteSummary.route.connectionId)
     : missingProfileConnections[0] ?? null;
-  const quickSmokeText = feishuSmokeText(firstEnabledRouteSummary?.route);
-  const smokeText = feishuTaskTestText(firstEnabledRouteSummary?.route);
-  const currentBotName = firstRouteProfile?.botName ?? connectedProfile?.botName ?? null;
+  const quickSmokeText = feishuSmokeText(firstEnabledRouteSummary?.route, firstRouteConnection, firstRouteProfile);
+  const smokeText = feishuTaskTestText(firstEnabledRouteSummary?.route, firstRouteConnection, firstRouteProfile);
+  const currentBotName = primaryMentionName(firstRouteConnection, firstRouteProfile ?? connectedProfile);
   const routeUsesOldBotKeyword = Boolean(
     firstEnabledRouteSummary?.route.matchType === "regex"
       && firstEnabledRouteSummary.route.regex?.includes("锐思")
@@ -2070,6 +2157,16 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     patchConfig({ routes: next });
   }
 
+  function patchConnectionById(connectionId: string, patch: Partial<FeishuConnectionConfig>) {
+    patchConfig({
+      connections: connections.map((connection) =>
+        connection.id === connectionId
+          ? { ...connection, ...patch }
+          : connection
+      ),
+    });
+  }
+
   function patchBaseSink(index: number, patch: Partial<FeishuBaseSinkConfig>) {
     const next = [...baseSinks];
     next[index] = { ...next[index], ...patch } as FeishuBaseSinkConfig;
@@ -2079,12 +2176,14 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   async function addProfileToPool(profile: ProfileOption, options: { useForCurrentEntry?: boolean } = {}) {
     const existing = connections.find((connection) => connection.profileName === profile.name);
     const displayName = profileDisplayName(profile);
+    const inferredAliases = splitBotAliases(profile.botName ?? displayName).filter((alias) => !isPlaceholderBotName(alias));
     const selected = existing
       ? {
         ...existing,
         enabled: true,
         appId: profile.appId ?? existing.appId,
         name: existing.name && existing.name !== existing.profileName ? existing.name : displayName,
+        botAliases: connectionAliasList(existing).length > 0 ? connectionAliasList(existing) : inferredAliases,
       }
       : connectionFromProfile({
         index: connections.length,
@@ -2140,6 +2239,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     setBindForm((prev) => ({
       ...prev,
       displayName: connection?.name || prev.displayName || "飞书机器人",
+      botAliases: connection ? formatBotAliases(connection) : prev.botAliases,
       profileName: connection?.profileName || prev.profileName || suggestedNewProfileName,
       appId: connection?.appId || prev.appId,
       appSecret: "",
@@ -2397,6 +2497,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   async function bindNewFeishuApp() {
     const profileName = bindForm.profileName.trim() || suggestedNewProfileName;
     const displayName = bindForm.displayName.trim() || "飞书机器人";
+    const botAliases = splitBotAliases(bindForm.botAliases || displayName).filter((alias) => !isPlaceholderBotName(alias));
     const appId = bindForm.appId.trim();
     const appSecret = bindForm.appSecret.trim();
     if (!appId || !appSecret) {
@@ -2420,6 +2521,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
           ...existingConnection,
           appId,
           name: displayName,
+          botAliases,
           enabled: true,
         }
         : connectionFromProfile({
@@ -2439,6 +2541,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
       profileCatalog.refresh();
       setBindForm({
         displayName: "飞书机器人",
+        botAliases: "",
         profileName: "",
         appId: "",
         appSecret: "",
@@ -2898,6 +3001,9 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
             <div key="fields" style={gridTwoStyle}>
               <Field key="displayName" label="给这个机器人起个名字" help="给人看的名字，例如“老板资讯机器人”。">
                 <input style={inputStyle} value={bindForm.displayName} onChange={(event) => setBindForm((prev) => ({ ...prev, displayName: event.target.value }))} />
+              </Field>
+              <Field key="botAliases" label="飞书里 @ 它的名字" help="用于防止 @小锐 时锐思也响应。可填多个，用逗号隔开，例如“小锐, 锐思”。">
+                <input style={inputStyle} value={bindForm.botAliases} placeholder="例如：小锐" onChange={(event) => setBindForm((prev) => ({ ...prev, botAliases: event.target.value }))} />
               </Field>
               <Field key="profileName" label="保存代号（自动生成）" help="工程师排障时才需要看。普通用户不用改。">
                 <input style={inputStyle} value={bindForm.profileName || suggestedNewProfileName} onChange={(event) => setBindForm((prev) => ({ ...prev, profileName: event.target.value }))} />
@@ -3375,6 +3481,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
             const authResult = userAuthResults[connection.profileName];
             const isStartingUserAuth = startingUserAuthProfileName === connection.profileName;
             const isFinishingUserAuth = finishingUserAuthProfileName === connection.profileName;
+            const aliasText = formatBotAliases(connection);
             return (
               <div key={`product-bot-${connection.id}-${index}`} style={productEntryStyle}>
                 <div key="top" style={{ display: "flex", gap: "14px", alignItems: "center" }}>
@@ -3395,6 +3502,22 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                       {profile
                         ? profileAuthDetail(profile)
                         : missingProfileHelp(connection)}
+                    </div>
+                    <div key="aliases" style={{ display: "grid", gap: "6px", marginTop: "8px" }}>
+                      <label key="label" style={{ fontWeight: 700 }}>飞书里 @ 它的名字</label>
+                      <div key="row" style={{ ...rowStyle, alignItems: "stretch" }}>
+                        <input
+                          key="input"
+                          style={{ ...inputStyle, minWidth: "220px" }}
+                          value={aliasText}
+                          placeholder={`例如：${profile?.botName || appLabel(connection, profile)}`}
+                          onChange={(event) => patchConnectionById(connection.id, { botAliases: splitBotAliases(event.target.value) })}
+                        />
+                        <button key="save-alias" type="button" style={buttonStyle} disabled={saving} onClick={() => void saveCurrentConfig({ successText: "已保存机器人 @ 名称。之后会用它判断是不是 @ 了当前机器人。" })}>
+                          保存 @ 名称
+                        </button>
+                      </div>
+                      <div key="help" style={helpStyle}>如果飞书没有返回机器人官方名称，这里一定要填对，否则 @小锐/@锐思 这类多机器人群聊会误触发。</div>
                     </div>
                     <div key="state" style={helpStyle}>状态：{profile ? "可发送 / 可监听" : "当前不可运行，先重新绑定或换用其他机器人"}</div>
                   </div>
@@ -3903,6 +4026,9 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                 <ToggleField key="enableQuickReply" label="测试口令“只回复 ok”" checked={configJson.enableQuickReply !== false} onChange={(checked) => patchConfig({ enableQuickReply: checked })} />
                 <Field key="larkCliBin" label="lark-cli 命令路径" help="普通用户不用改。系统找不到 lark-cli 时才填完整路径。">
                   <input style={inputStyle} value={configJson.larkCliBin ?? DEFAULT_CONFIG.larkCliBin} onChange={(event) => patchConfig({ larkCliBin: event.target.value })} />
+                </Field>
+                <Field key="paperclipBaseUrl" label="Paperclip 内部访问地址" help="可选。填云端域名后，飞书里会附带内部任务链接；没有 Paperclip 账号的人打不开。">
+                  <input style={inputStyle} value={configJson.paperclipBaseUrl ?? ""} placeholder="https://paperclip.company.com" onChange={(event) => patchConfig({ paperclipBaseUrl: event.target.value })} />
                 </Field>
                 <Field key="completionMessageTemplate" label="智能体完成后的飞书回复">
                   <input style={inputStyle} value={configJson.completionMessageTemplate ?? DEFAULT_CONFIG.completionMessageTemplate} onChange={(event) => patchConfig({ completionMessageTemplate: event.target.value })} />

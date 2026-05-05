@@ -3,6 +3,7 @@ export type FeishuIdentity = "bot" | "user";
 export interface FeishuConnectionConfig {
   id: string;
   name?: string;
+  botAliases?: string[];
   profileName: string;
   appId?: string;
   enabled?: boolean;
@@ -10,6 +11,7 @@ export interface FeishuConnectionConfig {
 
 export interface FeishuRouteConfig {
   id: string;
+  name?: string;
   connectionId?: string;
   enabled?: boolean;
   priority?: number;
@@ -44,6 +46,7 @@ export interface FeishuBaseSinkConfig {
 export interface FeishuConnectorConfig {
   larkCliBin?: string;
   dryRunCli?: boolean;
+  paperclipBaseUrl?: string;
   enableEventSubscriber?: boolean;
   eventTypes?: string;
   ackOnInbound?: boolean;
@@ -69,9 +72,20 @@ export interface FeishuInboundMessage {
   senderOpenId?: string;
   senderUserId?: string;
   senderName?: string;
+  senderType?: string;
+  senderAppId?: string;
   text: string;
+  mentions: FeishuMention[];
   attachments: FeishuInboundAttachment[];
   raw: unknown;
+}
+
+export interface FeishuMention {
+  name?: string;
+  openId?: string;
+  userId?: string;
+  appId?: string;
+  key?: string;
 }
 
 export interface FeishuInboundAttachment {
@@ -91,12 +105,14 @@ export interface FeishuSessionData {
   paperclipIssueId: string;
   paperclipIssueIdentifier?: string;
   paperclipIssueTitle?: string;
+  paperclipIssueUrl?: string;
   paperclipAgentId?: string;
   paperclipAgentSessionId?: string;
   lastRunId?: string;
   lastRunStatus?: string;
   lastRunFinishedAt?: string;
   lastCompletionReplyKey?: string;
+  createdAt?: string;
   lastMessageId: string;
   updatedAt: string;
 }

@@ -13,11 +13,12 @@ import type {
 
 export const DEFAULT_CONFIG: Required<Pick<
   FeishuConnectorConfig,
-  "larkCliBin" | "dryRunCli" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
+  "larkCliBin" | "dryRunCli" | "paperclipBaseUrl" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
   | "enableQuickReply" | "quickReplyRegex" | "quickReplyText"
 >> = {
   larkCliBin: "lark-cli",
   dryRunCli: true,
+  paperclipBaseUrl: "",
   enableEventSubscriber: false,
   eventTypes: "im.message.receive_v1",
   ackOnInbound: false,
@@ -36,6 +37,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeStringList(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,，、\n]/g)
+      : [];
+  return [...new Set(values
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean))];
+}
+
 export function normalizeConfig(input: Record<string, unknown> | null | undefined): FeishuConnectorConfig {
   const source = isRecord(input) ? input : {};
   return {
@@ -46,6 +59,9 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     dryRunCli: typeof source.dryRunCli === "boolean"
       ? source.dryRunCli
       : DEFAULT_CONFIG.dryRunCli,
+    paperclipBaseUrl: typeof source.paperclipBaseUrl === "string"
+      ? source.paperclipBaseUrl.trim()
+      : DEFAULT_CONFIG.paperclipBaseUrl,
     enableEventSubscriber: source.enableEventSubscriber === true,
     eventTypes: typeof source.eventTypes === "string" && source.eventTypes.trim()
       ? source.eventTypes.trim()
@@ -64,10 +80,15 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     quickReplyText: typeof source.quickReplyText === "string"
       ? source.quickReplyText
       : DEFAULT_CONFIG.quickReplyText,
-    connections: asArray<FeishuConnectionConfig>(source.connections).filter((connection) =>
-      typeof connection?.id === "string" &&
-      typeof connection?.profileName === "string"
-    ),
+    connections: asArray<FeishuConnectionConfig>(source.connections)
+      .filter((connection) =>
+        typeof connection?.id === "string" &&
+        typeof connection?.profileName === "string"
+      )
+      .map((connection) => ({
+        ...connection,
+        botAliases: normalizeStringList(connection.botAliases),
+      })),
     routes: asArray<FeishuRouteConfig>(source.routes).filter((route) =>
       typeof route?.id === "string" &&
       (typeof route?.companyId === "string" || typeof route?.companyRef === "string") &&
