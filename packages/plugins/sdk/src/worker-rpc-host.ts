@@ -797,6 +797,20 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           return callHost("issues.createComment", { issueId, body, companyId, authorAgentId: options?.authorAgentId });
         },
 
+        async createAttachment(input) {
+          return callHost("issues.attachments.create", {
+            issueId: input.issueId,
+            companyId: input.companyId,
+            filename: input.filename,
+            contentType: input.contentType,
+            bodyBase64: input.bodyBase64,
+            issueCommentId: input.issueCommentId,
+            actorAgentId: input.actor?.actorAgentId,
+            actorUserId: input.actor?.actorUserId,
+            actorRunId: input.actor?.actorRunId,
+          });
+        },
+
         async createInteraction(issueId: string, interaction, companyId: string, options?: { authorAgentId?: string }) {
           return callHost("issues.createInteraction", {
             issueId,
@@ -986,6 +1000,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           async sendMessage(sessionId: string, companyId: string, opts: {
             prompt: string;
             reason?: string;
+            issueId?: string;
+            taskId?: string;
             onEvent?: (event: AgentSessionEvent) => void;
           }) {
             if (opts.onEvent) {
@@ -997,6 +1013,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
                 companyId,
                 prompt: opts.prompt,
                 reason: opts.reason,
+                issueId: opts.issueId,
+                taskId: opts.taskId,
               });
             } catch (err) {
               sessionEventCallbacks.delete(sessionId);

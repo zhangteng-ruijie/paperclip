@@ -58,6 +58,8 @@ import {
 } from "./plugin-local-folders.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { logActivity } from "./activity-log.js";
+import { normalizeContentType, normalizeIssueAttachmentMaxBytes } from "../attachment-types.js";
+import { getStorageService } from "../storage/index.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -81,6 +83,17 @@ const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 /** Only these protocols are allowed for plugin HTTP requests. */
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 const TELEMETRY_EVENT_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
+
+function pluginSessionTaskKeyPrefix(pluginKey: string): string {
+  return `plugin:${pluginKey}:session:`;
+}
+
+function normalizePluginSessionTaskKey(pluginKey: string, taskKey?: string | null): string {
+  const prefix = pluginSessionTaskKeyPrefix(pluginKey);
+  const candidate = taskKey?.trim();
+  if (!candidate) return `${prefix}${randomUUID()}`;
+  return candidate.startsWith(prefix) ? candidate : `${prefix}${candidate}`;
+}
 
 /**
  * Check if an IP address is in a private/reserved range (RFC 1918, loopback,
@@ -1724,6 +1737,65 @@ export function buildHostServices(
         });
         return comment;
       },
+      async createAttachment(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const issue = requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        const body = Buffer.from(params.bodyBase64, "base64");
+        if (body.length <= 0) {
+          throw new Error("Attachment is empty");
+        }
+        const company = await companies.getById(companyId);
+        const attachmentMaxBytes = normalizeIssueAttachmentMaxBytes(company?.attachmentMaxBytes);
+        if (body.length > attachmentMaxBytes) {
+          throw new Error(`Attachment exceeds ${attachmentMaxBytes} bytes`);
+        }
+
+        const filename = params.filename.trim() || "attachment.bin";
+        const contentType = normalizeContentType(params.contentType);
+        const storage = getStorageService();
+        const stored = await storage.putFile({
+          companyId,
+          namespace: `issues/${issue.id}`,
+          originalFilename: filename,
+          contentType,
+          body,
+        });
+        const attachment = await issues.createAttachment({
+          issueId: issue.id,
+          issueCommentId: params.issueCommentId ?? null,
+          provider: stored.provider,
+          objectKey: stored.objectKey,
+          contentType: stored.contentType,
+          byteSize: stored.byteSize,
+          sha256: stored.sha256,
+          originalFilename: stored.originalFilename,
+          createdByAgentId: params.actorAgentId ?? null,
+          createdByUserId: params.actorUserId ?? null,
+        });
+        await logPluginActivity({
+          companyId,
+          action: "issue.attachment_added",
+          entityType: "issue",
+          entityId: issue.id,
+          actor: {
+            actorAgentId: params.actorAgentId ?? null,
+            actorUserId: params.actorUserId ?? null,
+            actorRunId: params.actorRunId ?? null,
+          },
+          details: {
+            identifier: issue.identifier,
+            attachmentId: attachment.id,
+            originalFilename: attachment.originalFilename,
+            contentType: attachment.contentType,
+            byteSize: attachment.byteSize,
+          },
+        });
+        return {
+          ...attachment,
+          contentPath: `/api/attachments/${attachment.id}/content`,
+        };
+      },
       async createInteraction(params) {
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
@@ -1916,7 +1988,7 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         const agent = await agents.getById(params.agentId);
         requireInCompany("Agent", agent, companyId);
-        const taskKey = params.taskKey ?? `plugin:${pluginKey}:session:${randomUUID()}`;
+        const taskKey = normalizePluginSessionTaskKey(pluginKey, params.taskKey);
 
         const row = await db
           .insert(agentTaskSessionsTable)
@@ -1952,7 +2024,7 @@ export function buildHostServices(
             and(
               eq(agentTaskSessionsTable.agentId, params.agentId),
               eq(agentTaskSessionsTable.companyId, companyId),
-              like(agentTaskSessionsTable.taskKey, `plugin:${pluginKey}:session:%`),
+              like(agentTaskSessionsTable.taskKey, `${pluginSessionTaskKeyPrefix(pluginKey)}%`),
             ),
           )
           .orderBy(desc(agentTaskSessionsTable.createdAt));
@@ -1967,10 +2039,6 @@ export function buildHostServices(
       },
 
       async sendMessage(params) {
-        if (disposed) {
-          throw new Error("Host services have been disposed");
-        }
-
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
 
@@ -1982,7 +2050,7 @@ export function buildHostServices(
             and(
               eq(agentTaskSessionsTable.id, params.sessionId),
               eq(agentTaskSessionsTable.companyId, companyId),
-              like(agentTaskSessionsTable.taskKey, `plugin:${pluginKey}:session:%`),
+              like(agentTaskSessionsTable.taskKey, `${pluginSessionTaskKeyPrefix(pluginKey)}%`),
             ),
           )
           .then((rows) => rows[0] ?? null);
@@ -1992,9 +2060,11 @@ export function buildHostServices(
           source: "automation",
           triggerDetail: "system",
           reason: params.reason ?? null,
-          payload: { prompt: params.prompt },
+          payload: { prompt: params.prompt, issueId: params.issueId ?? null, taskId: params.taskId ?? params.issueId ?? null },
           contextSnapshot: {
             taskKey: session.taskKey,
+            issueId: params.issueId ?? undefined,
+            taskId: params.taskId ?? params.issueId ?? undefined,
             wakeSource: "automation",
             wakeTriggerDetail: "system",
           },
@@ -2082,7 +2152,7 @@ export function buildHostServices(
             and(
               eq(agentTaskSessionsTable.id, params.sessionId),
               eq(agentTaskSessionsTable.companyId, companyId),
-              like(agentTaskSessionsTable.taskKey, `plugin:${pluginKey}:session:%`),
+              like(agentTaskSessionsTable.taskKey, `${pluginSessionTaskKeyPrefix(pluginKey)}%`),
             ),
           )
           .returning()
