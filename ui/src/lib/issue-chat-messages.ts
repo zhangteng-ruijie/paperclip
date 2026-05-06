@@ -47,6 +47,7 @@ export interface IssueChatLinkedRun {
   finishedAt?: Date | string | null;
   hasStoredOutput?: boolean;
   logBytes?: number | null;
+  resultJson?: Record<string, unknown> | null;
 }
 
 export interface IssueChatTranscriptEntry {
@@ -515,12 +516,14 @@ function runDurationLabel(run: {
   createdAt: Date | string;
   startedAt: Date | string | null;
   finishedAt?: Date | string | null;
+  resultJson?: Record<string, unknown> | null;
 }) {
   const isZh = getRuntimeLocaleConfig().locale === "zh-CN";
   const start = run.startedAt ?? run.createdAt;
   const end = run.finishedAt ?? null;
   const durationMs = end ? Math.max(0, toTimestamp(end) - toTimestamp(start)) : null;
   const durationText = formatDurationWords(durationMs);
+  const stopReason = typeof run.resultJson?.stopReason === "string" ? run.resultJson.stopReason : null;
   switch (run.status) {
     case "succeeded":
       return durationText ? (isZh ? `执行了 ${durationText}` : `Worked for ${durationText}`) : isZh ? "已完成工作" : "Finished work";
@@ -530,6 +533,11 @@ function runDurationLabel(run: {
     case "timed_out":
       return durationText ? (isZh ? `${durationText} 后超时` : `Timed out after ${durationText}`) : isZh ? "运行超时" : "Run timed out";
     case "cancelled":
+      if (stopReason === "paused") {
+        return durationText
+          ? (isZh ? `${durationText} 后被暂停` : `Paused by board after ${durationText}`)
+          : (isZh ? "已被暂停" : "Paused by board");
+      }
       return durationText ? (isZh ? `${durationText} 后取消` : `Cancelled after ${durationText}`) : isZh ? "运行已取消" : "Run cancelled";
     case "queued":
       return isZh ? "排队中" : "Queued";

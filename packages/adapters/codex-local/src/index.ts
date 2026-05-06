@@ -1,5 +1,10 @@
+import type { AdapterModelProfileDefinition } from "@paperclipai/adapter-utils";
+
 export const type = "codex_local";
 export const label = "Codex (local)";
+
+export const SANDBOX_INSTALL_COMMAND = "npm install -g @openai/codex";
+
 export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.5";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["gpt-5.5"] as const;
@@ -29,6 +34,19 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 
 export const models = [
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
+];
+
+export const modelProfiles: AdapterModelProfileDefinition[] = [
+  {
+    key: "cheap",
+    label: "Cheap",
+    description: "Use the lowest-cost known Codex local model lane without changing the primary model.",
+    adapterConfig: {
+      model: "gpt-5.3-codex-spark",
+      modelReasoningEffort: "low",
+    },
+    source: "adapter_default",
+  },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
