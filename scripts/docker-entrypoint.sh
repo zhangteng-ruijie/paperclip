@@ -37,4 +37,35 @@ if [ "$needs_ownership_fix" = "1" ]; then
     chown -R node:node "$PAPERCLIP_HOME_DIR"
 fi
 
+# Auto-install pre-built plugins if PAPERCLIP_PREINSTALL_PLUGIN is set
+if [ -n "$PAPERCLIP_PREINSTALL_PLUGIN" ]; then
+    echo "Auto-installing pre-built plugin: $PAPERCLIP_PREINSTALL_PLUGIN"
+
+    # Wait for server to be ready
+    SERVER_URL="${PAPERCLIP_API_URL:-http://localhost:${PORT:-3100}}"
+    echo "Waiting for server at $SERVER_URL to be ready..."
+    for i in $(seq 1 30); do
+        if curl -sf "$SERVER_URL/api/health" > /dev/null 2>&1; then
+            echo "Server is ready."
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo "WARNING: Server did not become ready in 30 seconds, proceeding anyway..."
+        fi
+        sleep 1
+    done
+
+    # Install plugin with API key if provided
+    PLUGIN_INSTALL_CMD="paperclipai plugin install $PAPERCLIP_PREINSTALL_PLUGIN --local"
+    if [ -n "$PAPERCLIP_API_KEY" ]; then
+        PLUGIN_INSTALL_CMD="$PLUGIN_INSTALL_CMD --api-key $PAPERCLIP_API_KEY"
+    fi
+    if [ -n "$PAPERCLIP_COMPANY_ID" ]; then
+        PLUGIN_INSTALL_CMD="$PLUGIN_INSTALL_CMD --company-id $PAPERCLIP_COMPANY_ID"
+    fi
+
+    echo "Running: $PLUGIN_INSTALL_CMD"
+    gosu node sh -c "$PLUGIN_INSTALL_CMD" || echo "WARNING: Plugin auto-install failed, continuing..."
+fi
+
 exec gosu node "$@"

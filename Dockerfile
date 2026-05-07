@@ -32,6 +32,7 @@ COPY packages/adapters/openclaw-gateway/package.json packages/adapters/openclaw-
 COPY packages/adapters/opencode-local/package.json packages/adapters/opencode-local/
 COPY packages/adapters/pi-local/package.json packages/adapters/pi-local/
 COPY packages/plugins/sdk/package.json packages/plugins/sdk/
+COPY packages/plugins/plugin-feishu-connector/package.json packages/plugins/plugin-feishu-connector/
 COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plugins/sandbox-providers/
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
 COPY patches/ patches/
@@ -44,8 +45,10 @@ COPY --from=deps /app /app
 COPY . .
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
+RUN pnpm --filter @paperclipai/plugin-feishu-connector build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
+RUN test -f packages/plugins/plugin-feishu-connector/dist/manifest.js || (echo "ERROR: feishu-connector plugin build output missing" && exit 1)
 
 FROM base AS production
 ARG USER_UID=1000
@@ -54,12 +57,14 @@ WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest \
   && npm install --global --omit=dev @openai/codex@latest opencode-ai \
+  && npm install --global --omit=dev @larksuite/cli \
   && command -v claude >/dev/null \
+  && command -v lark-cli >/dev/null \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssh-client jq \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /paperclip \
-  && chown node:node /paperclip
+  && chown -R node:node /paperclip /app
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
