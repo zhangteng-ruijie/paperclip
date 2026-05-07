@@ -211,7 +211,7 @@ export function issueSortFieldLabel(
 }
 
 export function issueGroupFieldLabel(
-  field: "status" | "priority" | "assignee" | "workspace" | "parent" | "none",
+  field: "status" | "priority" | "assignee" | "project" | "workspace" | "parent" | "none",
   locale: IssuesCopyLocale,
 ): string {
   const copy = getIssuesCopy(locale);
@@ -220,6 +220,7 @@ export function issueGroupFieldLabel(
       status: copy.status,
       priority: copy.priority,
       assignee: copy.assignee,
+      project: copy.project,
       workspace: copy.workspace,
       parent: copy.parentIssue,
       none: copy.none,

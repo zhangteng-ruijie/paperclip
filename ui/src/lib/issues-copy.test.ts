@@ -39,6 +39,7 @@ describe("issues-copy", () => {
     expect(issuePriorityLabel("critical", "en")).toBe("Critical");
     expect(issueSortFieldLabel("updated", "zh-CN")).toBe("更新时间");
     expect(issueGroupFieldLabel("parent", "en")).toBe("Parent Issue");
+    expect(issueGroupFieldLabel("project", "zh-CN")).toBe("项目");
     expect(formatIssueFilterCount(3, "zh-CN")).toBe("筛选：3");
     expect(formatIssueSubtaskCount(2, "en")).toBe("(2 sub-tasks)");
   });
