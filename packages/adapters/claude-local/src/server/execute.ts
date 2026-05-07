@@ -30,6 +30,7 @@ import {
   applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
   readPaperclipRuntimeSkillEntries,
+  readPaperclipIssueWorkModeFromContext,
   joinPromptSections,
   buildInvocationEnvForLogs,
   ensureAbsoluteDirectory,
@@ -196,9 +197,13 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
 
   if (wakeTaskId) {
     env.PAPERCLIP_TASK_ID = wakeTaskId;
+  }
+  if (issueWorkMode) {
+    env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   }
   if (wakeReason) {
     env.PAPERCLIP_WAKE_REASON = wakeReason;

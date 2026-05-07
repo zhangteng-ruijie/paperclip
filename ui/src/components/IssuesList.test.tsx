@@ -180,6 +180,7 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
     lastActivityAt: null,
     isUnreadForMe: false,
     ...overrides,
+    workMode: overrides.workMode ?? "standard",
   };
 }
 

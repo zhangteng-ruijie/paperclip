@@ -42,6 +42,7 @@ import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
   readPaperclipRuntimeSkillEntries,
+  readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
@@ -271,7 +272,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
   const wakePayloadJson = stringifyPaperclipWakePayload(context.paperclipWake);
+  const issueWorkMode = readPaperclipIssueWorkModeFromContext(context);
   if (wakeTaskId) env.PAPERCLIP_TASK_ID = wakeTaskId;
+  if (issueWorkMode) env.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakeReason) env.PAPERCLIP_WAKE_REASON = wakeReason;
   if (wakeCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = wakeCommentId;
   if (approvalId) env.PAPERCLIP_APPROVAL_ID = approvalId;

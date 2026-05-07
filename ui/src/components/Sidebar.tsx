@@ -114,6 +114,7 @@ export function Sidebar() {
 
         <SidebarSection label={copy.work}>
           <SidebarNavItem to="/issues" label={copy.issues} icon={CircleDot} />
+          <SidebarNavItem to="/search" label="Search" icon={Search} />
           <SidebarNavItem
             to="/routines"
             label={copy.routines}

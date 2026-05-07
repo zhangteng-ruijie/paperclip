@@ -162,6 +162,11 @@ export {
   issueReviewRequestSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
+  issueCommentAuthorTypeSchema,
+  issueCommentPresentationSchema,
+  issueCommentMetadataRowSchema,
+  issueCommentMetadataSectionSchema,
+  issueCommentMetadataSchema,
   addIssueCommentSchema,
   issueThreadInteractionStatusSchema,
   issueThreadInteractionKindSchema,
@@ -209,6 +214,16 @@ export {
   type UpsertIssueDocument,
   type RestoreIssueDocumentRevision,
 } from "./issue.js";
+
+export {
+  COMPANY_SEARCH_DEFAULT_LIMIT,
+  COMPANY_SEARCH_MAX_LIMIT,
+  COMPANY_SEARCH_MAX_OFFSET,
+  COMPANY_SEARCH_MAX_QUERY_LENGTH,
+  COMPANY_SEARCH_MAX_TOKENS,
+  companySearchQuerySchema,
+  type CompanySearchQuery,
+} from "./search.js";
 
 export {
   createIssueTreeHoldSchema,
