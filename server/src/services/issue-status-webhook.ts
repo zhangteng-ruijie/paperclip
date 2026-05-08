@@ -67,6 +67,76 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isFeishuBotWebhook(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "open.feishu.cn" && parsed.pathname.startsWith("/open-apis/bot/v2/hook/");
+  } catch {
+    return false;
+  }
+}
+
+function readPayloadRecord(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function formatFeishuStatusText(payload: Record<string, unknown>) {
+  const issue = readPayloadRecord(payload, "issue");
+  const assignee = readPayloadRecord(issue ?? {}, "assignee");
+  const agent = readPayloadRecord(assignee ?? {}, "agent");
+  const identifier = typeof issue?.identifier === "string" && issue.identifier ? issue.identifier : issue?.id;
+  const title = typeof issue?.title === "string" ? issue.title : "";
+  const previousStatus = typeof issue?.previousStatus === "string" ? issue.previousStatus : "unknown";
+  const status = typeof issue?.status === "string" ? issue.status : "unknown";
+  const source = typeof payload.source === "string" ? payload.source : "unknown";
+  const changedAt = typeof payload.changedAt === "string" ? payload.changedAt : new Date().toISOString();
+  const assigneeName =
+    typeof agent?.name === "string" && agent.name
+      ? `${agent.name}${typeof agent.role === "string" && agent.role ? ` (${agent.role})` : ""}`
+      : typeof assignee?.agentId === "string" && assignee.agentId
+        ? assignee.agentId
+        : "unassigned";
+
+  return [
+    "Paperclip issue status changed",
+    `${identifier ?? "unknown"}${title ? ` ${title}` : ""}`,
+    `Status: ${previousStatus} -> ${status}`,
+    `Source: ${source}`,
+    `Assignee: ${assigneeName}`,
+    `Changed: ${changedAt}`,
+  ].join("\n");
+}
+
+function buildWebhookRequest(url: string, payload: Record<string, unknown>) {
+  if (!isFeishuBotWebhook(url)) {
+    return JSON.stringify(payload);
+  }
+  return JSON.stringify({
+    msg_type: "text",
+    content: {
+      text: formatFeishuStatusText(payload),
+    },
+  });
+}
+
+async function assertFeishuResponseOk(response: Response) {
+  if (typeof response.text !== "function") return;
+  const body = await response.text();
+  if (!body) return;
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown; msg?: unknown };
+    const code = typeof parsed.code === "number" ? parsed.code : null;
+    if (code !== null && code !== 0) {
+      const message = typeof parsed.msg === "string" && parsed.msg ? parsed.msg : "unknown error";
+      throw new Error(`Feishu webhook returned code ${code}: ${message}`);
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) return;
+    throw err;
+  }
+}
+
 async function postWebhook(url: string, payload: Record<string, unknown>) {
   let lastError: unknown;
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
@@ -74,11 +144,14 @@ async function postWebhook(url: string, payload: Record<string, unknown>) {
       const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: buildWebhookRequest(url, payload),
         signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
       });
       if (!response.ok) {
         throw new Error(`Project issue status webhook returned HTTP ${response.status}`);
+      }
+      if (isFeishuBotWebhook(url)) {
+        await assertFeishuResponseOk(response);
       }
       return;
     } catch (err) {

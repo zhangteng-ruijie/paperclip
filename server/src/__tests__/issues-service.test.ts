@@ -199,6 +199,64 @@ describeEmbeddedPostgres("issue status project webhooks", () => {
     expect(payload.issue.updatedAt).toEqual(expect.any(String));
   });
 
+  it("formats Feishu bot webhooks as text messages", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ code: 0, msg: "success" }),
+    } as Response);
+    const { issueId } = await seedIssue({
+      projectEnv: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+        },
+      },
+    });
+
+    await svc.update(issueId, { status: "blocked" });
+
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = fetchMock.mock.calls[0]!;
+    const payload = JSON.parse(String((init as RequestInit).body));
+    expect(payload).toMatchObject({
+      msg_type: "text",
+      content: {
+        text: expect.stringContaining("Status: todo -> blocked"),
+      },
+    });
+    expect(payload.content.text).toContain("Webhook issue");
+    expect(payload.content.text).toContain("WebhookAgent (engineer)");
+  });
+
+  it("retries Feishu bot application-level errors", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: 19002, msg: "params error, msg_type need" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ code: 0, msg: "success" }),
+      } as Response);
+    const { issueId } = await seedIssue({
+      projectEnv: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://open.feishu.cn/open-apis/bot/v2/hook/test-token",
+        },
+      },
+    });
+
+    await expect(svc.update(issueId, { status: "blocked" })).resolves.toMatchObject({
+      id: issueId,
+      status: "blocked",
+    });
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
   it("does not call fetch when the project has no webhook configured", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
