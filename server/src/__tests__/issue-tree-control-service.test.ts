@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents,
   agentWakeupRequests,
@@ -11,6 +11,7 @@ import {
   issueTreeHoldMembers,
   issueTreeHolds,
   issues,
+  projects,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -28,6 +29,21 @@ if (!embeddedPostgresSupport.supported) {
   );
 }
 
+async function waitForCondition(assertion: () => void | Promise<void>, timeoutMs = 1_000) {
+  const start = Date.now();
+  let lastError: unknown;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  if (lastError) throw lastError;
+}
+
 describeEmbeddedPostgres("issueTreeControlService", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
@@ -38,10 +54,12 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
   }, 20_000);
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.delete(issueTreeHoldMembers);
     await db.delete(issueTreeHolds);
     await db.delete(issueComments);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agents);
@@ -216,7 +234,12 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
   });
 
   it("cancels non-terminal issue statuses and restores from the cancel snapshot", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 204,
+    } as Response);
     const companyId = randomUUID();
+    const projectId = randomUUID();
     const rootIssueId = randomUUID();
     const runningChildId = randomUUID();
     const todoChildId = randomUUID();
@@ -228,10 +251,23 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Webhook Project",
+      status: "in_progress",
+      env: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://example.test/project-status",
+        },
+      },
+    });
     await db.insert(issues).values([
       {
         id: rootIssueId,
         companyId,
+        projectId,
         title: "Root",
         status: "done",
         priority: "medium",
@@ -240,6 +276,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: runningChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Running child",
         status: "in_progress",
@@ -249,6 +286,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: todoChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Todo child",
         status: "todo",
@@ -258,6 +296,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       {
         id: doneChildId,
         companyId,
+        projectId,
         parentId: rootIssueId,
         title: "Done child",
         status: "done",
@@ -281,6 +320,28 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
 
     const cancelled = await svc.cancelIssueStatusesForHold(companyId, rootIssueId, cancel.hold.id);
     expect(cancelled.updatedIssueIds.sort()).toEqual([runningChildId, todoChildId].sort());
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const cancelPayloads = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]!.body)));
+    expect(cancelPayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "issue.tree_cancel",
+          issue: expect.objectContaining({
+            id: runningChildId,
+            previousStatus: "in_progress",
+            status: "cancelled",
+          }),
+        }),
+        expect.objectContaining({
+          source: "issue.tree_cancel",
+          issue: expect.objectContaining({
+            id: todoChildId,
+            previousStatus: "todo",
+            status: "cancelled",
+          }),
+        }),
+      ]),
+    );
 
     const afterCancel = await db
       .select({ id: issues.id, status: issues.status })
@@ -316,6 +377,16 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       actor: { actorType: "user", actorId: "board-user", userId: "board-user" },
     });
     expect(restored.updatedIssueIds).toEqual([runningChildId]);
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const restorePayload = JSON.parse(String(fetchMock.mock.calls[2]![1]!.body));
+    expect(restorePayload).toMatchObject({
+      source: "issue.tree_restore",
+      issue: {
+        id: runningChildId,
+        previousStatus: "cancelled",
+        status: "todo",
+      },
+    });
 
     const afterRestore = await db
       .select({ id: issues.id, status: issues.status, checkoutRunId: issues.checkoutRunId, executionRunId: issues.executionRunId })

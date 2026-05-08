@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import {
   activityLog,
@@ -54,11 +54,233 @@ async function ensureIssueRelationsTable(db: ReturnType<typeof createDb>) {
   `));
 }
 
+async function waitForCondition(assertion: () => void | Promise<void>, timeoutMs = 1_000) {
+  const start = Date.now();
+  let lastError: unknown;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  if (lastError) throw lastError;
+}
+
 if (!embeddedPostgresSupport.supported) {
   console.warn(
     `Skipping embedded Postgres issue service tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
   );
 }
+
+describeEmbeddedPostgres("issue status project webhooks", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  async function seedIssue(input?: {
+    projectEnv?: Record<string, unknown> | null;
+    issueStatus?: string;
+    assigneeAgentId?: string | null;
+  }) {
+    const companyId = randomUUID();
+    const projectId = randomUUID();
+    const issueId = randomUUID();
+    const agentId = input?.assigneeAgentId === undefined ? randomUUID() : input.assigneeAgentId;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `W${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    if (agentId) {
+      await db.insert(agents).values({
+        id: agentId,
+        companyId,
+        name: "WebhookAgent",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      });
+    }
+
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Webhook Project",
+      status: "in_progress",
+      env: input?.projectEnv ?? null,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      projectId,
+      title: "Webhook issue",
+      status: input?.issueStatus ?? "todo",
+      assigneeAgentId: agentId,
+      priority: "medium",
+    });
+
+    return { companyId, projectId, issueId, agentId };
+  }
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issue-status-webhooks-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+    await ensureIssueRelationsTable(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await db.delete(issueRelations);
+    await db.delete(issueComments);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(heartbeatRuns);
+    await db.delete(projects);
+    await db.delete(agents);
+    await db.delete(instanceSettings);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("posts a project webhook payload after an issue status update", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 204,
+    } as Response);
+    const { issueId, projectId, agentId } = await seedIssue({
+      projectEnv: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://example.test/project-status",
+        },
+      },
+    });
+
+    await svc.update(issueId, { status: "blocked", blockedByIssueIds: [] });
+
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://example.test/project-status");
+    const payload = JSON.parse(String((init as RequestInit).body));
+    expect(payload).toMatchObject({
+      event: "issue.status_changed",
+      source: "issue.update",
+      issue: {
+        id: issueId,
+        title: "Webhook issue",
+        previousStatus: "todo",
+        status: "blocked",
+        projectId,
+        assignee: {
+          agentId,
+          userId: null,
+        },
+        relations: {
+          blockedBy: [],
+          blocks: [],
+        },
+      },
+    });
+    expect(payload.changedAt).toEqual(expect.any(String));
+    expect(payload.issue.updatedAt).toEqual(expect.any(String));
+  });
+
+  it("does not call fetch when the project has no webhook configured", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 204,
+    } as Response);
+    const { issueId } = await seedIssue();
+
+    await svc.update(issueId, { status: "blocked" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fail the status update when webhook delivery rejects", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    const { issueId } = await seedIssue({
+      projectEnv: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://example.test/project-status",
+        },
+      },
+    });
+
+    await expect(svc.update(issueId, { status: "blocked" })).resolves.toMatchObject({
+      id: issueId,
+      status: "blocked",
+    });
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it("posts project webhooks after checkout and release status changes", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 204,
+    } as Response);
+    const { companyId, issueId, agentId } = await seedIssue({
+      projectEnv: {
+        PAPERCLIP_PROJECT_STATUS_WEBHOOK_URL: {
+          type: "plain",
+          value: "https://example.test/project-status",
+        },
+      },
+    });
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId: agentId!,
+      invocationSource: "assignment",
+      status: "running",
+      contextSnapshot: { issueId },
+    });
+
+    await svc.checkout(issueId, agentId!, ["todo"], runId);
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const checkoutPayload = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(checkoutPayload).toMatchObject({
+      event: "issue.status_changed",
+      source: "issue.checkout",
+      issue: {
+        id: issueId,
+        previousStatus: "todo",
+        status: "in_progress",
+      },
+    });
+
+    await svc.release(issueId, agentId!, runId);
+    await waitForCondition(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const releasePayload = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
+    expect(releasePayload).toMatchObject({
+      event: "issue.status_changed",
+      source: "issue.release",
+      issue: {
+        id: issueId,
+        previousStatus: "in_progress",
+        status: "todo",
+      },
+    });
+  });
+});
 
 describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   let db!: ReturnType<typeof createDb>;

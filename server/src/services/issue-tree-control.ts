@@ -22,6 +22,7 @@ import {
   type IssueTreePreviewWarning,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { scheduleIssueStatusWebhookById } from "./issue-status-webhook.js";
 
 type IssueRow = typeof issues.$inferSelect;
 type HoldRow = typeof issueTreeHolds.$inferSelect;
@@ -867,6 +868,11 @@ export function issueTreeControlService(db: Db) {
       .filter((member) => !member.skipped)
       .map((member) => member.issueId))];
     if (issueIds.length === 0) return { updatedIssueIds: [], updatedIssues: [] };
+    const previousStatusByIssueId = new Map(
+      (hold.members ?? [])
+        .filter((member) => !member.skipped)
+        .map((member) => [member.issueId, member.issueStatus] as const),
+    );
 
     const now = new Date();
     const updated = await db
@@ -894,6 +900,18 @@ export function issueTreeControlService(db: Db) {
         assigneeAgentId: issues.assigneeAgentId,
       });
 
+    for (const issue of updated) {
+      const previousStatus = previousStatusByIssueId.get(issue.id);
+      if (!previousStatus || previousStatus === issue.status) continue;
+      await scheduleIssueStatusWebhookById({
+        db,
+        companyId,
+        issueId: issue.id,
+        previousStatus,
+        source: "issue.tree_cancel",
+        changedAt: now,
+      });
+    }
     return {
       updatedIssueIds: updated.map((issue) => issue.id),
       updatedIssues: updated.map((issue) => ({
@@ -1031,6 +1049,16 @@ export function issueTreeControlService(db: Db) {
 
       return restored;
     });
+    for (const issue of updatedIssues) {
+      await scheduleIssueStatusWebhookById({
+        db,
+        companyId,
+        issueId: issue.id,
+        previousStatus: "cancelled",
+        source: "issue.tree_restore",
+        changedAt: now,
+      });
+    }
 
     return {
       updatedIssueIds: updatedIssues.map((issue) => issue.id),

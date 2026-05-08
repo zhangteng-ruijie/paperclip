@@ -66,6 +66,7 @@ import {
   issueTreeControlService,
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
+import { scheduleIssueStatusWebhook } from "./issue-status-webhook.js";
 import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
@@ -3307,7 +3308,17 @@ export function issueService(db: Db) {
         return enriched;
       };
 
-      return dbOrTx === db ? db.transaction(runUpdate) : runUpdate(dbOrTx);
+      const updatedIssue = await (dbOrTx === db ? db.transaction(runUpdate) : runUpdate(dbOrTx));
+      if (updatedIssue && existing.status !== updatedIssue.status) {
+        scheduleIssueStatusWebhook({
+          db,
+          issue: updatedIssue,
+          previousStatus: existing.status,
+          source: "issue.update",
+          changedAt: new Date(updatedIssue.updatedAt),
+        });
+      }
+      return updatedIssue;
     },
 
     clearExecutionWorkspaceEnvironmentSelection: async (companyId: string, environmentId: string) => {
@@ -3376,7 +3387,7 @@ export function issueService(db: Db) {
 
     checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, status: issues.status })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
@@ -3439,6 +3450,13 @@ export function issueService(db: Db) {
 
       if (updated) {
         const [enriched] = await withIssueLabels(db, [updated]);
+        scheduleIssueStatusWebhook({
+          db,
+          issue: enriched,
+          previousStatus: issueCompany.status,
+          source: "issue.checkout",
+          changedAt: now,
+        });
         return enriched;
       }
 
@@ -3650,6 +3668,13 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
       if (!updated) return null;
       const [enriched] = await withIssueLabels(db, [updated]);
+      scheduleIssueStatusWebhook({
+        db,
+        issue: enriched,
+        previousStatus: existing.status,
+        source: "issue.release",
+        changedAt: new Date(updated.updatedAt),
+      });
       return enriched;
     },
 
