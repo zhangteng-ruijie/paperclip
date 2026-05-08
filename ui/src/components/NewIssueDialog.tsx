@@ -55,6 +55,7 @@ import {
   Calendar,
   Paperclip,
   FileText,
+  Flag,
   Loader2,
   ListTree,
   X,
@@ -503,13 +504,16 @@ export function NewIssueDialog() {
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
   const statusLabels = issueComposerStatusOptions(locale);
-  const statuses = [
-    { value: "backlog", label: statusLabels[0].label, color: issueStatusText.backlog ?? issueStatusTextDefault },
-    { value: "todo", label: statusLabels[1].label, color: issueStatusText.todo ?? issueStatusTextDefault },
+  const statusDescriptions = locale === "zh-CN"
+    ? { backlog: "暂存 - 不会唤醒负责人", todo: "可执行 - 会唤醒负责人" }
+    : { backlog: "Parked - assignee will not be woken", todo: "Executable - assignee will be woken" };
+  const statuses: ReadonlyArray<{ value: string; label: string; color: string; description?: string }> = [
+    { value: "backlog", label: statusLabels[0].label, color: issueStatusText.backlog ?? issueStatusTextDefault, description: statusDescriptions.backlog },
+    { value: "todo", label: statusLabels[1].label, color: issueStatusText.todo ?? issueStatusTextDefault, description: statusDescriptions.todo },
     { value: "in_progress", label: statusLabels[2].label, color: issueStatusText.in_progress ?? issueStatusTextDefault },
     { value: "in_review", label: statusLabels[3].label, color: issueStatusText.in_review ?? issueStatusTextDefault },
     { value: "done", label: statusLabels[4].label, color: issueStatusText.done ?? issueStatusTextDefault },
-  ] as const;
+  ];
   const priorityLabels = issueComposerPriorityOptions(locale);
   const priorities = [
     {
@@ -1356,6 +1360,10 @@ export function NewIssueDialog() {
                     trackRecentAssignee(nextAssignee.assigneeAgentId);
                   }
                   setAssigneeValue(value);
+                  const hasAssignee = Boolean(nextAssignee.assigneeAgentId || nextAssignee.assigneeUserId);
+                  if (hasAssignee && status === "backlog") {
+                    setStatus("todo");
+                  }
                 }}
                 onConfirm={() => {
                   if (projectId) {
@@ -1853,18 +1861,23 @@ export function NewIssueDialog() {
                 {currentStatus.label}
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-36 p-1" align="start">
+            <PopoverContent className="w-56 p-1" align="start">
               {statuses.map((s) => (
                 <button
                   key={s.value}
                   className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+                    "flex w-full items-start gap-2 px-2 py-1.5 text-xs rounded hover:bg-accent/50",
                     s.value === status && "bg-accent"
                   )}
                   onClick={() => { setStatus(s.value); setStatusOpen(false); }}
                 >
-                  <CircleDot className={cn("h-3 w-3", s.color)} />
-                  {s.label}
+                  <CircleDot className={cn("h-3 w-3 mt-0.5 shrink-0", s.color)} />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>{s.label}</span>
+                    {s.description ? (
+                      <span className="text-[10px] text-muted-foreground">{s.description}</span>
+                    ) : null}
+                  </span>
                 </button>
               ))}
             </PopoverContent>
@@ -1988,6 +2001,18 @@ export function NewIssueDialog() {
             </PopoverContent>
           </Popover>
         </div>
+
+        {assigneeValue && status === "backlog" ? (
+          <div
+            data-testid="new-issue-assigned-backlog-note"
+            className="mx-4 mb-2 flex items-start gap-2 rounded-md border border-amber-300/70 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+          >
+            <Flag className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" />
+            <span className="leading-snug">
+              Assigning implies executable intent — leave status as <span className="font-medium">Backlog</span> only to deliberately park this. The assignee will not be woken until status moves to <span className="font-medium">Todo</span> or <span className="font-medium">In Progress</span>.
+            </span>
+          </div>
+        ) : null}
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border shrink-0">

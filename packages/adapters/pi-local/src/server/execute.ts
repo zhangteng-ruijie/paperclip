@@ -6,6 +6,7 @@ import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type Adapter
 import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
+  overrideAdapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
   adapterExecutionTargetSessionMatches,
   adapterExecutionTargetUsesManagedHome,
@@ -26,13 +27,13 @@ import {
   asNumber,
   asStringArray,
   parseObject,
-  applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
   joinPromptSections,
   buildInvocationEnvForLogs,
   ensureAbsoluteDirectory,
   ensurePaperclipSkillSymlink,
   ensurePathInEnv,
+  refreshPaperclipWorkspaceEnvForExecution,
   readPaperclipRuntimeSkillEntries,
   resolveCommandForLogs,
   resolvePaperclipLocale,
@@ -41,7 +42,6 @@ import {
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
-  shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
@@ -248,13 +248,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
-  const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
-  const shapedWorkspaceEnv = shapePaperclipWorkspaceEnvForExecution({
-    workspaceCwd: effectiveWorkspaceCwd,
-    workspaceHints,
-    executionTargetIsRemote,
-    executionCwd: effectiveExecutionCwd,
-  });
+  let effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
 
   if (!executionTargetIsRemote) {
@@ -311,20 +305,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (approvalStatus) env.PAPERCLIP_APPROVAL_STATUS = approvalStatus;
   if (linkedIssueIds.length > 0) env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
   if (wakePayloadJson) env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
-  applyPaperclipWorkspaceEnv(env, {
-    workspaceCwd: shapedWorkspaceEnv.workspaceCwd,
+  refreshPaperclipWorkspaceEnvForExecution({
+    env,
+    envConfig,
+    workspaceCwd: effectiveWorkspaceCwd,
     workspaceSource,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
+    workspaceHints,
     agentHome,
+    executionTargetIsRemote,
+    executionCwd: effectiveExecutionCwd,
   });
-  if (shapedWorkspaceEnv.workspaceHints.length > 0) {
-    env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(shapedWorkspaceEnv.workspaceHints);
-  }
-  for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
-  }
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
@@ -406,6 +399,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[paperclip] Syncing workspace and Pi runtime assets to ${describeAdapterExecutionTarget(executionTarget)}.\n`,
       );
       const preparedRemoteRuntime = await prepareAdapterExecutionTargetRuntime({
+        runId,
         target: executionTarget,
         adapterKey: "pi",
         workspaceLocalDir: cwd,
@@ -420,6 +414,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ],
       });
       restoreRemoteWorkspace = () => preparedRemoteRuntime.restoreWorkspace();
+      effectiveExecutionCwd = preparedRemoteRuntime.workspaceRemoteDir ?? effectiveExecutionCwd;
+      refreshPaperclipWorkspaceEnvForExecution({
+        env,
+        envConfig,
+        workspaceCwd: effectiveWorkspaceCwd,
+        workspaceSource,
+        workspaceId,
+        workspaceRepoUrl,
+        workspaceRepoRef,
+        workspaceHints,
+        agentHome,
+        executionTargetIsRemote,
+        executionCwd: effectiveExecutionCwd,
+      });
       if (adapterExecutionTargetUsesManagedHome(executionTarget) && preparedRemoteRuntime.runtimeRootDir) {
         env.HOME = preparedRemoteRuntime.runtimeRootDir;
       }
@@ -433,10 +441,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       throw error;
     }
   }
-  if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(executionTarget)) {
+  const runtimeExecutionTarget = overrideAdapterExecutionTargetRemoteCwd(executionTarget, effectiveExecutionCwd);
+  if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
     paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
       runId,
-      target: executionTarget,
+      target: runtimeExecutionTarget,
       runtimeRootDir: remoteRuntimeRootDir,
       adapterKey: "pi",
       hostApiToken: env.PAPERCLIP_API_KEY,
@@ -460,7 +469,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
-  const sessionTargetMatches = adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget);
+  const sessionTargetMatches = adapterExecutionTargetSessionMatches(runtimeRemoteExecution, runtimeExecutionTarget);
   const sessionParamsCwdMatches =
     runtimeSessionCwd.length === 0 ||
     executionCwdsMatch(runtimeSessionCwd, effectiveExecutionCwd, executionTargetIsRemote);
@@ -469,7 +478,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? await readSavedSessionCwd({
           runId,
           sessionPath: runtimeSessionId,
-          executionTarget,
+          executionTarget: runtimeExecutionTarget ?? null,
           cwd,
           env,
           timeoutSec,
@@ -506,7 +515,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   if (!canResumeSession) {
     if (executionTargetIsRemote) {
-      await ensureAdapterExecutionTargetFile(runId, executionTarget, sessionPath, {
+      await ensureAdapterExecutionTargetFile(runId, runtimeExecutionTarget, sessionPath, {
         cwd,
         env,
         timeoutSec: 15,
@@ -667,7 +676,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     };
 
-    const proc = await runAdapterExecutionTargetProcess(runId, executionTarget, command, args, {
+    const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
       cwd,
       env: executionTargetIsRemote ? env : runtimeEnv,
       timeoutSec,
@@ -716,7 +725,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
           ...(executionTargetIsRemote
             ? {
-                remoteExecution: adapterExecutionTargetSessionIdentity(executionTarget),
+                remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
               }
             : {}),
         }

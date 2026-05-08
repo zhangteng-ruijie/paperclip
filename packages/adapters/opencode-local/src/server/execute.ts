@@ -6,6 +6,7 @@ import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type Adapter
 import {
   adapterExecutionTargetIsRemote,
   adapterExecutionTargetRemoteCwd,
+  overrideAdapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
   adapterExecutionTargetSessionMatches,
   adapterExecutionTargetUsesManagedHome,
@@ -26,7 +27,6 @@ import {
   asNumber,
   asStringArray,
   parseObject,
-  applyPaperclipWorkspaceEnv,
   buildPaperclipEnv,
   joinPromptSections,
   buildInvocationEnvForLogs,
@@ -35,9 +35,9 @@ import {
   ensurePathInEnv,
   resolveCommandForLogs,
   resolvePaperclipLocale,
+  refreshPaperclipWorkspaceEnvForExecution,
   renderTemplate,
   renderPaperclipWakePrompt,
-  shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
@@ -222,13 +222,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
-  const effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
-  const shapedWorkspaceEnv = shapePaperclipWorkspaceEnvForExecution({
-    workspaceCwd: effectiveWorkspaceCwd,
-    workspaceHints,
-    executionTargetIsRemote,
-    executionCwd: effectiveExecutionCwd,
-  });
+  let effectiveExecutionCwd = adapterExecutionTargetRemoteCwd(executionTarget, cwd);
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const openCodeSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolvePaperclipDesiredSkillNames(config, openCodeSkillEntries);
@@ -281,20 +275,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (approvalStatus) env.PAPERCLIP_APPROVAL_STATUS = approvalStatus;
   if (linkedIssueIds.length > 0) env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
   if (wakePayloadJson) env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
-  applyPaperclipWorkspaceEnv(env, {
-    workspaceCwd: shapedWorkspaceEnv.workspaceCwd,
+  refreshPaperclipWorkspaceEnvForExecution({
+    env,
+    envConfig,
+    workspaceCwd: effectiveWorkspaceCwd,
     workspaceSource,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
+    workspaceHints,
     agentHome,
+    executionTargetIsRemote,
+    executionCwd: effectiveExecutionCwd,
   });
-  if (shapedWorkspaceEnv.workspaceHints.length > 0) {
-    env.PAPERCLIP_WORKSPACES_JSON = JSON.stringify(shapedWorkspaceEnv.workspaceHints);
-  }
-  for (const [key, value] of Object.entries(envConfig)) {
-    if (typeof value === "string") env[key] = value;
-  }
   // Prevent OpenCode from writing an opencode.json config file into the
   // project working directory (which would pollute the git repo).  Model
   // selection is already handled via the --model CLI flag.  Set after the
@@ -358,6 +351,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[paperclip] Syncing workspace and OpenCode runtime assets to ${describeAdapterExecutionTarget(executionTarget)}.\n`,
       );
       const preparedExecutionTargetRuntime = await prepareAdapterExecutionTargetRuntime({
+        runId,
         target: executionTarget,
         adapterKey: "opencode",
         workspaceLocalDir: cwd,
@@ -378,6 +372,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ],
       });
       restoreRemoteWorkspace = () => preparedExecutionTargetRuntime.restoreWorkspace();
+      effectiveExecutionCwd = preparedExecutionTargetRuntime.workspaceRemoteDir ?? effectiveExecutionCwd;
+      refreshPaperclipWorkspaceEnvForExecution({
+        env: preparedRuntimeConfig.env,
+        envConfig,
+        workspaceCwd: effectiveWorkspaceCwd,
+        workspaceSource,
+        workspaceId,
+        workspaceRepoUrl,
+        workspaceRepoRef,
+        workspaceHints,
+        agentHome,
+        executionTargetIsRemote,
+        executionCwd: effectiveExecutionCwd,
+      });
       remoteRuntimeRootDir = preparedExecutionTargetRuntime.runtimeRootDir;
       const managedHome = adapterExecutionTargetUsesManagedHome(executionTarget);
       if (managedHome && preparedExecutionTargetRuntime.runtimeRootDir) {
@@ -415,10 +423,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         graceSec,
       });
     }
-    if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(executionTarget)) {
+    const runtimeExecutionTarget = overrideAdapterExecutionTargetRemoteCwd(executionTarget, effectiveExecutionCwd);
+    if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
       paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
         runId,
-        target: executionTarget,
+        target: runtimeExecutionTarget,
         runtimeRootDir: remoteRuntimeRootDir,
         adapterKey: "opencode",
         hostApiToken: preparedRuntimeConfig.env.PAPERCLIP_API_KEY,
@@ -445,7 +454,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const canResumeSession =
       runtimeSessionId.length > 0 &&
       (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(effectiveExecutionCwd)) &&
-      adapterExecutionTargetSessionMatches(runtimeRemoteExecution, executionTarget);
+      adapterExecutionTargetSessionMatches(runtimeRemoteExecution, runtimeExecutionTarget);
     const sessionId = canResumeSession ? runtimeSessionId : null;
     if (executionTargetIsRemote && runtimeSessionId && !canResumeSession) {
       await onLog(
@@ -555,7 +564,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         });
       }
 
-      const proc = await runAdapterExecutionTargetProcess(runId, executionTarget, command, args, {
+      const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
         cwd,
         env: preparedRuntimeConfig.env,
         stdin: prompt,
@@ -601,7 +610,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
             ...(executionTargetIsRemote
               ? {
-                  remoteExecution: adapterExecutionTargetSessionIdentity(executionTarget),
+                  remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
                 }
               : {}),
           } as Record<string, unknown>)
