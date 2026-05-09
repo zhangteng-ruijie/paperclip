@@ -512,6 +512,66 @@ export const pluginApiRouteDeclarationSchema = z.object({
 
 export type PluginApiRouteDeclarationInput = z.infer<typeof pluginApiRouteDeclarationSchema>;
 
+const pluginSsoFieldPathSchema = z.string().min(1).max(200).regex(
+  /^[A-Za-z0-9_$.-]+$/,
+  "field path may only contain letters, numbers, underscores, dollar signs, dots, and hyphens",
+);
+
+export const pluginAuthSsoProviderDeclarationSchema = z.object({
+  providerId: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/, {
+    message: "providerId must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, hyphens, or underscores",
+  }),
+  displayName: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+  authorizationUrl: z.string().url(),
+  tokenUrl: z.string().url(),
+  profileUrl: z.string().url(),
+  clientId: z.string().min(1).max(200),
+  clientSecretRef: z.string().min(1).max(200),
+  redirectUri: z.string().url(),
+  scope: z.union([z.string().max(1000), z.array(z.string().max(200)).max(50)]).optional(),
+  usePkce: z.boolean().optional(),
+  pkceMethod: z.literal("S256").optional(),
+  useState: z.boolean().optional(),
+  profileMapping: z.object({
+    providerAccountIdField: pluginSsoFieldPathSchema,
+    nameField: pluginSsoFieldPathSchema,
+    emailField: pluginSsoFieldPathSchema.nullable().optional(),
+    emailVerified: z.boolean().optional(),
+  }),
+  autoProvision: z.object({
+    enabled: z.boolean().optional(),
+    defaultCompanyId: z.string().uuid().nullable().optional(),
+    defaultMembershipRole: z.string().min(1).max(80).nullable().optional(),
+    allowlist: z.object({
+      field: pluginSsoFieldPathSchema,
+      values: z.array(z.string().min(1).max(200)).min(1).max(100),
+    }).optional(),
+    active: z.object({
+      field: pluginSsoFieldPathSchema,
+      values: z.array(z.string().min(1).max(200)).min(1).max(100),
+    }).optional(),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  if (value.usePkce && value.pkceMethod && value.pkceMethod !== "S256") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Only PKCE S256 is supported",
+      path: ["pkceMethod"],
+    });
+  }
+  if (value.autoProvision?.enabled && !value.autoProvision.defaultCompanyId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "defaultCompanyId is required when autoProvision is enabled",
+      path: ["autoProvision", "defaultCompanyId"],
+    });
+  }
+});
+
+export type PluginAuthSsoProviderDeclarationInput = z.infer<typeof pluginAuthSsoProviderDeclarationSchema>;
+
 // ---------------------------------------------------------------------------
 // Plugin Manifest V1 schema
 // ---------------------------------------------------------------------------
@@ -585,6 +645,7 @@ export const pluginManifestV1Schema = z.object({
   tools: z.array(pluginToolDeclarationSchema).optional(),
   database: pluginDatabaseDeclarationSchema.optional(),
   apiRoutes: z.array(pluginApiRouteDeclarationSchema).optional(),
+  authProviders: z.array(pluginAuthSsoProviderDeclarationSchema).optional(),
   environmentDrivers: z.array(pluginEnvironmentDriverDeclarationSchema).optional(),
   agents: z.array(pluginManagedAgentDeclarationSchema).optional(),
   projects: z.array(pluginManagedProjectDeclarationSchema).optional(),
@@ -720,6 +781,16 @@ export const pluginManifestV1Schema = z.object({
     }
   }
 
+  if (manifest.authProviders && manifest.authProviders.length > 0) {
+    if (!manifest.capabilities.includes("auth.sso.register")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Capability 'auth.sso.register' is required when authProviders are declared",
+        path: ["capabilities"],
+      });
+    }
+  }
+
   if (manifest.database) {
     const requiredCapabilities = [
       "database.namespace.migrate",
@@ -793,6 +864,18 @@ export const pluginManifestV1Schema = z.object({
         code: z.ZodIssueCode.custom,
         message: `Duplicate api routes: ${[...new Set(duplicateRoutes)].join(", ")}`,
         path: ["apiRoutes"],
+      });
+    }
+  }
+
+  if (manifest.authProviders) {
+    const providerIds = manifest.authProviders.map((provider) => provider.providerId);
+    const duplicates = providerIds.filter((providerId, i) => providerIds.indexOf(providerId) !== i);
+    if (duplicates.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate auth provider ids: ${[...new Set(duplicates)].join(", ")}`,
+        path: ["authProviders"],
       });
     }
   }

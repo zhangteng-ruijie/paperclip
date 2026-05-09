@@ -14,6 +14,16 @@ type AuthErrorBody =
   }
   | null;
 
+export type AuthSsoProvider = {
+  providerId: string;
+  displayName: string;
+  description: string | null;
+  pluginKey: string;
+  callbackPath: string;
+  signInPath: string;
+  errorPath: string;
+};
+
 export class AuthApiError extends Error {
   status: number;
   code: string | null;
@@ -111,6 +121,34 @@ export const authApi = {
 
   signUpEmail: async (input: { name: string; email: string; password: string }) => {
     await authPost("/sign-up/email", input);
+  },
+
+  listSsoProviders: async (): Promise<AuthSsoProvider[]> => {
+    const res = await fetch("/api/auth/sso/providers", {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 404) return [];
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(`Failed to load SSO providers (${res.status})`);
+    }
+    const providers = payload && typeof payload === "object"
+      ? (payload as { providers?: unknown }).providers
+      : null;
+    if (!Array.isArray(providers)) return [];
+    return providers.filter((provider): provider is AuthSsoProvider => {
+      if (!provider || typeof provider !== "object") return false;
+      const value = provider as Partial<AuthSsoProvider>;
+      return (
+        typeof value.providerId === "string" &&
+        typeof value.displayName === "string" &&
+        typeof value.pluginKey === "string" &&
+        typeof value.callbackPath === "string" &&
+        typeof value.signInPath === "string" &&
+        typeof value.errorPath === "string"
+      );
+    });
   },
 
   getProfile: async (): Promise<CurrentUserProfile> => {

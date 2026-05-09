@@ -434,6 +434,49 @@ export interface PluginApiRouteDeclaration {
   companyResolution?: PluginApiRouteCompanyResolution;
 }
 
+export interface PluginAuthSsoProviderDeclaration {
+  /** Stable provider id used by Better Auth and callback URLs, e.g. "ruijie". */
+  providerId: string;
+  /** Human-readable label shown on the login screen. */
+  displayName: string;
+  /** Optional operator-facing description. */
+  description?: string;
+  /** Whether the host should expose this provider when the plugin is ready. */
+  enabled?: boolean;
+  authorizationUrl: string;
+  tokenUrl: string;
+  profileUrl: string;
+  clientId: string;
+  /** Secret name/ref resolved at token exchange time; never plaintext. */
+  clientSecretRef: string;
+  /** Exact redirect URI registered with the upstream SSO provider. */
+  redirectUri: string;
+  /** Empty string/array are both valid and mean no OAuth scope parameter. */
+  scope?: string | string[];
+  usePkce?: boolean;
+  pkceMethod?: "S256";
+  useState?: boolean;
+  profileMapping: {
+    providerAccountIdField: string;
+    nameField: string;
+    emailField?: string | null;
+    emailVerified?: boolean;
+  };
+  autoProvision?: {
+    enabled?: boolean;
+    defaultCompanyId?: string | null;
+    defaultMembershipRole?: string | null;
+    allowlist?: {
+      field: string;
+      values: string[];
+    };
+    active?: {
+      field: string;
+      values: string[];
+    };
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Plugin Manifest V1
 // ---------------------------------------------------------------------------
@@ -488,6 +531,8 @@ export interface PaperclipPluginManifestV1 {
   database?: PluginDatabaseDeclaration;
   /** Scoped JSON API routes mounted under `/api/plugins/:pluginId/api/*`. */
   apiRoutes?: PluginApiRouteDeclaration[];
+  /** SSO providers exposed through the host auth bridge. Requires `auth.sso.register`. */
+  authProviders?: PluginAuthSsoProviderDeclaration[];
   /** Environment drivers this plugin contributes. Requires `environment.drivers.register` capability. */
   environmentDrivers?: PluginEnvironmentDriverDeclaration[];
   /** Suggested company-scoped agents this plugin can provision and resolve by stable key. */

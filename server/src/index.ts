@@ -477,6 +477,8 @@ export async function startServer(): Promise<StartedServer> {
   
   let authReady = config.deploymentMode === "local_trusted";
   let betterAuthHandler: RequestHandler | undefined;
+  let betterAuth: unknown | undefined;
+  let pluginSsoStore: unknown | undefined;
   let resolveSession:
     | ((req: ExpressRequest) => Promise<BetterAuthSessionResult | null>)
     | undefined;
@@ -494,6 +496,7 @@ export async function startServer(): Promise<StartedServer> {
       resolveBetterAuthSession,
       resolveBetterAuthSessionFromHeaders,
     } = await import("./auth/better-auth.js");
+    const { createPluginSsoStore } = await import("./auth/plugin-sso.js");
     const derivedTrustedOrigins = deriveAuthTrustedOrigins(config, { listenPort });
     const envTrustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
       .split(",")
@@ -512,7 +515,12 @@ export async function startServer(): Promise<StartedServer> {
       },
       "Authenticated mode auth origin configuration",
     );
-    const auth = createBetterAuthInstance(db as any, config, effectiveTrustedOrigins);
+    pluginSsoStore = createPluginSsoStore(db as any);
+    await (pluginSsoStore as { reload(): Promise<unknown> }).reload();
+    const auth = createBetterAuthInstance(db as any, config, effectiveTrustedOrigins, {
+      pluginSsoStore: pluginSsoStore as any,
+    });
+    betterAuth = auth;
     betterAuthHandler = createBetterAuthHandler(auth);
     resolveSession = (req) => resolveBetterAuthSession(auth, req);
     resolveSessionFromHeaders = (headers) => resolveBetterAuthSessionFromHeaders(auth, headers);
@@ -614,7 +622,9 @@ export async function startServer(): Promise<StartedServer> {
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
     pluginMigrationDb: pluginMigrationDb as any,
+    betterAuth: betterAuth as any,
     betterAuthHandler,
+    pluginSsoStore: pluginSsoStore as any,
     resolveSession,
     pluginWorkerManager,
   });

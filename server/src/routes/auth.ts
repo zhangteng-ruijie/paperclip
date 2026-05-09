@@ -7,6 +7,7 @@ import {
   currentUserProfileSchema,
   updateCurrentUserProfileSchema,
 } from "@paperclipai/shared";
+import { publicAuthEmail } from "../auth/plugin-sso.js";
 import { unauthorized } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 
@@ -28,7 +29,7 @@ async function loadCurrentUserProfile(db: Db, userId: string) {
 
   return currentUserProfileSchema.parse({
     id: user.id,
-    email: user.email ?? null,
+    email: publicAuthEmail(user.email),
     name: user.name ?? null,
     image: user.image ?? null,
   });
@@ -90,7 +91,7 @@ export function authRoutes(db: Db) {
 
     res.json(currentUserProfileSchema.parse({
       id: updated.id,
-      email: updated.email ?? null,
+      email: publicAuthEmail(updated.email),
       name: updated.name ?? null,
       image: updated.image ?? null,
     }));

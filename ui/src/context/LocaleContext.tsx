@@ -189,6 +189,9 @@ type MessageKey =
   | "auth.createOne"
   | "auth.signInLink"
   | "auth.authenticationFailed"
+  | "auth.ssoSignIn"
+  | "auth.ssoFailed"
+  | "auth.passwordFallback"
   | "onboarding.close"
   | "onboarding.stepCompany"
   | "onboarding.stepAgent"
@@ -366,6 +369,9 @@ const messages: Record<PaperclipUiLocale, MessageTable> = {
     "auth.createOne": "Create one",
     "auth.signInLink": "Sign in",
     "auth.authenticationFailed": "Authentication failed",
+    "auth.ssoSignIn": "Sign in with SSO",
+    "auth.ssoFailed": "SSO sign-in failed. Please try again.",
+    "auth.passwordFallback": "or use password",
     "onboarding.close": "Close",
     "onboarding.stepCompany": "Company",
     "onboarding.stepAgent": "Agent",
@@ -616,6 +622,9 @@ const messages: Record<PaperclipUiLocale, MessageTable> = {
     "auth.createOne": "立即注册",
     "auth.signInLink": "登录",
     "auth.authenticationFailed": "认证失败",
+    "auth.ssoSignIn": "使用 SSO 登录",
+    "auth.ssoFailed": "SSO 登录失败，请重试。",
+    "auth.passwordFallback": "或使用密码登录",
     "onboarding.close": "关闭",
     "onboarding.stepCompany": "公司",
     "onboarding.stepAgent": "Agent",

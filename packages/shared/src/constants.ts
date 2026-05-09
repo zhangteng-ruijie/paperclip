@@ -690,6 +690,7 @@ export const PLUGIN_CAPABILITIES = [
   "jobs.schedule",
   "webhooks.receive",
   "api.routes.register",
+  "auth.sso.register",
   "http.outbound",
   "secrets.read-ref",
   "environment.drivers.register",

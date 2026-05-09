@@ -25,6 +25,11 @@ export function AuthPage() {
     () => searchParams.get("next") || getRememberedInvitePath() || "/",
     [searchParams],
   );
+  const { data: ssoProviders = [] } = useQuery({
+    queryKey: queryKeys.auth.ssoProviders,
+    queryFn: () => authApi.listSsoProviders(),
+    retry: false,
+  });
   const { data: session, isLoading: isSessionLoading } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -36,6 +41,12 @@ export function AuthPage() {
       navigate(nextPath, { replace: true });
     }
   }, [session, navigate, nextPath]);
+
+  useEffect(() => {
+    if (searchParams.get("error")) {
+      setError(t("auth.ssoFailed"));
+    }
+  }, [searchParams, t]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -64,6 +75,10 @@ export function AuthPage() {
     email.trim().length > 0 &&
     password.trim().length > 0 &&
     (mode === "sign_in" || (name.trim().length > 0 && password.trim().length >= 8));
+  const primarySsoProvider = mode === "sign_in" ? ssoProviders[0] : undefined;
+  const ssoSignInHref = primarySsoProvider
+    ? `${primarySsoProvider.signInPath}?next=${encodeURIComponent(nextPath)}`
+    : null;
 
   if (isSessionLoading) {
     return (
@@ -90,8 +105,23 @@ export function AuthPage() {
             {mode === "sign_in" ? t("auth.signInDescription") : t("auth.signUpDescription")}
           </p>
 
+          {primarySsoProvider && ssoSignInHref && (
+            <div className="mt-6">
+              <Button asChild variant="outline" className="w-full">
+                <a href={ssoSignInHref}>
+                  {primarySsoProvider.displayName || t("auth.ssoSignIn")}
+                </a>
+              </Button>
+              <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+                <div className="h-px flex-1 bg-border" />
+                <span>{t("auth.passwordFallback")}</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+            </div>
+          )}
+
           <form
-            className="mt-6 space-y-4"
+            className={`${primarySsoProvider ? "mt-0" : "mt-6"} space-y-4`}
             method="post"
             action={mode === "sign_up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email"}
             onSubmit={(event) => {

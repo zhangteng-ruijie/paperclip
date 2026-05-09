@@ -36,6 +36,7 @@ import {
 } from "./routes/instance-database-backups.js";
 import { llmRoutes } from "./routes/llms.js";
 import { authRoutes } from "./routes/auth.js";
+import { authSsoRoutes } from "./routes/auth-sso.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
@@ -57,7 +58,8 @@ import { createPluginDevWatcher } from "./services/plugin-dev-watcher.js";
 import { createPluginHostServiceCleanup } from "./services/plugin-host-service-cleanup.js";
 import { pluginRegistryService } from "./services/plugin-registry.js";
 import { createHostClientHandlers } from "@paperclipai/plugin-sdk";
-import type { BetterAuthSessionResult } from "./auth/better-auth.js";
+import type { BetterAuthInstance, BetterAuthSessionResult } from "./auth/better-auth.js";
+import type { PluginSsoStore } from "./auth/plugin-sso.js";
 import { createCachedViteHtmlRenderer } from "./vite-html-renderer.js";
 
 type UiMode = "none" | "static" | "vite-dev";
@@ -150,7 +152,9 @@ export async function createApp(
     localPluginDir?: string;
     pluginMigrationDb?: Db;
     pluginWorkerManager?: PluginWorkerManager;
+    betterAuth?: BetterAuthInstance;
     betterAuthHandler?: express.RequestHandler;
+    pluginSsoStore?: PluginSsoStore;
     resolveSession?: (req: ExpressRequest) => Promise<BetterAuthSessionResult | null>;
   },
 ) {
@@ -185,6 +189,9 @@ export async function createApp(
       resolveSession: opts.resolveSession,
     }),
   );
+  if (opts.betterAuth && opts.pluginSsoStore) {
+    app.use("/api/auth/sso", authSsoRoutes(opts.pluginSsoStore, opts.betterAuth));
+  }
   app.use("/api/auth", authRoutes(db));
   if (opts.betterAuthHandler) {
     app.use("/api/auth/{*authPath}", (req, _res, next) => {

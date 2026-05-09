@@ -12,6 +12,7 @@ import {
 } from "@paperclipai/db";
 import type { Config } from "../config.js";
 import { resolvePaperclipInstanceId } from "../home-paths.js";
+import { createGenericOAuthPlugin, publicAuthEmail, type PluginSsoStore } from "./plugin-sso.js";
 
 export type BetterAuthSessionUser = {
   id: string;
@@ -24,7 +25,7 @@ export type BetterAuthSessionResult = {
   user: BetterAuthSessionUser | null;
 };
 
-type BetterAuthInstance = ReturnType<typeof betterAuth>;
+export type BetterAuthInstance = ReturnType<typeof betterAuth>;
 
 const AUTH_COOKIE_PREFIX_FALLBACK = "default";
 const AUTH_COOKIE_PREFIX_INVALID_SEGMENTS_RE = /[^a-zA-Z0-9_-]+/g;
@@ -90,7 +91,12 @@ export function deriveAuthTrustedOrigins(config: Config, opts?: { listenPort?: n
   return Array.from(trustedOrigins);
 }
 
-export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins: string[]): BetterAuthInstance {
+export function createBetterAuthInstance(
+  db: Db,
+  config: Config,
+  trustedOrigins: string[],
+  opts?: { pluginSsoStore?: PluginSsoStore },
+): BetterAuthInstance {
   const baseUrl = config.authBaseUrlMode === "explicit" ? config.authPublicBaseUrl : undefined;
   const secret = process.env.BETTER_AUTH_SECRET ?? process.env.PAPERCLIP_AGENT_JWT_SECRET;
   if (!secret) {
@@ -120,6 +126,25 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins:
       requireEmailVerification: false,
       disableSignUp: config.authDisableSignUp,
     },
+    account: {
+      accountLinking: {
+        enabled: false,
+      },
+    },
+    databaseHooks: opts?.pluginSsoStore
+      ? {
+          session: {
+            create: {
+              after: async (session: { userId?: string }) => {
+                if (session.userId) {
+                  await opts.pluginSsoStore?.ensureMembershipForUser(session.userId);
+                }
+              },
+            },
+          },
+        }
+      : undefined,
+    plugins: opts?.pluginSsoStore ? [createGenericOAuthPlugin(opts.pluginSsoStore)] : [],
     advanced: buildBetterAuthAdvancedOptions({ disableSecureCookies: isHttpOnly }),
   };
 
@@ -159,7 +184,7 @@ export async function resolveBetterAuthSessionFromHeaders(
   const user = value.user?.id
     ? {
         id: value.user.id,
-        email: value.user.email ?? null,
+        email: publicAuthEmail(value.user.email),
         name: value.user.name ?? null,
       }
     : null;

@@ -81,6 +81,25 @@ describe.sequential("auth routes", () => {
     });
   });
 
+  it("does not expose internal synthetic SSO emails in auth payloads", async () => {
+    const app = await createApp(
+      {
+        type: "board",
+        userId: "user-1",
+        source: "session",
+      },
+      {
+        ...baseUser,
+        email: "ruijie.abc123@sso.paperclip.invalid",
+      },
+    );
+
+    const res = await request(app).get("/api/auth/get-session");
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBeNull();
+  });
+
   it("updates the signed-in profile", async () => {
     const app = await createApp(
       {
