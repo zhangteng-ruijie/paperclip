@@ -23,6 +23,7 @@ import type {
   IssueDocument,
   IssueDocumentSummary,
   IssueRelationIssueSummary,
+  IssueAssigneeAdapterOverrides,
   IssueThreadInteraction,
   SuggestTasksInteraction,
   AskUserQuestionsInteraction,
@@ -33,6 +34,8 @@ import type {
   PluginManagedAgentResolution,
   PluginManagedProjectResolution,
   PluginManagedRoutineResolution,
+  PluginManagedSkillResolution,
+  CompanySkill,
   Routine,
   RoutineRun,
   Agent,
@@ -55,6 +58,10 @@ export type {
   PluginManagedProjectResolution,
   PluginManagedRoutineDeclaration,
   PluginManagedRoutineResolution,
+  PluginManagedSkillDeclaration,
+  PluginManagedSkillFileDeclaration,
+  PluginManagedSkillResolution,
+  CompanySkill,
   Routine,
   RoutineRun,
   PluginLocalFolderDeclaration,
@@ -452,6 +459,8 @@ export interface PluginLocalFoldersClient {
     relativePath: string,
     contents: string,
   ): Promise<PluginLocalFolderStatus>;
+  /** Delete a file below a configured folder after containment checks. Missing files are treated as already deleted. */
+  deleteFile(companyId: string, folderKey: string, relativePath: string): Promise<PluginLocalFolderStatus>;
 }
 
 /**
@@ -839,6 +848,19 @@ export interface PluginRoutinesClient {
       companyId: string,
       overrides?: { assigneeAgentId?: string | null; projectId?: string | null },
     ): Promise<RoutineRun>;
+  };
+}
+
+/**
+ * `ctx.skills` — resolve and reconcile plugin-managed company skills.
+ *
+ * Requires `skills.managed` capability.
+ */
+export interface PluginSkillsClient {
+  managed: {
+    get(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
+    reconcile(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
+    reset(skillKey: string, companyId: string): Promise<PluginManagedSkillResolution>;
   };
 }
 
@@ -1260,12 +1282,12 @@ export interface PluginIssuesClient {
     title: string;
     description?: string;
     status?: Issue["status"];
-    workMode?: Issue["workMode"];
     priority?: Issue["priority"];
     assigneeAgentId?: string;
     assigneeUserId?: string | null;
     requestDepth?: number;
     billingCode?: string | null;
+    assigneeAdapterOverrides?: IssueAssigneeAdapterOverrides | null;
     surfaceVisibility?: IssueSurfaceVisibility;
     originKind?: PluginIssueOriginKind;
     originId?: string | null;
@@ -1284,7 +1306,6 @@ export interface PluginIssuesClient {
       | "title"
       | "description"
       | "status"
-      | "workMode"
       | "priority"
       | "assigneeAgentId"
       | "assigneeUserId"
@@ -1637,6 +1658,9 @@ export interface PluginContext {
 
   /** Resolve and reconcile plugin-managed routines. Requires `routines.managed`. */
   routines: PluginRoutinesClient;
+
+  /** Resolve and reconcile plugin-managed company skills. Requires `skills.managed`. */
+  skills: PluginSkillsClient;
 
   /** Read company metadata. Requires `companies.read`. */
   companies: PluginCompaniesClient;
