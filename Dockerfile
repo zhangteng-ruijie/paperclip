@@ -36,6 +36,7 @@ COPY packages/plugins/sdk/package.json packages/plugins/sdk/
 COPY packages/plugins/plugin-feishu-connector/package.json packages/plugins/plugin-feishu-connector/
 COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plugins/sandbox-providers/
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
+COPY packages/plugins/plugin-llm-wiki/package.json packages/plugins/plugin-llm-wiki/
 COPY patches/ patches/
 
 RUN pnpm install --frozen-lockfile
