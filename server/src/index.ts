@@ -87,6 +87,8 @@ export interface StartedServer {
 }
 
 export async function startServer(): Promise<StartedServer> {
+  const serverPackageJson = JSON.parse(readFileSync(resolve("./package.json"), "utf-8")) as { version: string };
+  const hostVersion = serverPackageJson.version;
   let config = loadConfig();
   initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
@@ -621,6 +623,7 @@ export async function startServer(): Promise<StartedServer> {
     bindHost: config.host,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
+    hostVersion,
     pluginMigrationDb: pluginMigrationDb as any,
     betterAuth: betterAuth as any,
     betterAuthHandler,

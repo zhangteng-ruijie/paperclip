@@ -10,7 +10,7 @@ const manifest = {
   description: "Registers Ruijie SID as a Paperclip SSO login provider.",
   author: "Paperclip",
   categories: ["connector"],
-  minimumHostVersion: "0.3.1",
+  minimumHostVersion: "0.3.0",
   capabilities: [
     "auth.sso.register",
     "http.outbound",
