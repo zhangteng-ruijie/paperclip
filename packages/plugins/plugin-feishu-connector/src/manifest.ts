@@ -76,6 +76,15 @@ const manifest: PaperclipPluginManifestV1 = {
   instanceConfigSchema: {
     type: "object",
     properties: {
+      capabilityDefaultPolicy: {
+        type: "string",
+        title: "飞书能力默认开放策略",
+        "x-order": 5,
+        description: "默认使用“按飞书应用授权开放”：插件不会让用户逐项确认已接入能力，用户只需要关闭不想给 Agent 使用的能力。",
+        enum: ["authorized", "conservative"],
+        enumNames: ["按飞书应用授权开放", "保守模式：只开启核心能力"],
+        default: "authorized",
+      },
       connections: {
         type: "array",
         title: "第 1 步：飞书机器人账号",

@@ -121,6 +121,10 @@ function pluginSettingsHref(props?: PluginInstanceProps | null): string {
 
 type CapabilityCenterData = {
   summary: string;
+  defaultPolicy?: {
+    mode: "authorized" | "conservative";
+    text: string;
+  };
   syncPolicy: {
     cliAutoBundled: boolean;
     larkSkillsAutoSynced: boolean;
@@ -1005,6 +1009,21 @@ function isInboundMessageRecord(record: RecentRecord): boolean {
   return record.message.includes("飞书入口测试") || record.message.includes("快捷测试回复");
 }
 
+function friendlyMonitorMessage(message: string | null | undefined): string {
+  const text = message?.trim();
+  if (!text) return "飞书连接器运行正常";
+  if (text.includes("生产监控发现需要确认的风险项")) return "需要确认：最近有飞书消息未命中入口";
+  if (text.includes("飞书消息监听出现提醒")) return "最近有飞书消息未命中入口";
+  return text.replace(/^生产监控[：:]\s*/, "");
+}
+
+function connectorHealthLabel(data: ConnectorStatus | null | undefined): string {
+  if (!data?.connectionCount) return "待绑定机器人";
+  if (!data.eventSubscriberEnabled) return "已配置，未监听";
+  if (data.dryRunCli) return "监听中，测试模式";
+  return data.monitor?.health === "error" ? "需要处理" : data.monitor?.health === "warning" ? "可用，有提醒" : "运行中";
+}
+
 function RecentEventList({ records, emptyText = "还没有收到飞书消息事件。" }: { records: RecentRecord[]; emptyText?: string }) {
   if (records.length === 0) {
     return <div style={helpStyle}>{emptyText}</div>;
@@ -1540,10 +1559,17 @@ function agentLabel(agent: AgentOption): string {
 function profileLabel(profile: ProfileOption): string {
   const parts = [profileDisplayName(profile)];
   parts.push(profileAuthLabel(profile));
-  if (profile.appId) parts.push(`App ID：${profile.appId}`);
+  if (profile.appId) parts.push(`App ID：${maskTechnicalId(profile.appId)}`);
   if (profile.name && profile.name !== profile.appId) parts.push(`配置：${profile.name}`);
   if (profile.active) parts.push("当前默认");
   return parts.join(" · ");
+}
+
+function maskTechnicalId(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "未返回";
+  if (trimmed.length <= 14) return trimmed;
+  return `${trimmed.slice(0, 8)}…${trimmed.slice(-4)}`;
 }
 
 function profileAuthLabel(profile?: ProfileOption | null): string {
@@ -1601,7 +1627,7 @@ function appMeta(connection?: FeishuConnectionConfig, profile?: ProfileOption | 
   if (aliases) parts.push(`飞书 @ 名称：${aliases}`);
   if (profile?.user) parts.push(`授权用户：${profile.user}`);
   const appId = connection?.appId || profile?.appId;
-  if (appId) parts.push(`App ID：${appId}`);
+  if (appId) parts.push(`App ID：${maskTechnicalId(appId)}`);
   if (profile?.active) parts.push("当前默认");
   return parts.join(" · ");
 }
@@ -2164,7 +2190,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
         ? "已配置入口，待开启飞书消息监听"
         : !isSendingRealMessages
       ? "当前为测试模式，暂不会真实回复飞书"
-      : "配置已就绪，等待飞书实测确认";
+      : "机器人、入口和监听都已就绪，建议完成一次飞书真实测试";
   const overviewTitle = !hasConnection
     ? "先接入一个飞书机器人"
     : enabledRoutesWithMissingConnection > 0
@@ -2944,7 +2970,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       items.push({
         tone: "success",
         title: "飞书机器人",
-        detail: `已绑定 ${activeConnections.length} 个机器人；第一条入口使用“${selectedProfile.botName}”。App ID：${selectedProfile.appId ?? firstRouteConnection?.appId ?? "未返回"}`,
+        detail: `已绑定 ${activeConnections.length} 个机器人；第一条入口使用“${selectedProfile.botName}”。App ID：${maskTechnicalId(selectedProfile.appId ?? firstRouteConnection?.appId)}`,
       });
     }
 
@@ -3077,7 +3103,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       items.push({
         tone: "success",
         title: "授权信息",
-        detail: `已读到“${appLabel(connection, profile)}”。${appId ? `App ID：${appId}` : "飞书没有返回 App ID。"}`
+        detail: `已读到“${appLabel(connection, profile)}”。${appId ? `App ID：${maskTechnicalId(appId)}` : "飞书没有返回 App ID。"}`
       });
     }
 
@@ -3196,7 +3222,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
         text: nextReport.some((item) => item.tone === "error")
           ? "检查发现阻塞项，按下方体检报告处理。"
           : nextReport.some((item) => item.tone === "warning")
-            ? "基础可用，但还有需要确认的风险项。"
+            ? "基础链路可用；下方提醒按场景确认即可。"
             : "检查通过。下一步去飞书里发送测试话术确认真实效果。",
       });
     } catch (nextError) {
@@ -3631,7 +3657,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       <Fragment key="entries-list-tab">
       <section id="feishu-entries" key="product-entries" style={productSectionStyle}>
         <div key="header" style={sectionHeaderStyle}>
-          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>1. 业务入口</h3>
+          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>业务入口</h3>
           <button key="add" type="button" style={buttonStyle} onClick={() => openEntryWizard()}>
             新增业务入口
           </button>
@@ -3812,7 +3838,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       {activeMainTab === "robots" ? (
       <section id="feishu-robots" key="product-robots" style={productSectionStyle}>
         <div key="header" style={sectionHeaderStyle}>
-          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>2. 飞书机器人池</h3>
+          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>机器人池</h3>
           <button key="bind" type="button" style={buttonStyle} onClick={() => openBindPanel()}>
             绑定新机器人
           </button>
@@ -3844,7 +3870,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                       <StatusBadge key="status" tone={profile ? "success" : "warning"}>{profile ? "已启用" : "需重新绑定"}</StatusBadge>
                       <span key="count" style={compactPillStyle}>{routeCount} 条入口使用</span>
                     </div>
-                    <div key="appid" style={helpStyle}>App ID：{connection.appId ?? profile?.appId ?? "未返回"}</div>
+                    <div key="appid" style={helpStyle}>App ID：{maskTechnicalId(connection.appId ?? profile?.appId)}</div>
                     <div key="user" style={helpStyle}>
                       {profile ? profileAuthLabel(profile) : "当前运行环境未读到这个机器人 profile"}
                     </div>
@@ -3926,12 +3952,20 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       <Fragment key="entries-wizard-tab">
       <section id="feishu-entry-wizard" key="product-wizard" style={productSectionStyle}>
         <div key="header" style={sectionHeaderStyle}>
-          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>3. 新增入口向导</h3>
+          <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>新增业务入口</h3>
           <button key="toggle" type="button" style={buttonStyle} onClick={() => showEntryWizard ? setShowEntryWizard(false) : openEntryWizard()}>
-            {showEntryWizard ? "收起向导" : "展开向导"}
+            {showEntryWizard ? "收起" : "打开向导"}
           </button>
         </div>
-        <div key="steps" style={wizardStepperStyle}>
+        {!showEntryWizard ? (
+          <div key="collapsed" style={subtleBoxStyle}>
+            <div key="title" style={{ fontWeight: 800 }}>需要新增入口时再打开向导</div>
+            <div key="help" style={helpStyle}>
+              现有入口已经在上面展示。新增入口会让另一类飞书消息进入 Paperclip，并指定机器人、公司、智能体和回复方式。
+            </div>
+          </div>
+        ) : null}
+        <div key="steps" style={{ ...wizardStepperStyle, display: showEntryWizard ? "grid" : "none" }}>
           <FlowStep key="source" title="1  选择消息来源" value={matchTypeLabels[wizardDraft.matchType]} detail="群/单聊/发消息人/关键词" />
           <FlowStep key="bot" title="2  选择机器人" value={appLabel(connections.find((connection) => connection.id === wizardDraft.connectionId) ?? preferredConnection, profiles.find((profile) => profile.name === (connections.find((connection) => connection.id === wizardDraft.connectionId) ?? preferredConnection)?.profileName))} detail="从机器人池里挑选" />
           <FlowStep key="agent" title="3  选择 Paperclip 公司和智能体" value={(() => {
@@ -3947,7 +3981,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
           })()} detail="指定公司与智能体处理" />
           <FlowStep key="reply" title="4  回复与沉淀" value={replyModeLabels[wizardDraft.replyMode]} detail="回复方式与写入规则" />
         </div>
-        <div key="compact-fields" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
+        <div key="compact-fields" style={{ display: showEntryWizard ? "grid" : "none", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
           <Field key="matchType" label="消息来源">
             <select style={selectStyle} value={wizardDraft.matchType} onChange={(event) => patchWizardDraft({ matchType: event.target.value as FeishuRouteConfig["matchType"] })}>
               {Object.entries(matchTypeLabels).map(([value, label], optionIndex) => (
@@ -4057,7 +4091,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
 
       {activeMainTab === "test" ? (
       <section id="feishu-test" key="product-test" style={productSectionStyle}>
-        <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>4. 真实测试</h3>
+        <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>飞书真实测试</h3>
         <Field key="smoke" label="测试话术（复制到群里发送）">
           <div key="copy-row" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "10px" }}>
             <code key="text" style={{ ...codeStyle, fontSize: "14px", padding: "11px 12px" }}>{smokeText}</code>
@@ -4109,7 +4143,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
         {productionMonitor ? (
           <CheckReport
             key="production-monitor"
-            title={`生产监控：${productionMonitor.message}`}
+            title={`运行提醒：${friendlyMonitorMessage(productionMonitor.message)}`}
             items={productionMonitorChecks}
           />
         ) : null}
@@ -4154,7 +4188,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
       <section id="feishu-advanced" key="product-advanced-links" style={productSectionStyle}>
         <div key="header" style={sectionHeaderStyle}>
           <div key="copy">
-            <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>5. 高级设置（工程师）</h3>
+            <h3 key="title" style={{ margin: 0, fontSize: "18px" }}>高级设置（工程师）</h3>
             <div key="help" style={helpStyle}>
               日常不用打开。这里按主题拆开，点哪一项只看哪一项，不再出现整页原始配置。
             </div>
@@ -4243,7 +4277,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                   <div key="steps" style={checklistGridStyle}>
                     <ChecklistItem key="create-app" done={profiles.length > 0 || activeConnections.length > 0} title="1. 创建或选择飞书应用" detail="普通用户选已有公司机器人；管理员可以新建飞书机器人应用。" />
                     <ChecklistItem key="bot-enabled" done={activeConnections.length > 0} title="2. 开启机器人能力" detail="飞书应用必须有机器人能力，并加入目标群聊。" />
-                    <ChecklistItem key="permissions" done={enabledCapabilityCount > 0} title="3. 导入推荐权限" detail="到能力中心复制推荐权限 JSON；审批、任务、邮箱默认不启用。" />
+                    <ChecklistItem key="permissions" done={enabledCapabilityCount > 0} title="3. 导入推荐权限" detail="到能力中心复制推荐权限 JSON；已接入能力默认按飞书应用授权开放，不需要逐项确认。" />
                     <ChecklistItem key="publish" done={false} title="4. 发布飞书应用" detail="飞书可能需要管理员确认、发布版本、配置事件订阅和可见范围。" />
                     <ChecklistItem key="paperclip-check" done={hasUsableConnection} title="5. 回到 Paperclip 检查连接" detail="刷新机器人列表后点“检查连接”，再去飞书群里发测试话术。" />
                   </div>
@@ -4276,7 +4310,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                       <div key={`${profile.name}-${index}`} style={guideCardStyle}>
                         <div key="title" style={{ fontWeight: 800 }}>{appLabel(connection, profile)}</div>
                         <div key="meta" style={helpStyle}>{profileLabel(profile)}</div>
-                        <div key="state" style={helpStyle}>App ID：{profile.appId ?? connection?.appId ?? "未返回"}</div>
+                        <div key="state" style={helpStyle}>App ID：{maskTechnicalId(profile.appId ?? connection?.appId)}</div>
                         <div key="auth-detail" style={helpStyle}>{profileAuthDetail(profile)}</div>
                         <div key="actions" style={rowStyle}>
                           <StatusBadge key="status" tone={enabled ? "success" : "warning"}>
@@ -4339,6 +4373,15 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                       <div key="title" style={{ fontWeight: 900 }}>Agent 调用的是插件受控工具，不是裸跑 lark-cli</div>
                       <div key="body" style={{ ...helpStyle, marginTop: "6px" }}>
                         {capabilityCenter.data?.summary}
+                      </div>
+                    </div>
+                    <div key="default-policy" style={subtleBoxStyle}>
+                      <div key="label" style={helpStyle}>默认开放策略</div>
+                      <div key="value" style={{ fontWeight: 800 }}>
+                        {capabilityCenter.data?.defaultPolicy?.mode === "conservative" ? "保守模式" : "按飞书应用授权开放"}
+                      </div>
+                      <div key="detail" style={{ ...helpStyle, marginTop: "6px" }}>
+                        {capabilityCenter.data?.defaultPolicy?.text}
                       </div>
                     </div>
                     <div key="relationship" style={gridTwoStyle}>
@@ -4877,19 +4920,19 @@ export function DashboardWidget(_props: PluginWidgetProps) {
   if (error) return <div>飞书连接器状态读取失败：{error.message}</div>;
 
   const latest = data?.recentRecords?.[0];
+  const health = connectorHealthLabel(data);
+  const listenerCount = data?.subscribers?.filter((subscriber) => subscriber.running !== false && !subscriber.killed).length ?? 0;
   return (
     <div style={cardStyle}>
       <strong>飞书连接器</strong>
       <div style={rowStyle}>
-        <Badge>{data?.dryRunCli ? "测试模式" : "正式发送"}</Badge>
-        <Badge>{data?.eventSubscriberEnabled ? "正在监听飞书消息" : "未开启监听"}</Badge>
-        <Badge>{data?.monitor?.health === "ok" ? "监控正常" : data?.monitor?.health === "error" ? "监控有阻塞" : "监控有提醒"}</Badge>
+        <Badge>{health}</Badge>
+        <Badge>{data?.dryRunCli ? "模拟回复" : "真实回复"}</Badge>
         <Badge>{`${data?.connectionCount ?? 0} 个机器人`}</Badge>
-        <Badge>{`${data?.routeCount ?? 0} 条接收规则`}</Badge>
-        <Badge>{`${data?.baseSinkCount ?? 0} 个多维表格规则`}</Badge>
+        <Badge>{`${data?.routeCount ?? 0} 条入口`}</Badge>
       </div>
-      <div>正在运行的监听进程：{data?.subscribers?.length ?? 0}</div>
-      {latest ? <div>最近状态：{latest.message}</div> : <div>暂无事件。</div>}
+      <div>接收飞书消息：{data?.eventSubscriberEnabled ? `已开启（${listenerCount} 个监听）` : "未开启"}</div>
+      {latest ? <div>最近动态：{friendlyMonitorMessage(latest.message)}</div> : <div>暂无飞书事件。</div>}
     </div>
   );
 }
@@ -4941,14 +4984,18 @@ export function FeishuSidebarPanel(props: PluginInstanceProps = {}) {
   if (loading) return <div style={helpStyle}>飞书状态读取中...</div>;
   if (error) return <div style={{ ...helpStyle, color: "var(--destructive)" }}>飞书状态读取失败</div>;
   const monitor = data?.monitor;
-  const nextHint = monitor?.message ?? (data?.connectionCount ? "连接器已配置，等待飞书消息。" : "还没有绑定飞书机器人。");
+  const nextHint = monitor?.message
+    ? friendlyMonitorMessage(monitor.message)
+    : data?.connectionCount
+      ? "飞书连接器已配置。"
+      : "还没有绑定飞书机器人。";
   return (
     <div style={{ display: "grid", gap: "8px", fontSize: "12px" }}>
-      <div style={{ fontWeight: 800 }}>飞书入口层</div>
+      <div style={{ fontWeight: 800 }}>飞书连接器</div>
       <div style={{ display: "grid", gap: "4px", color: "var(--muted-foreground)" }}>
         <div>机器人：{data?.connectionCount ?? 0} 个</div>
         <div>入口：{data?.routeCount ?? 0} 条</div>
-        <div>监听：{data?.subscribers?.length ?? 0} 个进程</div>
+        <div>状态：{connectorHealthLabel(data)}</div>
       </div>
       <div style={{ lineHeight: 1.45 }}>{nextHint}</div>
       <a href={pluginSettingsHref(props)} style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}>

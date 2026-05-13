@@ -63,6 +63,103 @@ export type FeishuCapabilityContext = {
   agentId?: string | null;
 };
 
+const CALENDAR_SCOPES = [
+  "calendar:calendar:create",
+  "calendar:calendar:read",
+  "calendar:calendar:update",
+  "calendar:calendar:delete",
+  "calendar:calendar.event:create",
+  "calendar:calendar.event:read",
+  "calendar:calendar.event:update",
+  "calendar:calendar.event:delete",
+  "calendar:calendar.free_busy:read",
+];
+
+const TASK_SCOPES = [
+  "task:task:read",
+  "task:task:write",
+  "task:tasklist:read",
+  "task:tasklist:write",
+  "task:section:read",
+  "task:section:write",
+  "task:custom_field:read",
+  "task:custom_field:write",
+  "task:attachment:write",
+];
+
+const MAIL_SCOPES = [
+  "mail:user_mailbox:readonly",
+  "mail:user_mailbox.message:readonly",
+  "mail:user_mailbox.message.body:read",
+  "mail:user_mailbox.message:modify",
+  "mail:user_mailbox.message:send",
+  "mail:user_mailbox.folder:read",
+  "mail:user_mailbox.folder:write",
+  "mail:user_mailbox.mail_contact:read",
+  "mail:user_mailbox.mail_contact:write",
+  "mail:user_mailbox.rule:read",
+  "mail:user_mailbox.rule:write",
+  "mail:event",
+];
+
+const DRIVE_SCOPES = [
+  "drive:drive:readonly",
+  "drive:file:readonly",
+  "drive:drive.metadata:readonly",
+  "drive:file:view_record:readonly",
+  "space:document:retrieve",
+  "space:folder:create",
+  "docs:document:copy",
+  "docx:document:write_only",
+  "docs:document.comment:read",
+  "docs:document.comment:create",
+  "docs:document.comment:update",
+  "docs:document.comment:delete",
+  "docs:permission.member:auth",
+  "docs:permission.member:create",
+  "docs:permission.member:transfer",
+  "docs:event:subscribe",
+];
+
+const WIKI_SCOPES = [
+  "wiki:space:read",
+  "wiki:space:retrieve",
+  "wiki:space:write_only",
+  "wiki:node:read",
+  "wiki:node:retrieve",
+  "wiki:node:create",
+  "wiki:node:copy",
+  "wiki:member:retrieve",
+  "wiki:member:create",
+  "wiki:member:update",
+];
+
+const APPROVAL_SCOPES = [
+  "approval:instance:read",
+  "approval:instance:write",
+  "approval:task:read",
+  "approval:task:write",
+];
+
+const OKR_SCOPES = [
+  "okr:okr.content:readonly",
+  "okr:okr.content:writeonly",
+  "okr:okr.setting:read",
+  "okr:okr.period:readonly",
+];
+
+const MINUTES_SCOPES = [
+  "minutes:minutes.search:read",
+  "minutes:minutes:readonly",
+  "minutes:minutes.media:export",
+  "minutes:minutes.artifacts:read",
+  "minutes:minutes.transcript:export",
+  "vc:meeting.search:read",
+  "vc:meeting.meetingevent:read",
+  "vc:note:read",
+  "vc:record:readonly",
+];
+
 export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
   {
     key: "reply_source_thread",
@@ -173,11 +270,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "calendar_events",
     group: "日历会议",
     title: "日历会议",
-    description: "查询、创建或更新飞书日程。默认关闭，后续接入受控日历工具后再按范围开启。",
+    description: "通过受控 lark-cli 日历服务查询、创建、更新日程和会议相关信息。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["calendar"],
+    recommendedScopes: CALENDAR_SCOPES,
     relatedSkills: ["lark-calendar"],
     risk: "medium",
   },
@@ -185,11 +282,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "approval",
     group: "审批",
     title: "审批",
-    description: "查询或处理飞书审批。默认关闭，避免 Agent 误触发高风险流程。",
+    description: "通过受控 lark-cli 审批服务查询或处理审批任务。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["approval"],
+    recommendedScopes: APPROVAL_SCOPES,
     relatedSkills: ["lark-approval"],
     risk: "high",
   },
@@ -197,11 +294,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "task",
     group: "任务",
     title: "飞书任务",
-    description: "创建或更新飞书任务。默认关闭，Paperclip 任务仍是本连接器的主工作对象。",
+    description: "通过受控 lark-cli 任务服务创建、查询、更新飞书任务和任务清单。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["task"],
+    recommendedScopes: TASK_SCOPES,
     relatedSkills: ["lark-task"],
     risk: "medium",
   },
@@ -209,11 +306,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "mail",
     group: "邮箱",
     title: "飞书邮箱",
-    description: "读取、草拟或发送飞书邮件。默认关闭，需要用户明确授权后再开放。",
+    description: "通过受控 lark-cli 邮箱服务读取、草拟、回复或发送飞书邮件。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["mail"],
+    recommendedScopes: MAIL_SCOPES,
     relatedSkills: ["lark-mail"],
     risk: "high",
   },
@@ -221,11 +318,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "okr",
     group: "OKR",
     title: "飞书 OKR",
-    description: "查询或维护飞书 OKR。默认关闭，后续按管理场景接入。",
+    description: "通过受控 lark-cli OKR 服务查询或维护飞书 OKR。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["okr"],
+    recommendedScopes: OKR_SCOPES,
     relatedSkills: ["lark-okr"],
     risk: "medium",
   },
@@ -233,11 +330,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "minutes",
     group: "飞书妙记",
     title: "飞书妙记",
-    description: "查询、读取或下载飞书妙记内容。默认关闭，按会议总结场景开启。",
+    description: "通过受控 lark-cli 妙记和视频会议服务查询、读取或下载妙记内容。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["minutes", "vc"],
+    recommendedScopes: MINUTES_SCOPES,
     relatedSkills: ["lark-minutes", "lark-vc"],
     risk: "medium",
   },
@@ -245,11 +342,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "wiki",
     group: "知识库",
     title: "飞书知识库",
-    description: "查询知识空间和文档节点。默认关闭，后续接入知识库受控工具。",
+    description: "通过受控 lark-cli 知识库服务查询知识空间、成员和节点。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["wiki"],
+    recommendedScopes: WIKI_SCOPES,
     relatedSkills: ["lark-wiki"],
     risk: "medium",
   },
@@ -257,11 +354,11 @@ export const FEISHU_CAPABILITY_DEFINITIONS: CapabilityDefinition[] = [
     key: "drive_files",
     group: "云空间文件",
     title: "云空间文件",
-    description: "管理飞书云空间文件。下载原消息附件已单独实现，这里预留更完整的云空间能力。",
+    description: "通过受控 lark-cli 云空间服务搜索、上传、下载、导入、导出或管理文件。",
     defaultEnabled: false,
-    implemented: false,
-    larkCliCommands: [],
-    recommendedScopes: [],
+    implemented: true,
+    larkCliCommands: ["drive"],
+    recommendedScopes: DRIVE_SCOPES,
     relatedSkills: ["lark-drive"],
     risk: "medium",
   },
@@ -289,13 +386,14 @@ export function isFeishuCapabilityEnabled(
   definition: CapabilityDefinition,
   context: FeishuCapabilityContext = {},
 ): boolean {
+  if (!definition.implemented) return false;
   const overrides = configuredCapabilities(config, definition.key);
-  if (overrides.length === 0) return definition.defaultEnabled;
+  if (overrides.length === 0) return defaultCapabilityEnabled(config, definition);
 
   const instanceOverride = overrides.find((item) => (item.scope ?? "instance") === "instance");
   const baseEnabled = typeof instanceOverride?.enabled === "boolean"
     ? instanceOverride.enabled
-    : definition.defaultEnabled;
+    : defaultCapabilityEnabled(config, definition);
 
   const scopedOverrides = overrides.filter((item) => (item.scope ?? "instance") !== "instance");
   const matchedOverride = scopedOverrides
@@ -370,17 +468,26 @@ function scopeLabel(scope: FeishuCapabilityScope | undefined): string {
 }
 
 function capabilityStatus(definition: CapabilityDefinition, enabled: boolean): CapabilityStatus {
-  if (!enabled) return "disabled";
   if (!definition.implemented) return "planned";
+  if (!enabled) return "disabled";
   if (definition.recommendedScopes.length > 0) return "missing_permissions";
   return "enabled";
 }
 
 function statusLabel(status: CapabilityStatus): string {
   if (status === "enabled") return "已开启，可用";
-  if (status === "missing_permissions") return "已开启，等待权限动态检查";
-  if (status === "planned") return "未开启，工具待接入";
+  if (status === "missing_permissions") return "已开启，权限随飞书应用";
+  if (status === "planned") return "工具待接入";
   return "未开启";
+}
+
+function defaultCapabilityEnabled(
+  config: FeishuConnectorConfig,
+  definition: CapabilityDefinition,
+): boolean {
+  if (!definition.implemented) return false;
+  if ((config.capabilityDefaultPolicy ?? "authorized") === "authorized") return true;
+  return definition.defaultEnabled;
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -392,7 +499,7 @@ function buildRecommendedPermissionJson(capabilities: Array<{
 }>) {
   const allScopes = uniqueSorted(capabilities.flatMap((capability) => capability.recommendedScopes));
   return {
-    note: "推荐权限按能力中心生成。审批/任务/邮箱默认关闭，用户在能力中心手动开启后再补对应权限。",
+    note: "推荐权限按能力中心生成。已接入的受控飞书工具默认按飞书应用授权开放；用户在能力中心关闭不想给 Agent 使用的能力。lark-cli schema 可用时会补充显示当前 CLI 的实际覆盖情况。",
     scopes: {
       tenant: allScopes,
       user: uniqueSorted([
@@ -419,8 +526,8 @@ export function buildFeishuCapabilityCenter(
   const capabilities = FEISHU_CAPABILITY_DEFINITIONS.map((definition) => {
     const override = configuredCapability(config, definition.key);
     const enabled = typeof override?.enabled === "boolean"
-      ? override.enabled
-      : definition.defaultEnabled;
+      ? override.enabled && definition.implemented
+      : defaultCapabilityEnabled(config, definition);
     const status = capabilityStatus(definition, enabled);
     const scope = override?.scope ?? "instance";
     return {
@@ -454,6 +561,12 @@ export function buildFeishuCapabilityCenter(
 
   return {
     summary: "能力中心把飞书 API 能力映射成 Paperclip 受控工具；Agent 只能调用插件注册的工具，不能裸跑 lark-cli。",
+    defaultPolicy: {
+      mode: config.capabilityDefaultPolicy ?? "authorized",
+      text: (config.capabilityDefaultPolicy ?? "authorized") === "authorized"
+        ? "默认按飞书应用授权开放已接入的受控工具；用户在能力中心关闭不想给 Agent 使用的能力。"
+        : "保守模式：只默认开启核心入口能力，其余能力需要用户手动开启。",
+    },
     syncPolicy: {
       cliAutoBundled: true,
       larkSkillsAutoSynced: false,
@@ -474,7 +587,7 @@ export function buildFeishuCapabilityCenter(
       summary: "未扫描 lark-cli schema。",
     },
     recommendedPermissionJson: buildRecommendedPermissionJson(capabilities),
-    permissionStrategy: "权限缺口优先通过 lark-cli schema、lark-cli auth scopes 或飞书官方权限状态 API 动态检查；这里的 scopes 只是推荐导入清单。",
+    permissionStrategy: "默认策略是授权即开放：插件不在每次调用前二次确认，实际能否执行由飞书应用/用户已授权 scopes 决定；这里的 scopes 是推荐导入清单，用户可在能力中心关闭不想给 Agent 使用的能力。",
     capabilities,
     groups,
   };
