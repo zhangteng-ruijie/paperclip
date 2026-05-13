@@ -218,6 +218,7 @@ export function extractInboundMessage(raw: unknown, fallbackConnectionId?: strin
     messageId,
     messageType: readString(root.message_type, root.messageType, message.message_type, message.messageType),
     chatId: readString(root.chat_id, root.chatId, message.chat_id, message.chatId),
+    chatName: readString(root.chat_name, root.chatName, event.chat_name, event.chatName, message.chat_name, message.chatName),
     threadId: readString(root.thread_id, root.threadId, message.thread_id, message.threadId),
     rootMessageId: readString(root.root_id, root.rootId, message.root_id, message.rootId),
     senderOpenId: readString(root.sender_open_id, root.senderOpenId, senderId.open_id, senderId.openId),
@@ -263,8 +264,16 @@ export function resolveRoute(
   message: FeishuInboundMessage,
   connectionId: string,
 ): FeishuRouteConfig | null {
+  return resolveMatchingRoutes(config, message, connectionId)[0] ?? null;
+}
+
+export function resolveMatchingRoutes(
+  config: FeishuConnectorConfig,
+  message: FeishuInboundMessage,
+  connectionId: string,
+): FeishuRouteConfig[] {
   const routes = [...(config.routes ?? [])].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-  return routes.find((route) => routeMatches(route, message, connectionId)) ?? null;
+  return routes.filter((route) => routeMatches(route, message, connectionId));
 }
 
 export function createIssueTitle(message: FeishuInboundMessage): string {
@@ -304,6 +313,10 @@ export function describeRouteEntry(route: FeishuRouteConfig): string {
   const trigger = describeRouteTrigger(route);
   const agentName = route.targetAgentName?.trim();
   return agentName ? `${trigger} → ${agentName}` : trigger;
+}
+
+export function describeRouteForHumans(route: FeishuRouteConfig): string {
+  return describeRouteEntry(route);
 }
 
 export function describeFeishuConversation(
@@ -396,9 +409,12 @@ export function renderTemplate(template: string, context: TemplateContext): stri
     "message.text": context.message.text,
     "message.id": context.message.messageId,
     "message.chat_id": context.message.chatId ?? "",
+    "message.chat_name": context.message.chatName ?? "",
     "sender.open_id": context.message.senderOpenId ?? "",
     "sender.name": context.message.senderName ?? context.message.senderOpenId ?? "",
     "route.id": context.route?.id ?? "",
+    "route.entry": context.route ? describeRouteEntry(context.route) : "",
+    "route.trigger": context.route ? describeRouteTrigger(context.route) : "",
     "issue_id": context.issueId ?? "",
     "issue_ref": context.issueRef ?? context.issueId ?? "",
     "issue_url": context.issueUrl ?? "",
@@ -421,6 +437,8 @@ export function buildBaseRecord(
     "原始需求": "{{message.text}}",
     "提出人": "{{sender.name}}",
     "提出人 open_id": "{{sender.open_id}}",
+    "飞书会话": "{{message.chat_name}}",
+    "接收入口": "{{route.entry}}",
     "飞书 chat_id": "{{message.chat_id}}",
     "飞书 message_id": "{{message.id}}",
     "Paperclip issue_id": "{{issue_id}}",

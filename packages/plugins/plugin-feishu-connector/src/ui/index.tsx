@@ -2,14 +2,19 @@ import { Children, Fragment, useEffect, useMemo, useState, type CSSProperties, t
 import {
   usePluginAction,
   usePluginData,
+  type PluginCommentContextMenuItemProps,
+  type PluginDetailTabProps,
   type PluginSettingsPageProps,
+  type PluginSidebarProps,
   type PluginWidgetProps,
 } from "@paperclipai/plugin-sdk/ui";
 import { ACTION_KEYS, DATA_KEYS, PLUGIN_ID } from "../constants.js";
 import { DEFAULT_CONFIG } from "../config.js";
-import { isLikelyInternalRouteName } from "../routing.js";
+import { describeRouteForHumans, isLikelyInternalRouteName } from "../routing.js";
 import type {
   FeishuBaseSinkConfig,
+  FeishuCapabilityConfig,
+  FeishuCapabilityScope,
   FeishuConnectionConfig,
   FeishuConnectorConfig,
   FeishuRouteConfig,
@@ -43,8 +48,166 @@ type ConnectorStatus = {
     lastWatchdogAt: string | null;
     checks: CheckReportItem[];
   };
+  retryQueue?: {
+    totalCount: number;
+    pendingCount: number;
+    failedCount: number;
+    succeededCount: number;
+    items: RetryQueueItem[];
+  };
   lastInboundEventAt?: string | null;
   recentRecords: RecentRecord[];
+};
+
+type IssueSourceData = {
+  found: boolean;
+  sourceKind?: string | null;
+  issueId?: string | null;
+  issueIdentifier?: string | null;
+  issueTitle?: string | null;
+  entryName?: string | null;
+  routeId?: string | null;
+  botName?: string | null;
+  connectionId?: string | null;
+  profileName?: string | null;
+  conversationName?: string | null;
+  conversationLabel?: string | null;
+  chatId?: string | null;
+  requesterName?: string | null;
+  requesterOpenId?: string | null;
+  messageId?: string | null;
+  rootMessageId?: string | null;
+  threadId?: string | null;
+  replyMode?: NonNullable<FeishuRouteConfig["replyMode"]> | string | null;
+  issueUrl?: string | null;
+  lastRunId?: string | null;
+  lastRunStatus?: string | null;
+  updatedAt?: string | null;
+  attachmentCount?: number;
+  attachments?: Array<{
+    filename?: string | null;
+    resourceKey: string;
+    resourceType: string;
+  }>;
+  reason?: string | null;
+  recentComments?: Array<{
+    id: string;
+    body: string;
+    authorAgentId?: string | null;
+    authorUserId?: string | null;
+    createdAt?: string | null;
+  }>;
+};
+
+type PluginInstanceProps = {
+  slot?: {
+    pluginId?: string | null;
+  };
+};
+
+function pluginInstanceIdFromProps(props?: PluginInstanceProps | null): string {
+  const slotPluginId = props?.slot?.pluginId?.trim();
+  if (slotPluginId) return slotPluginId;
+  if (typeof window !== "undefined") {
+    const match = window.location.pathname.match(/\/instance\/settings\/plugins\/([^/?#]+)/);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  }
+  return PLUGIN_ID;
+}
+
+function pluginSettingsHref(props?: PluginInstanceProps | null): string {
+  return `/instance/settings/plugins/${encodeURIComponent(pluginInstanceIdFromProps(props))}`;
+}
+
+type CapabilityCenterData = {
+  summary: string;
+  syncPolicy: {
+    cliAutoBundled: boolean;
+    larkSkillsAutoSynced: boolean;
+    paperclipSkillsAutoSynced: boolean;
+    text: string;
+  };
+  relationship: {
+    larkCli: string;
+    larkSkills: string;
+    paperclipTools: string;
+  };
+  recommendedPermissionJson: {
+    note: string;
+    scopes: {
+      tenant: string[];
+      user: string[];
+    };
+  };
+  permissionStrategy: string;
+  schemaDiscovery: {
+    checked: boolean;
+    checkedAt?: string;
+    cliBin?: string;
+    reason?: string;
+    updateNotice?: {
+      current?: string;
+      latest?: string;
+      message?: string;
+    } | null;
+    services: Array<{
+      name: string;
+      available: boolean;
+      methodCount: number;
+      scopeCount: number;
+      sampleScopes: string[];
+      error?: string;
+    }>;
+    commands: Array<{
+      capabilityKey: string;
+      command: string;
+      schemaService?: string | null;
+      schemaAvailable: boolean | null;
+      cliHelpAvailable: boolean | null;
+      status: "schema_backed" | "cli_help_backed" | "not_found" | "not_checked";
+      note: string;
+    }>;
+    errors: string[];
+    summary: string;
+  };
+  groups: Array<{
+    name: string;
+    capabilities: CapabilityItemData[];
+  }>;
+};
+
+type CapabilityItemData = {
+  key: string;
+  group: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  implemented: boolean;
+  statusLabel: string;
+  scope: FeishuCapabilityScope;
+  scopeLabel: string;
+  connectionId?: string | null;
+  routeId?: string | null;
+  agentId?: string | null;
+  toolName?: string | null;
+  legacyToolName?: string | null;
+  larkCliCommands: string[];
+  schemaCommands?: CapabilityCenterData["schemaDiscovery"]["commands"];
+  recommendedScopes: string[];
+  relatedSkills: string[];
+  risk: "low" | "medium" | "high";
+};
+
+type PermissionCheckResult = {
+  ok?: boolean;
+  profileName?: string;
+  verified?: boolean;
+  identity?: string;
+  tokenStatus?: string;
+  grantedScopes?: string[];
+  recommendedScopes?: string[];
+  missingScopes?: string[];
+  message?: string;
 };
 
 type RecentRecord = {
@@ -52,6 +215,21 @@ type RecentRecord = {
   message: string;
   createdAt: string;
   data?: Record<string, unknown> | null;
+};
+
+type RetryQueueItem = {
+  id: string;
+  kind: "feishu_reply" | "base_record";
+  status: "queued" | "succeeded" | "failed";
+  reason: string;
+  connectionId: string;
+  profileName: string;
+  messageId?: string;
+  routeId?: string;
+  issueId?: string;
+  attemptCount: number;
+  lastError?: string;
+  updatedAt: string;
 };
 
 type AgentOption = {
@@ -120,6 +298,7 @@ type BindFormState = {
   profileName: string;
   appId: string;
   appSecret: string;
+  appSecretRef: string;
 };
 
 type GuidedBindResult = {
@@ -184,7 +363,7 @@ type EntryWizardDraft = {
   baseSinkId?: string;
 };
 
-type AdvancedPanelKey = "auth" | "deploy" | "runtime" | "events" | "base";
+type AdvancedPanelKey = "auth" | "capabilities" | "deploy" | "runtime" | "events" | "base" | "config";
 type MainTabKey = "overview" | "entries" | "robots" | "test" | "advanced";
 type NextStepKind = "bind" | "rebind" | "entry" | "edit-entry" | "enable-listen" | "enable-real" | "test";
 type BindMethod = "guided" | "secret";
@@ -667,6 +846,29 @@ const replyModeLabels: Record<NonNullable<FeishuRouteConfig["replyMode"]>, strin
   thread: "在原消息线程里回复",
 };
 
+function isLikelyFeishuInternalId(value?: string | null): boolean {
+  const trimmed = (value ?? "").trim();
+  return /^(oc|ou|om|on|od|of|cli)_[a-z0-9][a-z0-9_-]{5,}$/i.test(trimmed);
+}
+
+function issueSourceDisplayName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || isLikelyFeishuInternalId(trimmed)) return null;
+  return trimmed;
+}
+
+function issueSourceValue(value: string | null | undefined, fallback = "未记录"): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+function issueReplyModeLabel(mode: IssueSourceData["replyMode"]): string {
+  if (mode === "none" || mode === "message" || mode === "thread") {
+    return replyModeLabels[mode];
+  }
+  return issueSourceValue(typeof mode === "string" ? mode : null);
+}
+
 function Badge({ children }: { children: string }) {
   return (
     <span style={{
@@ -771,7 +973,7 @@ function routeDiagnosticReasons(data: Record<string, unknown> | null | undefined
     .map((item) => {
       if (typeof item !== "object" || item === null) return null;
       const record = item as Record<string, unknown>;
-      const name = typeof record.routeName === "string" ? record.routeName : typeof record.routeId === "string" ? record.routeId : "入口";
+      const name = typeof record.routeName === "string" ? record.routeName : "入口";
       const reason = typeof record.reason === "string" ? record.reason : "";
       return reason ? `${name}：${reason}` : null;
     })
@@ -782,15 +984,14 @@ function routeDiagnosticReasons(data: Record<string, unknown> | null | undefined
 function recentRecordDetails(record: RecentRecord): string[] {
   const data = record.data;
   const details: string[] = [];
-  const connection = dataString(data, "connectionName") ?? dataString(data, "connectionId");
-  const profileName = dataString(data, "profileName");
-  const chat = dataString(data, "chatName") ?? dataString(data, "chatId");
-  const sender = dataString(data, "senderName") ?? dataString(data, "senderOpenId");
-  const route = dataString(data, "routeName") ?? dataString(data, "routeId");
+  const connection = dataString(data, "connectionName") ?? (dataString(data, "connectionId") ? "已记录，名称待同步" : null);
+  const chat = dataString(data, "chatName") ?? (dataString(data, "chatId") ? "已记录，名称待同步" : null);
+  const sender = dataString(data, "senderName") ?? (dataString(data, "senderOpenId") ? "已记录，名称待同步" : null);
+  const route = dataString(data, "routeName") ?? (dataString(data, "routeId") ? "已记录，名称待同步" : null);
   const agent = dataString(data, "targetAgentName");
   const preview = dataString(data, "textPreview");
 
-  if (connection) details.push(`机器人：${connection}${profileName ? `（${profileName}）` : ""}`);
+  if (connection) details.push(`机器人：${connection}`);
   if (route) details.push(`入口：${route}${agent ? ` → ${agent}` : ""}`);
   if (chat) details.push(`会话：${chat}`);
   if (sender) details.push(`提出人：${sender}`);
@@ -904,11 +1105,11 @@ function ChatSearchControl(props: {
         onChange={(event) => props.onQueryChange(event.target.value)}
       />
       <div style={helpStyle}>
-        用 {props.profileName || "当前飞书账号"} 搜索可见会话。选中后自动填入会话 ID。
+        用 {props.profileName || "当前飞书账号"} 搜索可见会话。选中后自动绑定到这条入口。
       </div>
       {props.currentChatId ? (
         <div style={helpStyle}>
-          当前选择：{props.currentChatName || props.currentChatId}
+          当前选择：{props.currentChatName || "已选择一个会话，名称待同步"}
         </div>
       ) : null}
       {props.loading ? <div style={helpStyle}>正在搜索飞书会话...</div> : null}
@@ -933,7 +1134,7 @@ function ChatSearchControl(props: {
             onClick={() => props.onSelect(chat)}
           >
             <strong style={{ display: "block" }}>{chat.name}</strong>
-            <span style={{ ...helpStyle, display: "block" }}>{chat.external ? "外部群" : "内部会话"} · {chat.chatId}</span>
+            <span style={{ ...helpStyle, display: "block" }}>{chat.description || (chat.external ? "外部群" : "内部会话")}</span>
           </button>
         ))}
       </div>
@@ -961,11 +1162,11 @@ function UserSearchControl(props: {
         onChange={(event) => props.onQueryChange(event.target.value)}
       />
       <div style={helpStyle}>
-        用 {props.profileName || "当前飞书账号"} 搜索通讯录。选中后自动填入 OpenID。
+        用 {props.profileName || "当前飞书账号"} 搜索通讯录。选中后自动绑定到这条入口。
       </div>
       {props.currentUserOpenId ? (
         <div style={helpStyle}>
-          当前选择：{props.currentUserName || props.currentUserOpenId}
+          当前选择：{props.currentUserName || "已选择一个联系人，名称待同步"}
         </div>
       ) : null}
       {props.loading ? <div style={helpStyle}>正在搜索飞书联系人...</div> : null}
@@ -991,7 +1192,7 @@ function UserSearchControl(props: {
           >
             <strong style={{ display: "block" }}>{user.name}</strong>
             <span style={{ ...helpStyle, display: "block" }}>
-              {user.userId ? `工号：${user.userId} · ` : ""}{user.openId}
+              {user.userId ? `工号：${user.userId}` : user.departmentIds?.length ? "已匹配通讯录部门" : "通讯录用户"}
             </span>
           </button>
         ))}
@@ -1269,6 +1470,34 @@ function normalizeUiConfig(input: Record<string, unknown> | null | undefined): C
   };
 }
 
+function portableConfig(input: ConfigRecord): ConfigRecord {
+  const secretKeys = new Set([
+    "appSecret",
+    "app_secret",
+    "clientSecret",
+    "client_secret",
+    "tenantAccessToken",
+    "userAccessToken",
+    "accessToken",
+    "refreshToken",
+    "verificationToken",
+    "encryptKey",
+  ]);
+
+  function sanitize(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => sanitize(item));
+    if (!value || typeof value !== "object") return value;
+    const next: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, nested]) => {
+      if (secretKeys.has(key)) return;
+      next[key] = sanitize(nested);
+    });
+    return next;
+  }
+
+  return normalizeUiConfig(sanitize(input) as Record<string, unknown>);
+}
+
 function readableError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") {
@@ -1332,6 +1561,12 @@ function missingProfileHelp(connection?: FeishuConnectionConfig | null): string 
   return `当前页面还保留“${label}”，但这台机器/服务器没有读到对应的 lark-cli 授权。先点“刷新机器人列表”；如果还没有，就点“重新绑定”重新走一次飞书授权。云服务器部署时，本地绑定不会自动带过去，服务器上也要绑定或注入同一套密钥。`;
 }
 
+function missingBotNameHelp(connection?: FeishuConnectionConfig | null): string {
+  const aliases = formatBotAliases(connection);
+  if (aliases) return `飞书没有返回官方机器人名，当前会用你填写的 @ 名称“${aliases}”判断消息是不是发给这个机器人。`;
+  return "没有从飞书读取到机器人显示名。请填写飞书里 @ 它时看到的名字，例如“小锐”。否则多个机器人在同一个群里时，@小锐/@锐思 可能被错误接走。";
+}
+
 function profileDisplayName(profile?: ProfileOption | null): string {
   if (!profile) return "飞书应用";
   return profile.botName || (profile.user ? `飞书应用（${profile.user}）` : profile.name || "飞书应用");
@@ -1372,33 +1607,24 @@ function appMeta(connection?: FeishuConnectionConfig, profile?: ProfileOption | 
 }
 
 function routeTitle(route: FeishuRouteConfig, index: number): string {
-  const withAgent = (label: string) => route.targetAgentName?.trim()
-    ? `${label} → ${route.targetAgentName.trim()}`
-    : label;
   const explicitName = route.name?.trim();
   if (explicitName && !isLikelyInternalRouteName(explicitName)) return explicitName;
-  if (route.matchType === "keyword" && route.keyword) {
-    return withAgent(`包含「${route.keyword}」的飞书消息`);
-  }
+  const described = describeRouteForHumans(route);
+  if (described && described !== "默认入口") return described;
   if (route.matchType === "regex") {
     if (route.regex?.includes("锐思") && route.regex?.includes("paperclip")) {
-      return withAgent("高级入口：关键词“锐思 / paperclip”");
+      return route.targetAgentName?.trim()
+        ? `高级入口：关键词“锐思 / paperclip” → ${route.targetAgentName.trim()}`
+        : "高级入口：关键词“锐思 / paperclip”";
     }
-    return withAgent("匹配高级规则的飞书消息");
-  }
-  if (route.matchType === "chat") {
-    return withAgent(route.chatName ? `来自“${route.chatName}”的消息` : route.chatId ? "来自指定会话的消息" : "指定飞书会话里的消息");
-  }
-  if (route.matchType === "user") {
-    return withAgent(route.userName ? `${route.userName} 发来的消息` : route.userOpenId ? "指定人员发来的消息" : "指定发消息人的需求");
   }
   if (route.matchType === "default") return "其他未匹配消息";
   return `接收规则 ${index + 1}`;
 }
 
 function routeSourceLabel(route: FeishuRouteConfig): string {
-  if (route.matchType === "chat") return route.chatName ? `飞书会话“${route.chatName}”` : route.chatId ? `指定会话 ${route.chatId}` : "指定群或单聊";
-  if (route.matchType === "user") return route.userName ? `指定人员“${route.userName}”` : route.userOpenId ? `指定人员 ${route.userOpenId}` : "指定发消息人";
+  if (route.matchType === "chat") return route.chatName ? `飞书会话“${route.chatName}”` : route.chatId ? "指定会话（名称待同步）" : "指定群或单聊";
+  if (route.matchType === "user") return route.userName ? `指定人员“${route.userName}”` : route.userOpenId ? "指定人员（名称待同步）" : "指定发消息人";
   if (route.matchType === "keyword") return route.keyword ? `消息包含“${route.keyword}”` : "消息包含关键词";
   if (route.matchType === "regex") return route.regex ? "按高级规则匹配" : "高级规则";
   return "未被其他规则接走的消息";
@@ -1450,14 +1676,14 @@ function feishuTaskTestText(
   profile?: ProfileOption | null,
 ): string {
   const trigger = feishuTriggerText(route, connection, profile);
-  return `${trigger} 请创建一个 Paperclip 测试任务，完成后回复我；如果我带了图片或文件，也请一起处理。`;
+  return `${trigger} 请创建一个 paperclip 测试任务，完成后回复我；如果我带了图片或文件，也请一起处理。`;
 }
 
 function routeTestHint(route?: FeishuRouteConfig | null): string {
   if (!route) return "先新增一条飞书入口，再去飞书里发测试消息。";
   if (route.matchType === "chat") return "请在这条入口绑定的飞书群或单聊里发送。";
   if (route.matchType === "user") return "请用这条入口指定的飞书用户账号发送。";
-  if (route.matchType === "keyword") return "消息里必须包含入口关键词，机器人被 @ 时更容易触发。";
+  if (route.matchType === "keyword") return "消息里包含入口关键词就会触发，不区分大小写。机器人被 @ 时更容易触发。";
   if (route.matchType === "regex") return "消息要匹配高级规则。普通用户建议改成关键词入口。";
   return "这条入口会接收没有被其他规则匹配的消息。";
 }
@@ -1487,7 +1713,7 @@ function buildServerDeployCommands(connection?: FeishuConnectionConfig): string 
   const profileName = serverProfileName(connection);
   const appId = connection?.appId?.trim() || "<App ID>";
   return [
-    "# 1. 在 Paperclip 服务器上确认 lark-cli 可用",
+    "# 1. 在 Paperclip 服务器上确认 lark-cli 可用（插件包会自带 CLI；这里用于人工体检）",
     "lark-cli --version",
     "lark-cli doctor",
     "",
@@ -1626,7 +1852,7 @@ async function hostFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
-function useSettingsConfig() {
+function useSettingsConfig(pluginApiId: string) {
   const [configJson, setConfigJson] = useState<ConfigRecord>(() => normalizeUiConfig({}));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1635,7 +1861,7 @@ function useSettingsConfig() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    hostFetchJson<{ configJson?: Record<string, unknown> | null } | null>(`/api/plugins/${PLUGIN_ID}/config`)
+    hostFetchJson<{ configJson?: Record<string, unknown> | null } | null>(`/api/plugins/${encodeURIComponent(pluginApiId)}/config`)
       .then((result) => {
         if (cancelled) return;
         setConfigJson(normalizeUiConfig(result?.configJson ?? {}));
@@ -1651,12 +1877,12 @@ function useSettingsConfig() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pluginApiId]);
 
   async function save(nextConfig: ConfigRecord) {
     setSaving(true);
     try {
-      await hostFetchJson(`/api/plugins/${PLUGIN_ID}/config`, {
+      await hostFetchJson(`/api/plugins/${encodeURIComponent(pluginApiId)}/config`, {
         method: "POST",
         body: JSON.stringify({ configJson: nextConfig }),
       });
@@ -1671,7 +1897,7 @@ function useSettingsConfig() {
   }
 
   async function test(nextConfig: ConfigRecord) {
-    return await hostFetchJson<{ valid: boolean; message?: string }>(`/api/plugins/${PLUGIN_ID}/config/test`, {
+    return await hostFetchJson<{ valid: boolean; message?: string }>(`/api/plugins/${encodeURIComponent(pluginApiId)}/config/test`, {
       method: "POST",
       body: JSON.stringify({ configJson: nextConfig }),
     });
@@ -1732,16 +1958,20 @@ function defaultRoute(
   };
 }
 
-export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
+export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstanceProps) {
+  const pluginApiId = pluginInstanceIdFromProps(props);
   const catalog = usePluginData<CatalogData>(DATA_KEYS.catalog);
   const profileCatalog = usePluginData<ProfilesData>(DATA_KEYS.profiles);
   const connectorStatus = usePluginData<ConnectorStatus>(DATA_KEYS.status);
+  const capabilityCenter = usePluginData<CapabilityCenterData>(DATA_KEYS.capabilities);
   const bindProfile = usePluginAction(ACTION_KEYS.bindProfile);
   const startGuidedBind = usePluginAction(ACTION_KEYS.startGuidedBind);
   const finishGuidedBind = usePluginAction(ACTION_KEYS.finishGuidedBind);
   const startUserAuth = usePluginAction(ACTION_KEYS.startUserAuth);
   const finishUserAuth = usePluginAction(ACTION_KEYS.finishUserAuth);
   const testRoute = usePluginAction(ACTION_KEYS.testRoute);
+  const checkPermissions = usePluginAction(ACTION_KEYS.checkPermissions);
+  const retryFailedDeliveries = usePluginAction(ACTION_KEYS.retryFailedDeliveries);
   const {
     configJson,
     setConfigJson,
@@ -1750,7 +1980,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     error,
     save,
     test,
-  } = useSettingsConfig();
+  } = useSettingsConfig(pluginApiId);
   const [notice, setNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [toast, setToast] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [showBindPanel, setShowBindPanel] = useState(false);
@@ -1767,6 +1997,11 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   const [userAuthResults, setUserAuthResults] = useState<Record<string, UserAuthResult>>({});
   const [guidedBindResult, setGuidedBindResult] = useState<GuidedBindResult | null>(null);
   const [testingRouteId, setTestingRouteId] = useState<string | null>(null);
+  const [checkingPermissions, setCheckingPermissions] = useState(false);
+  const [permissionCheck, setPermissionCheck] = useState<PermissionCheckResult | null>(null);
+  const [retryingQueue, setRetryingQueue] = useState(false);
+  const [importConfigText, setImportConfigText] = useState("");
+  const [importConfigError, setImportConfigError] = useState<string | null>(null);
   const [fixingRouteId, setFixingRouteId] = useState<string | null>(null);
   const [routeTestResults, setRouteTestResults] = useState<Record<string, { tone: "success" | "error"; text: string }>>({});
   const [checkingConnectionId, setCheckingConnectionId] = useState<string | null>(null);
@@ -1778,6 +2013,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     profileName: "",
     appId: "",
     appSecret: "",
+    appSecretRef: "",
   });
   const [showEntryWizard, setShowEntryWizard] = useState(false);
   const [savedEntry, setSavedEntry] = useState<{ routeId: string; at: string } | null>(null);
@@ -1807,9 +2043,17 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   }, []);
 
   const companies = catalog.data?.companies ?? [];
+  const allAgentOptions = companies.flatMap((company) =>
+    company.agents.map((agent) => ({ company, agent }))
+  );
   const connections = configJson.connections ?? [];
   const routes = configJson.routes ?? [];
   const baseSinks = configJson.baseSinks ?? [];
+  const capabilityOverrides = (configJson.capabilities ?? []) as FeishuCapabilityConfig[];
+  const capabilityGroups = capabilityCenter.data?.groups ?? [];
+  const enabledCapabilityCount = capabilityGroups
+    .flatMap((group) => group.capabilities)
+    .filter((capability) => capability.enabled).length;
   const profiles = profileCatalog.data?.profiles ?? [];
   const profileError = profileCatalog.data?.error ?? profileCatalog.error?.message;
   const suggestedNewProfileName = suggestedBindProfileName(profiles);
@@ -2043,6 +2287,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
   ];
   const productionMonitor = connectorStatus.data?.monitor;
   const productionMonitorChecks = productionMonitor?.checks ?? [];
+  const retryQueue = connectorStatus.data?.retryQueue;
   const primaryRouteSummary = firstEnabledRouteSummary;
   const primaryRouteConnectionLabel = appLabel(firstRouteConnection, firstRouteProfile ?? connectedProfile);
   const setupProgressSteps = [
@@ -2173,6 +2418,24 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     patchConfig({ baseSinks: next });
   }
 
+  function patchCapability(key: string, patch: Partial<FeishuCapabilityConfig>) {
+    const current = capabilityOverrides.find((capability) => capability.key === key);
+    const nextCapability = { ...current, key, ...patch } as FeishuCapabilityConfig;
+    const nextCapabilities = current
+      ? capabilityOverrides.map((capability) => capability.key === key ? nextCapability : capability)
+      : [...capabilityOverrides, nextCapability];
+    patchConfig({ capabilities: nextCapabilities });
+  }
+
+  function patchCapabilityScope(key: string, scope: FeishuCapabilityScope) {
+    patchCapability(key, {
+      scope,
+      connectionId: scope === "bot" ? preferredConnection?.id ?? activeConnections[0]?.id : undefined,
+      routeId: scope === "entry" ? firstEnabledRouteSummary?.route.id ?? routes[0]?.id : undefined,
+      agentId: scope === "agent" ? firstEnabledRouteSummary?.agent?.id ?? allAgentOptions[0]?.agent.id : undefined,
+    });
+  }
+
   async function addProfileToPool(profile: ProfileOption, options: { useForCurrentEntry?: boolean } = {}) {
     const existing = connections.find((connection) => connection.profileName === profile.name);
     const displayName = profileDisplayName(profile);
@@ -2243,6 +2506,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
       profileName: connection?.profileName || prev.profileName || suggestedNewProfileName,
       appId: connection?.appId || prev.appId,
       appSecret: "",
+      appSecretRef: "",
     }));
     setGuidedBindResult(null);
     setBindMethod(method);
@@ -2322,6 +2586,42 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
       setNotice({ tone: "success", text: "已复制服务器部署命令。App Secret 仍需工程师在服务器安全输入。" });
     } catch {
       setNotice({ tone: "info", text: "复制失败，请在云服务器部署面板里手动复制命令。" });
+    }
+  }
+
+  function exportedConfigText(): string {
+    return JSON.stringify(portableConfig(configJson), null, 2);
+  }
+
+  async function copyConfigExport() {
+    const text = exportedConfigText();
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice({ tone: "success", text: "已复制飞书连接器配置。App Secret 和运行时授权 token 不会导出。" });
+    } catch {
+      setNotice({ tone: "info", text: "复制失败，可以在导出配置面板里手动选中 JSON。" });
+    }
+  }
+
+  function previewConfigImport() {
+    setImportConfigError(null);
+    const trimmed = importConfigText.trim();
+    if (!trimmed) {
+      setImportConfigError("请先粘贴一段配置 JSON。");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("配置 JSON 必须是对象。");
+      }
+      const nextConfig = portableConfig(normalizeUiConfig(parsed as Record<string, unknown>));
+      setConfigJson(nextConfig);
+      setImportConfigText(JSON.stringify(nextConfig, null, 2));
+      setToast({ tone: "info", text: "已导入到页面，点击“保存配置”后生效。" });
+      setNotice({ tone: "info", text: "已导入到页面，点击“保存配置”后生效；App Secret 需要在当前服务器重新绑定。" });
+    } catch (nextError) {
+      setImportConfigError(readableError(nextError));
     }
   }
 
@@ -2500,8 +2800,9 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     const botAliases = splitBotAliases(bindForm.botAliases || displayName).filter((alias) => !isPlaceholderBotName(alias));
     const appId = bindForm.appId.trim();
     const appSecret = bindForm.appSecret.trim();
-    if (!appId || !appSecret) {
-      setNotice({ tone: "error", text: "请填写飞书 App ID 和 App Secret。它们在飞书开放平台的“凭证与基础信息”里。" });
+    const appSecretRef = bindForm.appSecretRef.trim();
+    if (!appId || (!appSecret && !appSecretRef)) {
+      setNotice({ tone: "error", text: "请填写飞书 App ID，并输入 App Secret 或 Paperclip Secret Ref。" });
       return;
     }
 
@@ -2511,7 +2812,8 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
       await bindProfile({
         profileName,
         appId,
-        appSecret,
+        appSecret: appSecret || undefined,
+        appSecretRef: appSecret ? undefined : appSecretRef,
         brand: "feishu",
       });
 
@@ -2530,6 +2832,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
           appId,
           displayName,
         });
+      nextConnection.botAliases = botAliases;
       const nextConfig = normalizeUiConfig({
         ...configJson,
         connections: existingConnection
@@ -2545,6 +2848,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
         profileName: "",
         appId: "",
         appSecret: "",
+        appSecretRef: "",
       });
       setShowBindPanel(false);
       setNotice({ tone: "success", text: "飞书应用已绑定，并已添加到“飞书机器人”。下一步配置接收规则即可测试。" });
@@ -2793,7 +3097,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
       items.push({
         tone: "warning",
         title: "机器人名称",
-        detail: "没有从飞书读到机器人显示名，页面只能用配置备注显示。通常是机器人信息权限或 token 需要确认。",
+        detail: missingBotNameHelp(connection),
       });
     }
 
@@ -2935,6 +3239,49 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
     }
   }
 
+  async function runPermissionCheck() {
+    setCheckingPermissions(true);
+    setPermissionCheck(null);
+    setNotice({ tone: "info", text: "正在用 lark-cli 校验当前 profile 的飞书权限..." });
+    try {
+      const result = await checkPermissions({
+        connectionId: firstRouteConnection?.id ?? preferredConnection?.id,
+      }) as PermissionCheckResult;
+      setPermissionCheck(result);
+      setNotice({
+        tone: result.ok ? "success" : "info",
+        text: result.message ?? (result.ok ? "权限检查通过。" : "权限检查完成，仍有缺失项。"),
+      });
+    } catch (nextError) {
+      const text = readableError(nextError);
+      setPermissionCheck({ ok: false, message: text });
+      setNotice({ tone: "error", text });
+    } finally {
+      setCheckingPermissions(false);
+    }
+  }
+
+  async function runRetryQueue() {
+    setRetryingQueue(true);
+    setNotice({ tone: "info", text: "正在重试飞书失败投递..." });
+    try {
+      const result = await retryFailedDeliveries({}) as {
+        attemptedCount?: number;
+        successCount?: number;
+        failedCount?: number;
+      };
+      connectorStatus.refresh();
+      setNotice({
+        tone: (result.failedCount ?? 0) > 0 ? "info" : "success",
+        text: `重试完成：尝试 ${result.attemptedCount ?? 0} 条，成功 ${result.successCount ?? 0} 条，失败 ${result.failedCount ?? 0} 条。`,
+      });
+    } catch (nextError) {
+      setNotice({ tone: "error", text: readableError(nextError) });
+    } finally {
+      setRetryingQueue(false);
+    }
+  }
+
   if (loading) return <div style={helpStyle}>正在读取飞书连接器配置...</div>;
 
   return (
@@ -2966,7 +3313,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
               <div key="copy">
                 <div key="title" style={{ fontWeight: 900, fontSize: "18px" }}>{bindPanelTitle}</div>
                 <div key="help" style={helpStyle}>
-                  支持两种方式：普通用户优先用飞书授权链接；管理员也可以直接填 App ID 和 App Secret。App Secret 只交给 lark-cli 建立 profile，不会保存到 Paperclip 配置里。
+                  支持两种方式：普通用户优先用飞书授权链接；管理员也可以直接填 App ID 和 App Secret，或填 Paperclip Secret Ref。App Secret 只交给 lark-cli 建立 profile，不会保存到插件配置里。
                 </div>
               </div>
               <button key="close" type="button" style={buttonStyle} onClick={() => setShowBindPanel(false)}>
@@ -2995,7 +3342,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                   setNotice(null);
                 }}
               >
-                用 App ID / App Secret 绑定
+                用 App ID / Secret 绑定
               </button>
             </div>
             <div key="fields" style={gridTwoStyle}>
@@ -3005,7 +3352,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
               <Field key="botAliases" label="飞书里 @ 它的名字" help="用于防止 @小锐 时锐思也响应。可填多个，用逗号隔开，例如“小锐, 锐思”。">
                 <input style={inputStyle} value={bindForm.botAliases} placeholder="例如：小锐" onChange={(event) => setBindForm((prev) => ({ ...prev, botAliases: event.target.value }))} />
               </Field>
-              <Field key="profileName" label="保存代号（自动生成）" help="工程师排障时才需要看。普通用户不用改。">
+              <Field key="profileName" label="工程排障代号（可不填）" help="默认自动生成；普通用户不用改。">
                 <input style={inputStyle} value={bindForm.profileName || suggestedNewProfileName} onChange={(event) => setBindForm((prev) => ({ ...prev, profileName: event.target.value }))} />
               </Field>
             </div>
@@ -3062,7 +3409,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                 <div key="secret-help" style={recommendedBoxStyle}>
                   <div key="title" style={{ fontWeight: 800 }}>管理员直接绑定</div>
                   <div key="body" style={helpStyle}>
-                    App ID 和 App Secret 在飞书开放平台的“凭证与基础信息”里。这里保存完成后，Paperclip 只记录机器人显示名和 profile 代号，不保存 Secret 明文。
+                    App ID 和 App Secret 在飞书开放平台的“凭证与基础信息”里。云端建议先把 App Secret 存入 Paperclip Secret/Vault，再在这里填 Secret Ref；保存完成后插件只记录机器人显示名和 profile 代号，不保存 Secret 明文。
                   </div>
                   <a key="platform" href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" style={{ ...linkButtonStyle, marginTop: "10px" }}>
                     打开飞书开放平台
@@ -3074,6 +3421,9 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                   </Field>
                   <Field key="appSecret" label="飞书 App Secret" help="只在本次绑定时发送给 lark-cli。不要截图外发。">
                     <input style={inputStyle} type="password" autoComplete="off" value={bindForm.appSecret} placeholder="输入 App Secret" onChange={(event) => setBindForm((prev) => ({ ...prev, appSecret: event.target.value }))} />
+                  </Field>
+                  <Field key="appSecretRef" label="Paperclip Secret Ref" help="如果 App Secret 已在 Paperclip/Vault 里托管，填这个引用即可；与明文 Secret 二选一。">
+                    <input style={inputStyle} value={bindForm.appSecretRef} placeholder="例如：feishu/app-secret" onChange={(event) => setBindForm((prev) => ({ ...prev, appSecretRef: event.target.value }))} />
                   </Field>
                 </div>
                 <div key="actions" style={rowStyle}>
@@ -3311,7 +3661,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                       </StatusBadge>
                     </div>
                     <div key="meta" style={{ ...helpStyle, marginTop: "6px" }}>
-                      飞书群：{route.chatName || "任意消息"} → 机器人：{appLabel(connection, profile)} → 公司：{company ? companyLabel(company) : "未选择"} → 智能体：{agent ? agentLabel(agent) : "未选择"}
+                      来源：{routeSourceLabel(route)} → 机器人：{appLabel(connection, profile)} → 公司：{company ? companyLabel(company) : "未选择"} → 智能体：{agent ? agentLabel(agent) : "未选择"}
                     </div>
                   </div>
                   <div key="actions" style={rowStyle}>
@@ -3369,7 +3719,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                         </select>
                       </Field>
                       {matchType === "keyword" ? (
-                        <Field key="keyword" label="关键词">
+                        <Field key="keyword" label="关键词（不区分大小写）" help="不是必须填 paperclip。可以填“小思”“找人”“资讯”等业务词；消息里包含它就会进入 Paperclip。">
                           <input style={inputStyle} value={route.keyword ?? ""} onChange={(event) => patchRoute(routeIndex, { keyword: event.target.value })} />
                         </Field>
                       ) : null}
@@ -3517,7 +3867,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                           保存 @ 名称
                         </button>
                       </div>
-                      <div key="help" style={helpStyle}>如果飞书没有返回机器人官方名称，这里一定要填对，否则 @小锐/@锐思 这类多机器人群聊会误触发。</div>
+                      <div key="help" style={helpStyle}>填写飞书里 @ 它时看到的名字，例如“小锐”。如果飞书没有返回官方机器人名，这个名字会用来防止 @小锐 时锐思也响应。</div>
                     </div>
                     <div key="state" style={helpStyle}>状态：{profile ? "可发送 / 可监听" : "当前不可运行，先重新绑定或换用其他机器人"}</div>
                   </div>
@@ -3652,7 +4002,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
         {showEntryWizard ? (
           <div key="detail-fields" style={gridTwoStyle}>
             {wizardDraft.matchType === "keyword" ? (
-              <Field key="keyword" label="关键词" help="消息里包含这个词才进入 Paperclip。">
+              <Field key="keyword" label="关键词（不区分大小写）" help="不是必须填 paperclip。可以填“小思”“找人”“资讯”等业务词；消息里包含它就会进入 Paperclip。">
                 <input style={inputStyle} value={wizardDraft.keyword ?? ""} onChange={(event) => patchWizardDraft({ keyword: event.target.value })} />
               </Field>
             ) : null}
@@ -3822,10 +4172,12 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
         <div key="advanced-links" style={settingsShellStyle}>
           {[
             { key: "auth" as const, label: "飞书应用授权与 App Secret", detail: `${profiles.length} 个 lark-cli profile，${activeConnections.length} 个已加入机器人池` },
+            { key: "capabilities" as const, label: "能力中心", detail: capabilityCenter.loading ? "正在读取能力目录" : `${enabledCapabilityCount} 项已开启 · lark-* skills 不自动同步` },
             { key: "deploy" as const, label: "本地测试 / 云服务器部署", detail: `${runningOnLocalhost ? "当前在本地测试" : "当前在服务器运行"} · profile ${serverProfileName(serverDeployConnection)}` },
             { key: "runtime" as const, label: "lark-cli 运行环境", detail: `${isSendingRealMessages ? "真实发送" : "模拟发送"} · ${isListening ? "监听已开启" : "监听未开启"}` },
             { key: "events" as const, label: "事件订阅与日志", detail: `${connectorStatus.data?.subscribers?.length ?? 0} 个监听进程 · 最近事件 ${connectorStatus.data?.recentRecords?.length ?? 0} 条` },
             { key: "base" as const, label: "多维表格同步", detail: baseSinks.length > 0 ? `${baseSinks.length} 条写入规则` : "未配置，可留空" },
+            { key: "config" as const, label: "导入 / 导出配置", detail: "迁移入口和机器人池，不导出 App Secret" },
           ].map((item) => (
             <button
               key={item.key}
@@ -3862,17 +4214,21 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
               <div key="copy">
                 <div key="title" style={{ fontWeight: 800 }}>
                   {activeAdvancedPanel === "auth" ? "飞书应用授权与 App Secret" : null}
+                  {activeAdvancedPanel === "capabilities" ? "能力中心" : null}
                   {activeAdvancedPanel === "deploy" ? "本地测试 / 云服务器部署" : null}
                   {activeAdvancedPanel === "runtime" ? "lark-cli 运行环境" : null}
                   {activeAdvancedPanel === "events" ? "事件订阅与日志" : null}
                   {activeAdvancedPanel === "base" ? "多维表格同步" : null}
+                  {activeAdvancedPanel === "config" ? "导入 / 导出配置" : null}
                 </div>
                 <div key="help" style={helpStyle}>
                   {activeAdvancedPanel === "auth" ? "普通用户只需要确认机器人可用；App Secret 不在页面展示，避免误截图泄露。" : null}
+                  {activeAdvancedPanel === "capabilities" ? "这里展示 Agent 可以通过插件调用哪些飞书能力，以及它们和 lark-cli、lark-* skills 的关系。" : null}
                   {activeAdvancedPanel === "deploy" ? "本地能跑通不等于云端已经可用；云服务器也要绑定同一个飞书应用，并且只保留一个正式监听实例。" : null}
                   {activeAdvancedPanel === "runtime" ? "控制是否监听飞书消息、是否真实回复，以及本机 lark-cli 路径。" : null}
                   {activeAdvancedPanel === "events" ? "看监听是否在跑，以及最近有没有错误。这里不要求普通用户填写任何内部 ID。" : null}
                   {activeAdvancedPanel === "base" ? "需要把需求沉淀到飞书多维表格时再配置；不需要就保持为空。" : null}
+                  {activeAdvancedPanel === "config" ? "用于把入口、机器人池和能力开关迁移到另一套 Paperclip；导入后仍需点击保存配置。" : null}
                 </div>
               </div>
               <button key="close" type="button" style={buttonStyle} onClick={() => setShowAdvancedSettings(false)}>
@@ -3882,6 +4238,16 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
 
             {activeAdvancedPanel === "auth" ? (
               <div key="auth-panel" style={{ display: "grid", gap: "12px" }}>
+                <div key="first-install-checklist" style={subtleBoxStyle}>
+                  <div key="title" style={{ fontWeight: 800, marginBottom: "8px" }}>首装检查清单</div>
+                  <div key="steps" style={checklistGridStyle}>
+                    <ChecklistItem key="create-app" done={profiles.length > 0 || activeConnections.length > 0} title="1. 创建或选择飞书应用" detail="普通用户选已有公司机器人；管理员可以新建飞书机器人应用。" />
+                    <ChecklistItem key="bot-enabled" done={activeConnections.length > 0} title="2. 开启机器人能力" detail="飞书应用必须有机器人能力，并加入目标群聊。" />
+                    <ChecklistItem key="permissions" done={enabledCapabilityCount > 0} title="3. 导入推荐权限" detail="到能力中心复制推荐权限 JSON；审批、任务、邮箱默认不启用。" />
+                    <ChecklistItem key="publish" done={false} title="4. 发布飞书应用" detail="飞书可能需要管理员确认、发布版本、配置事件订阅和可见范围。" />
+                    <ChecklistItem key="paperclip-check" done={hasUsableConnection} title="5. 回到 Paperclip 检查连接" detail="刷新机器人列表后点“检查连接”，再去飞书群里发测试话术。" />
+                  </div>
+                </div>
                 <div key="auth-actions" style={rowStyle}>
                   <button key="refresh" type="button" style={buttonStyle} onClick={refreshProfilesWithNotice}>
                     刷新机器人列表
@@ -3959,6 +4325,250 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
               </div>
             ) : null}
 
+            {activeAdvancedPanel === "capabilities" ? (
+              <div key="capabilities-panel" style={{ display: "grid", gap: "12px" }}>
+                {capabilityCenter.loading ? (
+                  <div key="loading" style={subtleBoxStyle}>正在读取飞书能力中心...</div>
+                ) : capabilityCenter.error ? (
+                  <div key="error" style={{ ...subtleBoxStyle, color: "var(--destructive)" }}>
+                    能力中心读取失败：{capabilityCenter.error.message}
+                  </div>
+                ) : (
+                  <Fragment key="capability-content">
+                    <div key="summary" style={successBoxStyle}>
+                      <div key="title" style={{ fontWeight: 900 }}>Agent 调用的是插件受控工具，不是裸跑 lark-cli</div>
+                      <div key="body" style={{ ...helpStyle, marginTop: "6px" }}>
+                        {capabilityCenter.data?.summary}
+                      </div>
+                    </div>
+                    <div key="relationship" style={gridTwoStyle}>
+                      <div key="cli" style={subtleBoxStyle}>
+                        <div key="label" style={helpStyle}>lark-cli</div>
+                        <div key="value" style={{ fontWeight: 800 }}>运行时 API 客户端</div>
+                        <div key="detail" style={helpStyle}>云端插件包会带 CLI；profile、App Secret 和权限仍属于服务器运行环境。</div>
+                      </div>
+                      <div key="skills" style={subtleBoxStyle}>
+                        <div key="label" style={helpStyle}>lark-* skills</div>
+                        <div key="value" style={{ fontWeight: 800 }}>本地 Agent 使用说明</div>
+                        <div key="detail" style={helpStyle}>{capabilityCenter.data?.syncPolicy.text}</div>
+                      </div>
+                    </div>
+                    <div key="schema-discovery" style={subtleBoxStyle}>
+                      <div key="head" style={sectionHeaderStyle}>
+                        <div key="copy">
+                          <div key="title" style={{ fontWeight: 800 }}>lark-cli schema / skills 同步状态</div>
+                          <div key="detail" style={{ ...helpStyle, marginTop: "6px" }}>
+                            {capabilityCenter.data?.schemaDiscovery.summary}
+                          </div>
+                        </div>
+                        <StatusBadge key="status" tone={capabilityCenter.data?.schemaDiscovery.checked ? "success" : "warning"}>
+                          {capabilityCenter.data?.schemaDiscovery.checked ? "已扫描" : "未扫描"}
+                        </StatusBadge>
+                      </div>
+                      {capabilityCenter.data?.schemaDiscovery.reason ? (
+                        <div key="reason" style={{ ...helpStyle, marginTop: "8px" }}>
+                          {capabilityCenter.data.schemaDiscovery.reason}
+                        </div>
+                      ) : null}
+                      {capabilityCenter.data?.schemaDiscovery.updateNotice?.message ? (
+                        <div key="update" style={{ ...subtleBoxStyle, marginTop: "10px", background: "var(--background)" }}>
+                          {capabilityCenter.data.schemaDiscovery.updateNotice.message}
+                        </div>
+                      ) : null}
+                      <div key="services" style={{ ...rowStyle, marginTop: "10px" }}>
+                        {(capabilityCenter.data?.schemaDiscovery.services ?? []).slice(0, 8).map((service) => (
+                          <span key={service.name} style={compactPillStyle}>
+                            {service.name}：{service.available ? `${service.methodCount} 个接口 / ${service.scopeCount} 个 scope` : "不可用"}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div key="permission" style={subtleBoxStyle}>
+                      <div key="head" style={sectionHeaderStyle}>
+                        <div key="copy">
+                          <div key="title" style={{ fontWeight: 800 }}>权限检查策略</div>
+                          <div key="detail" style={{ ...helpStyle, marginTop: "6px" }}>{capabilityCenter.data?.permissionStrategy}</div>
+                        </div>
+                        <button key="check" type="button" style={buttonStyle} disabled={checkingPermissions} onClick={() => void runPermissionCheck()}>
+                          {checkingPermissions ? "检查中..." : "检查当前权限"}
+                        </button>
+                      </div>
+                      {permissionCheck ? (
+                        <div key="permission-result" style={{ ...subtleBoxStyle, marginTop: "10px", background: "var(--background)" }}>
+                          <div key="state" style={{ ...rowStyle, marginBottom: "6px" }}>
+                            <StatusBadge key="status" tone={permissionCheck.ok ? "success" : "warning"}>
+                              {permissionCheck.ok ? "权限覆盖推荐清单" : "有权限缺口"}
+                            </StatusBadge>
+                            {permissionCheck.profileName ? <span key="profile" style={compactPillStyle}>profile：{permissionCheck.profileName}</span> : null}
+                            {permissionCheck.identity ? <span key="identity" style={compactPillStyle}>身份：{permissionCheck.identity}</span> : null}
+                          </div>
+                          <div key="message" style={helpStyle}>{permissionCheck.message}</div>
+                          {permissionCheck.missingScopes?.length ? (
+                            <div key="missing" style={{ ...helpStyle, marginTop: "8px", overflowWrap: "anywhere" }}>
+                              缺失权限：{permissionCheck.missingScopes.join("、")}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div key="permission-json" style={subtleBoxStyle}>
+                      <div key="head" style={sectionHeaderStyle}>
+                        <div key="copy">
+                          <div key="title" style={{ fontWeight: 800 }}>推荐权限 JSON</div>
+                          <div key="detail" style={helpStyle}>{capabilityCenter.data?.recommendedPermissionJson.note}</div>
+                        </div>
+                      </div>
+                      <code key="json" style={{ ...codeStyle, marginTop: "10px" }}>
+                        {JSON.stringify(capabilityCenter.data?.recommendedPermissionJson ?? {}, null, 2)}
+                      </code>
+                    </div>
+                    {(capabilityCenter.data?.groups ?? []).map((group) => (
+                      <div key={group.name} style={productEntryStyle}>
+                        <div key="group-title" style={{ fontWeight: 900, fontSize: "16px" }}>{group.name}</div>
+                        <div key="items" style={{ display: "grid", gap: "10px" }}>
+                          {group.capabilities.map((capability) => {
+                            const override = capabilityOverrides.find((item) => item.key === capability.key);
+                            const checked = override?.enabled ?? capability.enabled;
+                            const selectedScope = override?.scope ?? capability.scope ?? "instance";
+                            const selectedConnectionId = override?.connectionId ?? capability.connectionId ?? preferredConnection?.id ?? activeConnections[0]?.id ?? "";
+                            const selectedRouteId = override?.routeId ?? capability.routeId ?? firstEnabledRouteSummary?.route.id ?? routes[0]?.id ?? "";
+                            const selectedAgentId = override?.agentId ?? capability.agentId ?? firstEnabledRouteSummary?.agent?.id ?? allAgentOptions[0]?.agent.id ?? "";
+                            const statusTone = !checked
+                              ? "neutral"
+                              : capability.implemented
+                                ? capability.recommendedScopes.length > 0 ? "warning" : "success"
+                                : "warning";
+                            return (
+                              <div key={capability.key} style={subtleBoxStyle}>
+                                <div key="head" style={sectionHeaderStyle}>
+                                  <div key="copy">
+                                    <div key="title-row" style={rowStyle}>
+                                      <strong key="title">{capability.title}</strong>
+                                      <StatusBadge key="status" tone={statusTone}>{checked ? capability.statusLabel : "未开启"}</StatusBadge>
+                                      <span key="scope" style={compactPillStyle}>{capability.scopeLabel}</span>
+                                    </div>
+                                    <div key="desc" style={{ ...helpStyle, marginTop: "6px" }}>{capability.description}</div>
+                                  </div>
+                                  <button
+                                    key="toggle"
+                                    type="button"
+                                    style={checked ? buttonStyle : primaryButtonStyle}
+                                    onClick={() => patchCapability(capability.key, { enabled: !checked })}
+                                  >
+                                    {checked ? "关闭" : "开启"}
+                                  </button>
+                                </div>
+                                <div key="scope-controls" style={{ ...gridTwoStyle, marginTop: "10px" }}>
+                                  <Field key="scope" label="开启范围">
+                                    <select
+                                      style={selectStyle}
+                                      value={selectedScope}
+                                      onChange={(event) => patchCapabilityScope(capability.key, event.target.value as FeishuCapabilityScope)}
+                                    >
+                                      <option value="instance">全实例开启</option>
+                                      <option value="bot">某个机器人开启</option>
+                                      <option value="entry">某个入口开启</option>
+                                      <option value="agent">某个 Agent 开启</option>
+                                    </select>
+                                  </Field>
+                                  {selectedScope === "bot" ? (
+                                    <Field key="bot-target" label="目标机器人">
+                                      <select
+                                        style={selectStyle}
+                                        value={selectedConnectionId}
+                                        onChange={(event) => patchCapability(capability.key, {
+                                          scope: "bot",
+                                          connectionId: event.target.value,
+                                          routeId: undefined,
+                                          agentId: undefined,
+                                        })}
+                                      >
+                                        {activeConnections.map((connection) => (
+                                          <option key={connection.id} value={connection.id}>
+                                            {appLabel(connection, profiles.find((profile) => profile.name === connection.profileName))}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                  ) : null}
+                                  {selectedScope === "entry" ? (
+                                    <Field key="entry-target" label="目标入口">
+                                      <select
+                                        style={selectStyle}
+                                        value={selectedRouteId}
+                                        onChange={(event) => patchCapability(capability.key, {
+                                          scope: "entry",
+                                          routeId: event.target.value,
+                                          connectionId: undefined,
+                                          agentId: undefined,
+                                        })}
+                                      >
+                                        {routeSummaries.map(({ route }, routeIndex) => (
+                                          <option key={route.id} value={route.id}>
+                                            {routeTitle(route, routeIndex)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                  ) : null}
+                                  {selectedScope === "agent" ? (
+                                    <Field key="agent-target" label="目标 Agent">
+                                      <select
+                                        style={selectStyle}
+                                        value={selectedAgentId}
+                                        onChange={(event) => patchCapability(capability.key, {
+                                          scope: "agent",
+                                          agentId: event.target.value,
+                                          connectionId: undefined,
+                                          routeId: undefined,
+                                        })}
+                                      >
+                                        {allAgentOptions.map(({ company, agent }) => (
+                                          <option key={`${company.id}-${agent.id}`} value={agent.id}>
+                                            {agentLabel(agent)}（{companyLabel(company)}）
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                  ) : null}
+                                </div>
+                                <div key="meta" style={{ ...rowStyle, marginTop: "10px" }}>
+                                  {capability.toolName ? <span key="tool" style={compactPillStyle}>{capability.toolName}</span> : null}
+                                  {capability.legacyToolName ? <span key="legacy" style={compactPillStyle}>兼容：{capability.legacyToolName}</span> : null}
+                                  {capability.larkCliCommands.map((command) => (
+                                    <span key={`cmd-${command}`} style={compactPillStyle}>lark-cli {command}</span>
+                                  ))}
+                                  {capability.relatedSkills.map((skill) => (
+                                    <span key={`skill-${skill}`} style={compactPillStyle}>{skill}</span>
+                                  ))}
+                                </div>
+                                {capability.schemaCommands?.length ? (
+                                  <div key="schema" style={{ ...helpStyle, marginTop: "8px" }}>
+                                    CLI 发现：{capability.schemaCommands.map((command) => `${command.command}：${
+                                      command.status === "schema_backed"
+                                        ? "schema 覆盖"
+                                        : command.status === "cli_help_backed"
+                                          ? "CLI help 覆盖"
+                                          : "未发现"
+                                    }`).join("；")}
+                                  </div>
+                                ) : null}
+                                {capability.recommendedScopes.length > 0 ? (
+                                  <div key="scopes" style={{ ...helpStyle, marginTop: "8px" }}>
+                                    推荐权限：{capability.recommendedScopes.join("、")}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </Fragment>
+                )}
+              </div>
+            ) : null}
+
             {activeAdvancedPanel === "deploy" ? (
               <div key="deploy-panel" style={{ display: "grid", gap: "12px" }}>
                 <div key="runtime-position" style={subtleBoxStyle}>
@@ -3982,7 +4592,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                   <div key="server" style={guideCardStyle}>
                     <div key="title" style={{ fontWeight: 800 }}>云端正式部署</div>
                     <div key="body" style={helpStyle}>
-                      Paperclip 跑到服务器后，页面只会读取服务器上的 lark-cli profile。业务入口配置可以沿用，但飞书应用授权必须在服务器上也完成一次。
+                      Paperclip 跑到服务器后，插件会优先使用云端插件包自带的 lark-cli，但 profile 和 App 授权仍属于服务器运行环境。业务入口配置可以沿用，飞书应用授权必须在服务器上也完成一次。
                     </div>
                   </div>
                 </div>
@@ -4024,7 +4634,7 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                 <ToggleField key="enableEventSubscriber" label="自动监听飞书新消息" checked={configJson.enableEventSubscriber === true} onChange={(checked) => patchConfig({ enableEventSubscriber: checked })} help="本地测试可以打开；上云后只保留服务器监听。" />
                 <ToggleField key="ackOnInbound" label="收到需求后先回“已收到”" checked={configJson.ackOnInbound === true} onChange={(checked) => patchConfig({ ackOnInbound: checked })} />
                 <ToggleField key="enableQuickReply" label="测试口令“只回复 ok”" checked={configJson.enableQuickReply !== false} onChange={(checked) => patchConfig({ enableQuickReply: checked })} />
-                <Field key="larkCliBin" label="lark-cli 命令路径" help="普通用户不用改。系统找不到 lark-cli 时才填完整路径。">
+                <Field key="larkCliBin" label="lark-cli 命令路径" help="普通用户不用改。留空或保持 lark-cli 时，插件会优先使用包内自带 CLI；需要强制走服务器固定路径时才填写完整路径。">
                   <input style={inputStyle} value={configJson.larkCliBin ?? DEFAULT_CONFIG.larkCliBin} onChange={(event) => patchConfig({ larkCliBin: event.target.value })} />
                 </Field>
                 <Field key="paperclipBaseUrl" label="Paperclip 内部访问地址" help="可选。填云端域名后，飞书里会附带内部任务链接；没有 Paperclip 账号的人打不开。">
@@ -4051,6 +4661,73 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
                 {productionMonitorChecks.length > 0 ? (
                   <CheckReport key="monitor-checks" title="监控检查项" items={productionMonitorChecks} />
                 ) : null}
+                <div key="webhook-security" style={subtleBoxStyle}>
+                  <div key="title" style={{ fontWeight: 800, marginBottom: "8px" }}>公网回调安全</div>
+                  <div key="help" style={{ ...helpStyle, marginBottom: "10px" }}>
+                    云端 webhook 建议配置飞书事件订阅里的 Verification Token 和 Encrypt Key。这里填写 Paperclip Secret/Vault 引用，插件不会保存密钥明文。
+                  </div>
+                  <div key="fields" style={gridTwoStyle}>
+                    <Field key="verification" label="Verification Token Secret Ref">
+                      <input
+                        style={inputStyle}
+                        value={configJson.eventVerificationTokenRef ?? ""}
+                        placeholder="例如：feishu/event-verification-token"
+                        onChange={(event) => patchConfig({ eventVerificationTokenRef: event.target.value })}
+                      />
+                    </Field>
+                    <Field key="encrypt" label="Encrypt Key Secret Ref">
+                      <input
+                        style={inputStyle}
+                        value={configJson.eventEncryptKeyRef ?? ""}
+                        placeholder="例如：feishu/event-encrypt-key"
+                        onChange={(event) => patchConfig({ eventEncryptKeyRef: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+                  <label key="signature" style={{ ...rowStyle, marginTop: "10px", justifyContent: "flex-start" }}>
+                    <input
+                      type="checkbox"
+                      checked={configJson.eventRequireSignature === true}
+                      onChange={(event) => patchConfig({ eventRequireSignature: event.target.checked })}
+                    />
+                    <span>公网回调必须校验 x-lark-signature</span>
+                  </label>
+                </div>
+                <div key="retry-queue" style={subtleBoxStyle}>
+                  <div key="head" style={sectionHeaderStyle}>
+                    <div key="copy">
+                      <div key="title-row" style={rowStyle}>
+                        <div key="title" style={{ fontWeight: 800 }}>重试队列</div>
+                        <StatusBadge key="status" tone={(retryQueue?.pendingCount ?? 0) > 0 ? "warning" : "success"}>
+                          {(retryQueue?.pendingCount ?? 0) > 0 ? `${retryQueue?.pendingCount ?? 0} 条待重试` : "没有待重试投递"}
+                        </StatusBadge>
+                      </div>
+                      <div key="detail" style={helpStyle}>
+                        飞书回执、多维表格写入失败时会先入队；权限或网络恢复后，可以在这里重试。
+                      </div>
+                    </div>
+                    <button
+                      key="retry"
+                      type="button"
+                      style={buttonStyle}
+                      disabled={retryingQueue || (retryQueue?.pendingCount ?? 0) === 0}
+                      onClick={() => void runRetryQueue()}
+                    >
+                      {retryingQueue ? "重试中..." : "重试失败投递"}
+                    </button>
+                  </div>
+                  {(retryQueue?.items ?? []).length > 0 ? (
+                    <div key="items" style={{ display: "grid", gap: "8px", marginTop: "10px" }}>
+                      {(retryQueue?.items ?? []).slice(0, 3).map((item) => (
+                        <div key={item.id} style={{ ...helpStyle, overflowWrap: "anywhere" }}>
+                          {item.status === "succeeded" ? "已成功" : item.status === "failed" ? "失败" : "待重试"}：
+                          {item.reason} · {item.profileName} · 尝试 {item.attemptCount} 次
+                          {item.lastError ? ` · ${item.lastError}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <div key="state" style={checklistGridStyle}>
                   <ChecklistItem key="listener" done={isListening} title="监听开关" detail={isListening ? "已开启" : "未开启"} />
                   <ChecklistItem key="subscriber" done={(connectorStatus.data?.subscribers?.length ?? 0) > 0} title="监听进程" detail={`${connectorStatus.data?.subscribers?.length ?? 0} 个`} />
@@ -4117,6 +4794,65 @@ export function FeishuSettingsPage(_props: PluginSettingsPageProps) {
               </div>
             ) : null}
 
+            {activeAdvancedPanel === "config" ? (
+              <div key="config-panel" style={{ display: "grid", gap: "12px" }}>
+                <div key="summary" style={subtleBoxStyle}>
+                  <div key="title" style={{ fontWeight: 800, marginBottom: "6px" }}>可迁移内容</div>
+                  <div key="body" style={helpStyle}>
+                    会导出入口、机器人池、能力开关、多维表格规则和运行开关。App Secret、访问 token、事件密钥明文不会导出；Secret Ref 会保留，Base Token 会随多维表格规则导出。
+                  </div>
+                </div>
+                <div key="export" style={subtleBoxStyle}>
+                  <div key="head" style={sectionHeaderStyle}>
+                    <div key="copy">
+                      <div key="title" style={{ fontWeight: 800 }}>导出当前配置</div>
+                      <div key="detail" style={helpStyle}>适合迁移到云端或发给工程师复现入口规则。</div>
+                    </div>
+                    <button key="copy" type="button" style={buttonStyle} onClick={() => void copyConfigExport()}>
+                      复制配置 JSON
+                    </button>
+                  </div>
+                  <code key="json" style={{ ...codeStyle, marginTop: "10px", maxHeight: "260px", overflow: "auto" }}>
+                    {exportedConfigText()}
+                  </code>
+                </div>
+                <div key="import" style={subtleBoxStyle}>
+                  <div key="head" style={sectionHeaderStyle}>
+                    <div key="copy">
+                      <div key="title" style={{ fontWeight: 800 }}>导入配置 JSON</div>
+                      <div key="detail" style={helpStyle}>导入只更新当前页面状态；确认无误后再点击顶部“保存配置”。</div>
+                    </div>
+                    <button key="preview" type="button" style={buttonStyle} onClick={previewConfigImport}>
+                      导入到页面
+                    </button>
+                  </div>
+                  <textarea
+                    key="textarea"
+                    style={{
+                      ...inputStyle,
+                      height: "180px",
+                      marginTop: "10px",
+                      padding: "10px 12px",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      resize: "vertical",
+                      lineHeight: 1.45,
+                    }}
+                    value={importConfigText}
+                    placeholder={"{\n  \"connections\": [],\n  \"routes\": []\n}"}
+                    onChange={(event) => {
+                      setImportConfigText(event.target.value);
+                      setImportConfigError(null);
+                    }}
+                  />
+                  {importConfigError ? (
+                    <div key="error" style={{ ...helpStyle, color: "var(--destructive)", marginTop: "8px" }}>
+                      导入失败：{importConfigError}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
             {error ? <div key="error" style={{ ...subtleBoxStyle, color: "var(--destructive)" }}>{error}</div> : null}
           </div>
         ) : (
@@ -4154,6 +4890,381 @@ export function DashboardWidget(_props: PluginWidgetProps) {
       </div>
       <div>正在运行的监听进程：{data?.subscribers?.length ?? 0}</div>
       {latest ? <div>最近状态：{latest.message}</div> : <div>暂无事件。</div>}
+    </div>
+  );
+}
+
+export function FeishuSidebarLink(props: PluginSidebarProps & PluginInstanceProps) {
+  const { data } = usePluginData<ConnectorStatus>(DATA_KEYS.status);
+  const health = data?.monitor?.health;
+  const toneColor = health === "error"
+    ? "var(--destructive)"
+    : health === "warning"
+      ? "color-mix(in oklab, var(--primary) 62%, #b45309)"
+      : "var(--primary)";
+  return (
+    <a
+      href={pluginSettingsHref(props)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "8px 12px",
+        color: "var(--foreground)",
+        textDecoration: "none",
+        fontSize: "13px",
+        fontWeight: 600,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "999px",
+          background: toneColor,
+          flex: "0 0 auto",
+        }}
+      />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>飞书连接器</span>
+      {data ? (
+        <span style={{ marginLeft: "auto", color: "var(--muted-foreground)", fontSize: "11px" }}>
+          {data.routeCount}
+        </span>
+      ) : null}
+    </a>
+  );
+}
+
+export function FeishuSidebarPanel(props: PluginInstanceProps = {}) {
+  const { data, loading, error } = usePluginData<ConnectorStatus>(DATA_KEYS.status);
+  if (loading) return <div style={helpStyle}>飞书状态读取中...</div>;
+  if (error) return <div style={{ ...helpStyle, color: "var(--destructive)" }}>飞书状态读取失败</div>;
+  const monitor = data?.monitor;
+  const nextHint = monitor?.message ?? (data?.connectionCount ? "连接器已配置，等待飞书消息。" : "还没有绑定飞书机器人。");
+  return (
+    <div style={{ display: "grid", gap: "8px", fontSize: "12px" }}>
+      <div style={{ fontWeight: 800 }}>飞书入口层</div>
+      <div style={{ display: "grid", gap: "4px", color: "var(--muted-foreground)" }}>
+        <div>机器人：{data?.connectionCount ?? 0} 个</div>
+        <div>入口：{data?.routeCount ?? 0} 条</div>
+        <div>监听：{data?.subscribers?.length ?? 0} 个进程</div>
+      </div>
+      <div style={{ lineHeight: 1.45 }}>{nextHint}</div>
+      <a href={pluginSettingsHref(props)} style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}>
+        打开配置
+      </a>
+    </div>
+  );
+}
+
+export function FeishuCommentReplyAction({ context }: PluginCommentContextMenuItemProps) {
+  const replyIssueCommentToFeishu = usePluginAction(ACTION_KEYS.replyIssueCommentToFeishu);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function replyComment() {
+    setBusy(true);
+    setDone(false);
+    try {
+      await replyIssueCommentToFeishu({
+        issueId: context.parentEntityId,
+        commentId: context.entityId,
+      });
+      setDone(true);
+      window.setTimeout(() => setDone(false), 2400);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void replyComment()}
+      disabled={busy}
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: "999px",
+        padding: "2px 8px",
+        background: "var(--background)",
+        color: done ? "var(--primary)" : "var(--muted-foreground)",
+        fontSize: "12px",
+        cursor: busy ? "default" : "pointer",
+      }}
+      title="把这条 Paperclip 评论回复到原飞书线程"
+    >
+      {busy ? "回飞书中..." : done ? "已回飞书" : "回飞书"}
+    </button>
+  );
+}
+
+export function FeishuIssueTab({ context }: PluginDetailTabProps) {
+  const { data, loading, error, refresh } = usePluginData<IssueSourceData>(DATA_KEYS.issueSource, {
+    issueId: context.entityId,
+  });
+  const replyIssueSourceThread = usePluginAction(ACTION_KEYS.replyIssueSourceThread);
+  const downloadIssueAttachments = usePluginAction(ACTION_KEYS.downloadIssueAttachments);
+  const writeIssueBaseRecord = usePluginAction(ACTION_KEYS.writeIssueBaseRecord);
+  const lookupIssueRequester = usePluginAction(ACTION_KEYS.lookupIssueRequester);
+  const replyIssueCommentToFeishu = usePluginAction(ACTION_KEYS.replyIssueCommentToFeishu);
+  const sendMessage = usePluginAction(ACTION_KEYS.sendMessage);
+  const [replyText, setReplyText] = useState("");
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
+
+  async function runIssueAction(label: string, fn: () => Promise<unknown>) {
+    setBusyAction(label);
+    setActionNotice(null);
+    try {
+      const result = await fn() as { content?: string; error?: string; message?: string } | null;
+      if (result?.error) {
+        setActionNotice({ tone: "error", text: result.error });
+        return;
+      }
+      setActionNotice({ tone: "success", text: result?.content ?? result?.message ?? `${label}已执行。` });
+    } catch (caught) {
+      setActionNotice({ tone: "error", text: caught instanceof Error ? caught.message : String(caught) });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const issueId = data?.issueId ?? context.entityId;
+
+  if (loading) return <div style={helpStyle}>正在读取飞书来源...</div>;
+  if (error) return <div style={{ ...subtleBoxStyle, color: "var(--destructive)" }}>飞书来源读取失败：{error.message}</div>;
+  if (!data?.found) {
+    return (
+      <div style={subtleBoxStyle}>
+        <div key="title" style={{ fontWeight: 800 }}>这个 Issue 不是由飞书连接器创建的。</div>
+        <div key="detail" style={helpStyle}>如果它确实来自飞书，刷新后仍未显示来源，通常是历史任务还没有写入飞书消息映射。</div>
+      </div>
+    );
+  }
+
+  const conversationDisplay = issueSourceValue(
+    issueSourceDisplayName(data.conversationName)
+      ?? issueSourceDisplayName(data.conversationLabel)
+      ?? (data.chatId ? "已记录，名称待同步" : null),
+  );
+  const requesterDisplay = issueSourceValue(
+    issueSourceDisplayName(data.requesterName) ?? (data.requesterOpenId ? "已记录，名称待同步" : null),
+  );
+  const originalMessageDisplay = issueSourceValue(
+    data.messageId ? "已记录，可回原线程" : null,
+  );
+  const hasDebugInfo = Boolean(data.chatId || data.rootMessageId || data.threadId || data.lastRunId || data.updatedAt);
+
+  const detailRows = [
+    ["入口", issueSourceValue(data.entryName)],
+    ["机器人", issueSourceValue(data.botName)],
+    ["会话", conversationDisplay],
+    ["提出人", requesterDisplay],
+    ["原消息", originalMessageDisplay],
+    ["附件", `${data.attachmentCount ?? data.attachments?.length ?? 0} 个`],
+    ["回复方式", issueReplyModeLabel(data.replyMode)],
+  ];
+  const recentComments = data.recentComments ?? [];
+
+  return (
+    <div style={{ ...productSectionStyle, maxWidth: "920px" }}>
+      <div key="header" style={sectionHeaderStyle}>
+        <div key="copy">
+          <div key="title" style={{ fontWeight: 900, fontSize: "18px" }}>飞书来源</div>
+          <div key="subtitle" style={helpStyle}>
+            {issueSourceValue(data.issueIdentifier, "当前任务")} 来自飞书，会按入口配置回到原会话。
+          </div>
+        </div>
+        <button key="refresh" type="button" style={buttonStyle} onClick={refresh}>
+          刷新
+        </button>
+      </div>
+
+      <div key="summary" style={successBoxStyle}>
+        <div key="headline" style={{ fontWeight: 900 }}>
+          来源：飞书
+        </div>
+        <div key="meta" style={{ ...helpStyle, marginTop: "4px" }}>
+          {issueSourceValue(data.entryName)} · {issueSourceValue(data.botName)} · {issueReplyModeLabel(data.replyMode)}
+        </div>
+      </div>
+
+      <div key="details" style={gridTwoStyle}>
+        {detailRows.map(([label, value]) => (
+          <div key={label} style={subtleBoxStyle}>
+            <div key="label" style={helpStyle}>{label}</div>
+            <div key="value" style={{ fontWeight: 800, marginTop: "4px", overflowWrap: "anywhere" }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div key="technical" style={subtleBoxStyle}>
+        <div key="title" style={{ fontWeight: 800, marginBottom: "8px" }}>飞书操作区</div>
+        <textarea
+          key="reply-text"
+          style={{
+            ...inputStyle,
+            height: "96px",
+            padding: "10px 12px",
+            resize: "vertical",
+            lineHeight: 1.45,
+          }}
+          value={replyText}
+          placeholder="把要发回飞书的内容写在这里"
+          onChange={(event) => setReplyText(event.target.value)}
+        />
+        <div key="actions" style={{ ...rowStyle, marginTop: "10px" }}>
+          <button
+            key="reply"
+            type="button"
+            style={primaryButtonStyle}
+            disabled={busyAction !== null || replyText.trim().length === 0}
+            onClick={() => void runIssueAction("回复原飞书线程", async () => {
+              const result = await replyIssueSourceThread({ issueId, text: replyText.trim() });
+              setReplyText("");
+              return result;
+            })}
+          >
+            {busyAction === "回复原飞书线程" ? "回复中..." : "回复原飞书线程"}
+          </button>
+          <button
+            key="send"
+            type="button"
+            style={buttonStyle}
+            disabled={busyAction !== null || replyText.trim().length === 0 || !data.chatId}
+            onClick={() => void runIssueAction("转发到飞书", async () => {
+              const result = await sendMessage({
+                connectionId: data.connectionId,
+                chatId: data.chatId,
+                text: replyText.trim(),
+              });
+              setReplyText("");
+              return { content: result && typeof result === "object" && "dryRun" in result ? "飞书消息已提交发送。" : "飞书消息已提交发送。" };
+            })}
+          >
+            {busyAction === "转发到飞书" ? "发送中..." : `用${issueSourceValue(data.botName, "机器人")}发送`}
+          </button>
+          <button
+            key="download"
+            type="button"
+            style={buttonStyle}
+            disabled={busyAction !== null}
+            onClick={() => void runIssueAction("下载原消息附件", () => downloadIssueAttachments({ issueId }))}
+          >
+            {busyAction === "下载原消息附件" ? "下载中..." : "下载原消息附件"}
+          </button>
+          <button
+            key="base"
+            type="button"
+            style={buttonStyle}
+            disabled={busyAction !== null}
+            onClick={() => void runIssueAction("写入多维表格", () => writeIssueBaseRecord({ issueId, record: { "处理状态": "已从 Issue 操作区同步" } }))}
+          >
+            {busyAction === "写入多维表格" ? "写入中..." : "写入多维表格"}
+          </button>
+          <button
+            key="lookup"
+            type="button"
+            style={buttonStyle}
+            disabled={busyAction !== null}
+            onClick={() => void runIssueAction("查询提出人", () => lookupIssueRequester({ issueId }))}
+          >
+            {busyAction === "查询提出人" ? "查询中..." : "查询提出人"}
+          </button>
+        </div>
+        {actionNotice ? (
+          <div
+            key="action-notice"
+            style={{
+              ...(actionNotice.tone === "success" ? successBoxStyle : subtleBoxStyle),
+              marginTop: "10px",
+              color: actionNotice.tone === "error" ? "var(--destructive)" : undefined,
+            }}
+          >
+            {actionNotice.text}
+          </div>
+        ) : null}
+        <div key="detail" style={{ ...helpStyle, marginTop: "8px" }}>
+          这些操作会走插件受控动作和能力中心开关；当前为测试模式时只生成命令，不会真实发飞书。
+        </div>
+      </div>
+
+      {data.attachments?.length ? (
+        <div key="attachments" style={subtleBoxStyle}>
+          <div key="title" style={{ fontWeight: 800, marginBottom: "8px" }}>原消息附件</div>
+          <div key="list" style={{ display: "grid", gap: "6px" }}>
+            {data.attachments.map((attachment) => (
+              <div key={`${attachment.resourceType}:${attachment.resourceKey}`} style={{ ...helpStyle, overflowWrap: "anywhere" }}>
+                {issueSourceDisplayName(attachment.filename) ?? "未命名飞书附件"}（{attachment.resourceType}）
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {recentComments.length > 0 ? (
+        <div key="comment-actions" style={subtleBoxStyle}>
+          <div key="title" style={{ fontWeight: 800, marginBottom: "8px" }}>评论快捷操作</div>
+          <div key="list" style={{ display: "grid", gap: "10px" }}>
+            {recentComments.map((comment, index) => (
+              <div
+                key={comment.id}
+                style={{
+                  display: "grid",
+                  gap: "8px",
+                  paddingTop: index === 0 ? 0 : "10px",
+                  borderTop: index === 0 ? "0" : "1px solid var(--border)",
+                }}
+              >
+                <div
+                  key="body"
+                  style={{
+                    color: "var(--foreground)",
+                    lineHeight: 1.5,
+                    overflowWrap: "anywhere",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {comment.body}
+                </div>
+                <div key="meta" style={{ ...rowStyle, justifyContent: "space-between" }}>
+                  <span key="time" style={helpStyle}>{comment.createdAt ? `评论时间：${comment.createdAt}` : "Paperclip 评论"}</span>
+                  <button
+                    key="reply"
+                    type="button"
+                    style={buttonStyle}
+                    disabled={busyAction !== null}
+                    onClick={() => void runIssueAction("回复评论到飞书", () => replyIssueCommentToFeishu({ issueId, commentId: comment.id }))}
+                  >
+                    {busyAction === "回复评论到飞书" ? "回复中..." : "回复这条评论到飞书"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div key="issue-links" style={{ display: "grid", gap: "8px" }}>
+        {data.issueUrl ? (
+          <a key="issue-url" href={data.issueUrl} target="_blank" rel="noreferrer" style={linkButtonStyle}>
+            打开 Paperclip 任务链接
+          </a>
+        ) : null}
+        {hasDebugInfo ? (
+          <details key="debug" style={helpStyle}>
+            <summary style={{ cursor: "pointer", fontWeight: 700 }}>排障信息（工程师）</summary>
+            <div key="debug-items" style={{ display: "grid", gap: "4px", marginTop: "8px", overflowWrap: "anywhere" }}>
+              {data.chatId ? <span key="chat">会话 ID：{data.chatId}</span> : null}
+              {data.rootMessageId ? <span key="root">根消息：{data.rootMessageId}</span> : null}
+              {data.threadId ? <span key="thread">线程：{data.threadId}</span> : null}
+              {data.lastRunId ? <span key="run">最近执行：{data.lastRunId}{data.lastRunStatus ? `（${data.lastRunStatus}）` : ""}</span> : null}
+              {data.updatedAt ? <span key="updated">最近更新：{data.updatedAt}</span> : null}
+            </div>
+          </details>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   buildBaseRecord,
   buildSessionKey,
   describeRouteEntry,
+  describeRouteForHumans,
+  feishuContextLines,
   extractInboundMessage,
   isLikelyInternalRouteName,
+  renderTemplate,
   resolveRoute,
 } from "../src/routing.js";
 import {
@@ -13,7 +19,9 @@ import {
   buildReplyMessageArgs,
   buildResourceDownloadArgs,
   buildSendMessageArgs,
+  resolveLarkCliBin,
 } from "../src/lark-cli.js";
+import { planEventSubscribers } from "../src/subscriber-plan.js";
 import type { FeishuConnectorConfig } from "../src/types.js";
 
 describe("Feishu routing helpers", () => {
@@ -82,6 +90,29 @@ describe("Feishu routing helpers", () => {
     ]);
   });
 
+  it("keeps Feishu chat names from raw events for human-readable Paperclip context", () => {
+    const message = extractInboundMessage({
+      event_id: "evt-chat-name",
+      message_id: "om_chat_name",
+      chat_id: "oc_it_ai",
+      chat_name: "IT-AI应用组",
+      sender_name: "张腾",
+      text: "@小思 总结一下最近讨论",
+    });
+    const route = {
+      id: "keyword-xiaosi",
+      name: "chat-team-to-liu",
+      matchType: "keyword" as const,
+      keyword: "小思",
+      targetAgentName: "张工 - AI总工",
+      companyRef: "CMP",
+    };
+
+    expect(message.chatName).toBe("IT-AI应用组");
+    expect(feishuContextLines(message, route)).toContain("飞书会话：IT-AI应用组（oc_it_ai）");
+    expect(feishuContextLines(message, route)).toContain("接收入口：包含「小思」的飞书消息 → 张工 - AI总工");
+  });
+
   it("routes by chat before default and builds stable session keys", () => {
     const config: FeishuConnectorConfig = {
       routes: [
@@ -136,6 +167,49 @@ describe("Feishu routing helpers", () => {
     expect(describeRouteEntry({ ...route, name: "老板资讯群入口" })).toBe("老板资讯群入口");
   });
 
+  it("provides a stable human route label for Paperclip issue context", () => {
+    const route = {
+      id: "chat-team-to-liu",
+      name: "chat-team-to-liu",
+      matchType: "keyword" as const,
+      keyword: "小思",
+      targetAgentName: "张工 - AI总工",
+    };
+
+    expect(describeRouteForHumans(route)).toBe("包含「小思」的飞书消息 → 张工 - AI总工");
+    expect(describeRouteForHumans({ ...route, name: "IT-AI 应用组入口" })).toBe("IT-AI 应用组入口");
+  });
+
+  it("plans only one event subscriber per underlying Feishu app while retaining all entry bot choices", () => {
+    const config: FeishuConnectorConfig = {
+      connections: [
+        { id: "ruisi", name: "锐思", profileName: "same-profile", appId: "cli_same", enabled: true },
+        { id: "xiaorui", name: "小锐", profileName: "same-profile", appId: "cli_same", enabled: true },
+        { id: "finder", name: "找人专家", profileName: "finder-profile", appId: "cli_finder", enabled: true },
+      ],
+      routes: [
+        { id: "route-ruisi", connectionId: "ruisi", matchType: "keyword", keyword: "锐思", companyId: "company-1" },
+        { id: "route-xiaorui", connectionId: "xiaorui", matchType: "keyword", keyword: "小锐", companyId: "company-1" },
+        { id: "route-finder", connectionId: "finder", matchType: "keyword", keyword: "找人", companyId: "company-1" },
+      ],
+    };
+
+    expect(planEventSubscribers(config)).toEqual([
+      expect.objectContaining({
+        key: "app:cli_same",
+        primaryConnectionId: "ruisi",
+        profileName: "same-profile",
+        connectionIds: ["ruisi", "xiaorui"],
+      }),
+      expect.objectContaining({
+        key: "app:cli_finder",
+        primaryConnectionId: "finder",
+        profileName: "finder-profile",
+        connectionIds: ["finder"],
+      }),
+    ]);
+  });
+
   it("renders Base records from templates", () => {
     const message = extractInboundMessage({
       message_id: "om_1",
@@ -167,6 +241,47 @@ describe("Feishu routing helpers", () => {
       Message: "Need more global AI news",
       Issue: "issue-1",
     });
+  });
+
+  it("renders route entry and Feishu conversation in templates and default Base records", () => {
+    const message = extractInboundMessage({
+      message_id: "om_it_ai",
+      chat_id: "oc_it_ai",
+      chat_name: "IT-AI应用组",
+      sender_open_id: "ou_boss",
+      sender_name: "张腾",
+      text: "@小思 总结本周聊天内容",
+    });
+    const route = {
+      id: "keyword-xiaosi-to-zhanggong",
+      name: "keyword-xiaosi-to-zhanggong",
+      matchType: "keyword" as const,
+      keyword: "小思",
+      targetAgentName: "张工 - AI总工",
+      companyRef: "CMP",
+    };
+
+    expect(renderTemplate("{{route.entry}} / {{route.trigger}} / {{message.chat_name}}", {
+      message,
+      route,
+    })).toBe("包含「小思」的飞书消息 → 张工 - AI总工 / 包含「小思」的飞书消息 / IT-AI应用组");
+
+    const record = buildBaseRecord({
+      id: "sink-default",
+      baseToken: "base",
+      tableIdOrName: "tbl",
+    }, {
+      message,
+      route,
+      issueId: "issue-1",
+      issueTitle: "总结本周聊天内容",
+      agentName: "张工 - AI总工",
+    });
+
+    expect(record["飞书会话"]).toBe("IT-AI应用组");
+    expect(record["接收入口"]).toBe("包含「小思」的飞书消息 → 张工 - AI总工");
+    expect(record["飞书 chat_id"]).toBe("oc_it_ai");
+    expect(record["飞书 message_id"]).toBe("om_it_ai");
   });
 
   it("builds lark-cli commands with profile and explicit identity", () => {
@@ -240,5 +355,28 @@ describe("Feishu routing helpers", () => {
       "--message-ids",
       "om_1",
     ]);
+  });
+
+  it("resolves lark-cli from explicit config, env, bundled dependency, then PATH", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "paperclip-feishu-cli-resolve-"));
+    const moduleDir = path.join(root, "node_modules", "@paperclipai", "plugin-feishu-connector", "dist");
+    const bundledCli = path.join(root, "node_modules", "@larksuite", "cli", "scripts", "run.js");
+    await mkdir(moduleDir, { recursive: true });
+    await mkdir(path.dirname(bundledCli), { recursive: true });
+    await writeFile(bundledCli, "#!/usr/bin/env node\n", "utf8");
+
+    expect(resolveLarkCliBin({
+      configuredBin: "/custom/lark-cli",
+      env: { PAPERCLIP_FEISHU_LARK_CLI_BIN: "/env/lark-cli" },
+      moduleDir,
+    })).toBe("/custom/lark-cli");
+    expect(resolveLarkCliBin({
+      env: { PAPERCLIP_FEISHU_LARK_CLI_BIN: "/env/lark-cli" },
+      moduleDir,
+    })).toBe("/env/lark-cli");
+    expect(resolveLarkCliBin({ env: {}, moduleDir })).toBe(bundledCli);
+
+    const emptyRoot = await mkdtemp(path.join(os.tmpdir(), "paperclip-feishu-cli-empty-"));
+    expect(resolveLarkCliBin({ env: {}, moduleDir: path.join(emptyRoot, "dist") })).toBe("lark-cli");
   });
 });

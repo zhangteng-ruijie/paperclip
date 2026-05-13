@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   ACTION_KEYS,
+  API_ROUTE_KEYS,
   DATA_KEYS,
   DEFAULT_ACK_TEMPLATE,
   DEFAULT_COMPLETION_TEMPLATE,
@@ -22,6 +23,7 @@ import {
   LEGACY_COMPLETION_TEMPLATE,
   PLUGIN_ID,
   TOOL_NAMES,
+  WEBHOOK_KEYS,
 } from "./constants.js";
 import {
   getEnabledConnections,
@@ -29,6 +31,15 @@ import {
   resolveBaseSink,
   resolveConnection,
 } from "./config.js";
+import {
+  buildFeishuCapabilityCenter,
+  FEISHU_CAPABILITY_DEFINITIONS,
+  findFeishuCapabilityDefinition,
+  isFeishuCapabilityEnabled,
+  isLarkCliCommandAllowedForCapability,
+  type FeishuCapabilityContext,
+  type LarkCliSchemaDiscovery,
+} from "./capabilities.js";
 import {
   buildBaseRecord,
   buildSessionKey,
@@ -40,21 +51,26 @@ import {
   describeRouteTrigger,
   extractInboundMessage,
   renderTemplate,
+  resolveMatchingRoutes,
   resolveRoute,
 } from "./routing.js";
 import {
+  buildAuthStatusArgs,
+  buildFetchDocArgs,
   buildRecordUpsertArgs,
   buildMessageGetArgs,
   buildProfileAddArgs,
   buildReplyMessageArgs,
   buildResourceDownloadArgs,
   buildSendMessageArgs,
+  resolveLarkCliBin,
   runLarkCli,
   startLarkConfigInit,
   startLarkEventSubscriber,
   type LarkConfigInitSession,
   type LarkEventSubscriber,
 } from "./lark-cli.js";
+import { planEventSubscribers, routeListeningConnections } from "./subscriber-plan.js";
 import type {
   FeishuBaseSinkConfig,
   FeishuConnectionConfig,
@@ -100,6 +116,33 @@ type ProductionMonitor = {
   lastEventAt: string | null;
   lastWatchdogAt: string | null;
   checks: ProductionMonitorCheck[];
+};
+
+type RetryQueueItem = {
+  id: string;
+  kind: "feishu_reply" | "base_record";
+  status: "queued" | "succeeded" | "failed";
+  connectionId: string;
+  profileName: string;
+  args: string[];
+  reason: string;
+  routeId?: string;
+  issueId?: string;
+  messageId?: string;
+  attemptCount: number;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+  nextAttemptAt?: string;
+  lastAttemptAt?: string;
+};
+
+type RetryQueueSummary = {
+  totalCount: number;
+  pendingCount: number;
+  failedCount: number;
+  succeededCount: number;
+  items: RetryQueueItem[];
 };
 
 type ProfileAvailability = {
@@ -164,16 +207,58 @@ const FINAL_REPLY_FULL_TEXT_LIMIT = 1_800;
 const FINAL_REPLY_SUMMARY_LIMIT = 900;
 const RUN_FALLBACK_DELAY_MS = process.env.VITEST ? 10 : 5_000;
 const CONNECTION_BOT_INFO_TTL_MS = 10 * 60 * 1000;
+const EVENT_LOG_ENTITY_TYPE = "feishu_event_logs";
+const CONFLICT_ENTITY_TYPE = "feishu_conflicts";
+const RETRY_QUEUE_NAMESPACE = "feishu-retry-queue";
+const RETRY_QUEUE_STATE_KEY = "items";
+const RETRY_QUEUE_LIMIT = 100;
+const DB_TABLES = {
+  bots: "feishu_bots",
+  entries: "feishu_entries",
+  capabilities: "feishu_capabilities",
+  entryCapabilities: "feishu_entry_capabilities",
+  agentCapabilities: "feishu_agent_capabilities",
+  conversations: "feishu_conversations",
+  messageRoutes: "feishu_message_routes",
+  eventLogs: "feishu_event_logs",
+  conflicts: "feishu_conflicts",
+  permissionChecks: "feishu_permission_checks",
+} as const;
 
 function record(level: RecentRecord["level"], message: string, data?: unknown): void {
-  recentRecords.unshift({ level, message, data, createdAt: new Date().toISOString() });
+  const entry = { level, message, data, createdAt: new Date().toISOString() };
+  recentRecords.unshift(entry);
   if (recentRecords.length > 50) recentRecords.length = 50;
+  const ctx = currentContext;
+  if (ctx) {
+    void persistRecentRecord(ctx, entry);
+  }
 }
 
 function textPreview(text?: string | null, maxLength = 120): string {
   const normalized = (text ?? "").replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function isLikelyFeishuInternalId(value?: string | null): boolean {
+  const trimmed = (value ?? "").trim();
+  return /^(oc|ou|om|on|od|of|cli)_[a-z0-9][a-z0-9_-]{5,}$/i.test(trimmed);
+}
+
+function displayNameOrNull(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || isLikelyFeishuInternalId(trimmed)) return null;
+  return trimmed;
+}
+
+function legacyIssueLine(description: string | null | undefined, label: string): string | null {
+  const line = description?.split(/\r?\n/g).find((item) => item.trim().startsWith(`${label}：`));
+  const raw = line?.trim().slice(label.length + 1).trim();
+  if (!raw) return null;
+  const unescaped = raw.replace(/\\_/g, "_");
+  const withoutParentheticalId = unescaped.replace(/[（(]\s*(oc|ou|om|on|od|of|cli)_[^)）]+\s*[)）]\s*$/i, "").trim();
+  return displayNameOrNull(withoutParentheticalId);
 }
 
 function inboundMessageDiagnostics(
@@ -260,18 +345,6 @@ function activeSubscriberEntries(): Array<[string, LarkEventSubscriber]> {
   return [...subscribers.entries()].filter(([, subscriber]) => subscriber.isRunning());
 }
 
-function routeListeningConnections(config: FeishuConnectorConfig): FeishuConnectionConfig[] {
-  const connections = getEnabledConnections(config);
-  const connectionById = new Map(connections.map((connection) => [connection.id, connection]));
-  const defaultConnection = connections[0] ?? null;
-  const connectionIds = new Set<string>();
-  for (const route of enabledRoutes(config)) {
-    const connectionId = route.connectionId ?? defaultConnection?.id;
-    if (connectionId && connectionById.has(connectionId)) connectionIds.add(connectionId);
-  }
-  return connections.filter((connection) => connectionIds.has(connection.id));
-}
-
 function recentRecordsSince(minutes: number): RecentRecord[] {
   const since = Date.now() - minutes * 60 * 1000;
   return recentRecords.filter((item) => Date.parse(item.createdAt) >= since);
@@ -290,14 +363,17 @@ function buildProductionMonitor(
     ? connections.length - missingProfileConnections.length
     : undefined;
   const listeningConnections = routeListeningConnections(config);
+  const subscriberPlans = planEventSubscribers(config);
   const routes = enabledRoutes(config);
   const activeEntries = activeSubscriberEntries();
-  const expectedSubscriberCount = config.enableEventSubscriber === true ? listeningConnections.length : 0;
+  const expectedSubscriberCount = config.enableEventSubscriber === true ? subscriberPlans.length : 0;
   const activeSubscriberIds = new Set(activeEntries.map(([connectionId]) => connectionId));
-  const expectedSubscriberIds = new Set(listeningConnections.map((connection) => connection.id));
+  const expectedSubscriberIds = new Set(subscriberPlans.map((plan) => plan.primaryConnectionId));
   const activeSubscriberCount = activeEntries.filter(([connectionId]) => expectedSubscriberIds.has(connectionId)).length;
   const missingSubscriberConnectionIds = config.enableEventSubscriber === true
-    ? listeningConnections.filter((connection) => !activeSubscriberIds.has(connection.id)).map((connection) => connection.id)
+    ? subscriberPlans
+      .filter((plan) => !activeSubscriberIds.has(plan.primaryConnectionId))
+      .flatMap((plan) => plan.connectionIds)
     : [];
   const recent = recentRecordsSince(30).filter((item) => {
     const connectionId = typeof (item.data as Record<string, unknown> | undefined)?.connectionId === "string"
@@ -308,7 +384,7 @@ function buildProductionMonitor(
   const recentErrorCount = recent.filter((item) => item.level === "error").length;
   const recentWarningCount = recent.filter((item) => item.level === "warning").length;
   const recentConflictCount = recent.filter((item) =>
-    item.message.includes("其他飞书机器人") || item.message.includes("抢答")
+    item.message.includes("其他飞书机器人") || item.message.includes("抢答") || item.message.includes("命中多个入口")
   ).length;
   const lastEventAt = recentRecords[0]?.createdAt ?? null;
   const checks: ProductionMonitorCheck[] = [
@@ -411,6 +487,491 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function assertSqlIdentifier(value: string, label: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`Unsafe SQL ${label}: ${value}`);
+  }
+  return value;
+}
+
+function dbTable(namespace: string, table: string): string {
+  return `${assertSqlIdentifier(namespace, "namespace")}.${assertSqlIdentifier(table, "table")}`;
+}
+
+async function executePluginDb(ctx: PluginContext, sql: string, params: unknown[] = []): Promise<void> {
+  if (!ctx.db.namespace) return;
+  try {
+    await ctx.db.execute(sql, params);
+  } catch (error) {
+    ctx.logger.warn?.("Feishu connector database write failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function jsonParam(value: unknown): string {
+  return JSON.stringify(value ?? null);
+}
+
+function durableRecordId(prefix: string, entry: RecentRecord): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({
+      createdAt: entry.createdAt,
+      level: entry.level,
+      message: entry.message,
+      data: entry.data ?? null,
+    }))
+    .digest("hex")
+    .slice(0, 32);
+  return `${prefix}-${hash}`;
+}
+
+function conflictRecordId(entry: RecentRecord): string {
+  const data = asRecord(entry.data);
+  const messageId = readString(data?.messageId);
+  const selectedRouteId = readString(data?.selectedRouteId, data?.routeId);
+  if (messageId) {
+    return `conflict-${crypto
+      .createHash("sha256")
+      .update([messageId, selectedRouteId ?? "", entry.message].join(":"))
+      .digest("hex")
+      .slice(0, 32)}`;
+  }
+  return durableRecordId("conflict", entry);
+}
+
+function isConflictRecord(entry: RecentRecord): boolean {
+  const data = asRecord(entry.data);
+  return data?.conflictDetected === true
+    || entry.message.includes("同一条飞书消息命中多个入口")
+    || entry.message.includes("其他飞书机器人")
+    || entry.message.includes("抢答");
+}
+
+async function persistRecentRecord(ctx: PluginContext, entry: RecentRecord): Promise<void> {
+  const data = asRecord(entry.data);
+  const eventId = durableRecordId("event", entry);
+  await ctx.entities.upsert({
+    entityType: EVENT_LOG_ENTITY_TYPE,
+    scopeKind: "instance",
+    externalId: eventId,
+    title: entry.message,
+    status: entry.level,
+    data: {
+      level: entry.level,
+      message: entry.message,
+      createdAt: entry.createdAt,
+      payload: entry.data ?? null,
+      connectionId: readString(data?.connectionId) ?? null,
+      routeId: readString(data?.routeId, data?.selectedRouteId) ?? null,
+      issueId: readString(data?.issueId) ?? null,
+      messageId: readString(data?.messageId) ?? null,
+    },
+  });
+  await executePluginDb(
+    ctx,
+    `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.eventLogs)}
+      (id, level, message, connection_id, entry_id, issue_id, feishu_message_id, payload, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::timestamptz)
+     ON CONFLICT (id) DO UPDATE SET
+       level = EXCLUDED.level,
+       message = EXCLUDED.message,
+       connection_id = EXCLUDED.connection_id,
+       entry_id = EXCLUDED.entry_id,
+       issue_id = EXCLUDED.issue_id,
+       feishu_message_id = EXCLUDED.feishu_message_id,
+       payload = EXCLUDED.payload`,
+    [
+      eventId,
+      entry.level,
+      entry.message,
+      readString(data?.connectionId) ?? null,
+      readString(data?.routeId, data?.selectedRouteId) ?? null,
+      readString(data?.issueId) ?? null,
+      readString(data?.messageId) ?? null,
+      jsonParam(entry.data ?? {}),
+      entry.createdAt,
+    ],
+  );
+
+  if (!isConflictRecord(entry)) return;
+  const conflictId = conflictRecordId(entry);
+  await ctx.entities.upsert({
+    entityType: CONFLICT_ENTITY_TYPE,
+    scopeKind: "instance",
+    externalId: conflictId,
+    title: entry.message,
+    status: "open",
+    data: {
+      level: entry.level,
+      message: entry.message,
+      createdAt: entry.createdAt,
+      payload: entry.data ?? null,
+      connectionId: readString(data?.connectionId) ?? null,
+      selectedRouteId: readString(data?.selectedRouteId, data?.routeId) ?? null,
+      messageId: readString(data?.messageId) ?? null,
+    },
+  });
+  await executePluginDb(
+    ctx,
+    `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.conflicts)}
+      (id, status, conflict_type, connection_id, selected_entry_id, feishu_message_id, summary, payload, created_at, updated_at)
+     VALUES ($1, 'open', $2, $3, $4, $5, $6, $7::jsonb, $8::timestamptz, $8::timestamptz)
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       connection_id = EXCLUDED.connection_id,
+       selected_entry_id = EXCLUDED.selected_entry_id,
+       feishu_message_id = EXCLUDED.feishu_message_id,
+       summary = EXCLUDED.summary,
+       payload = EXCLUDED.payload,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      conflictId,
+      readString(data?.reason) ?? "routing",
+      readString(data?.connectionId) ?? null,
+      readString(data?.selectedRouteId, data?.routeId) ?? null,
+      readString(data?.messageId) ?? null,
+      entry.message,
+      jsonParam(entry.data ?? {}),
+      entry.createdAt,
+    ],
+  );
+}
+
+async function syncConfigToDatabase(ctx: PluginContext, config: FeishuConnectorConfig): Promise<void> {
+  if (!ctx.db.namespace) return;
+  for (const connection of config.connections ?? []) {
+    await executePluginDb(
+      ctx,
+      `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.bots)}
+        (id, display_name, app_id, profile_name, enabled, bot_aliases, raw_config, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, now())
+       ON CONFLICT (id) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         app_id = EXCLUDED.app_id,
+         profile_name = EXCLUDED.profile_name,
+         enabled = EXCLUDED.enabled,
+         bot_aliases = EXCLUDED.bot_aliases,
+         raw_config = EXCLUDED.raw_config,
+         updated_at = now()`,
+      [
+        connection.id,
+        connection.name?.trim() || connection.profileName,
+        connection.appId ?? null,
+        connection.profileName,
+        connection.enabled !== false,
+        jsonParam(connection.botAliases ?? []),
+        jsonParam(connection),
+      ],
+    );
+  }
+
+  for (const route of config.routes ?? []) {
+    await executePluginDb(
+      ctx,
+      `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.entries)}
+        (id, display_name, connection_id, enabled, match_type, trigger_label, company_ref, company_id, project_id,
+         target_agent_id, target_agent_name, reply_mode, base_sink_id, priority, raw_config, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, now())
+       ON CONFLICT (id) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         connection_id = EXCLUDED.connection_id,
+         enabled = EXCLUDED.enabled,
+         match_type = EXCLUDED.match_type,
+         trigger_label = EXCLUDED.trigger_label,
+         company_ref = EXCLUDED.company_ref,
+         company_id = EXCLUDED.company_id,
+         project_id = EXCLUDED.project_id,
+         target_agent_id = EXCLUDED.target_agent_id,
+         target_agent_name = EXCLUDED.target_agent_name,
+         reply_mode = EXCLUDED.reply_mode,
+         base_sink_id = EXCLUDED.base_sink_id,
+         priority = EXCLUDED.priority,
+         raw_config = EXCLUDED.raw_config,
+         updated_at = now()`,
+      [
+        route.id,
+        describeRouteEntry(route),
+        route.connectionId ?? null,
+        route.enabled !== false,
+        route.matchType,
+        describeRouteTrigger(route),
+        route.companyRef ?? null,
+        route.companyId ?? null,
+        route.projectId ?? null,
+        route.targetAgentId ?? null,
+        route.targetAgentName ?? route.targetAgentRef ?? null,
+        route.replyMode ?? "thread",
+        route.baseSinkId ?? null,
+        route.priority ?? 10,
+        jsonParam(route),
+      ],
+    );
+  }
+
+  for (const definition of FEISHU_CAPABILITY_DEFINITIONS) {
+    await executePluginDb(
+      ctx,
+      `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.capabilities)}
+        (key, title, group_name, implemented, enabled, risk, tool_name, lark_cli_commands, recommended_scopes, raw_definition, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET
+         title = EXCLUDED.title,
+         group_name = EXCLUDED.group_name,
+         implemented = EXCLUDED.implemented,
+         enabled = EXCLUDED.enabled,
+         risk = EXCLUDED.risk,
+         tool_name = EXCLUDED.tool_name,
+         lark_cli_commands = EXCLUDED.lark_cli_commands,
+         recommended_scopes = EXCLUDED.recommended_scopes,
+         raw_definition = EXCLUDED.raw_definition,
+         updated_at = now()`,
+      [
+        definition.key,
+        definition.title,
+        definition.group,
+        definition.implemented,
+        isFeishuCapabilityEnabled(config, definition),
+        definition.risk,
+        definition.toolName ?? null,
+        jsonParam(definition.larkCliCommands),
+        jsonParam(definition.recommendedScopes),
+        jsonParam(definition),
+      ],
+    );
+  }
+
+  for (const capability of config.capabilities ?? []) {
+    if (capability.scope === "entry" && capability.routeId) {
+      await executePluginDb(
+        ctx,
+        `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.entryCapabilities)}
+          (entry_id, capability_key, enabled, raw_config, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, now())
+         ON CONFLICT (entry_id, capability_key) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           raw_config = EXCLUDED.raw_config,
+           updated_at = now()`,
+        [capability.routeId, capability.key, capability.enabled === true, jsonParam(capability)],
+      );
+    }
+    if (capability.scope === "agent" && capability.agentId) {
+      await executePluginDb(
+        ctx,
+        `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.agentCapabilities)}
+          (agent_id, capability_key, enabled, raw_config, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, now())
+         ON CONFLICT (agent_id, capability_key) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           raw_config = EXCLUDED.raw_config,
+           updated_at = now()`,
+        [capability.agentId, capability.key, capability.enabled === true, jsonParam(capability)],
+      );
+    }
+  }
+}
+
+function retryQueueScope() {
+  return {
+    scopeKind: "instance" as const,
+    namespace: RETRY_QUEUE_NAMESPACE,
+    stateKey: RETRY_QUEUE_STATE_KEY,
+  };
+}
+
+function retryQueueId(kind: RetryQueueItem["kind"], connectionId: string, args: string[]): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update([kind, connectionId, ...args].join("\0"))
+    .digest("hex")
+    .slice(0, 32);
+  return `retry-${hash}`;
+}
+
+function normalizeRetryQueueItem(value: unknown): RetryQueueItem | null {
+  const recordValue = asRecord(value);
+  if (!recordValue) return null;
+  const kind = recordValue.kind === "base_record" ? "base_record" : recordValue.kind === "feishu_reply" ? "feishu_reply" : null;
+  const status = recordValue.status === "succeeded" || recordValue.status === "failed" || recordValue.status === "queued"
+    ? recordValue.status
+    : null;
+  const id = readString(recordValue.id);
+  const connectionId = readString(recordValue.connectionId);
+  const profileName = readString(recordValue.profileName);
+  const reason = readString(recordValue.reason) ?? "飞书投递失败";
+  const args = Array.isArray(recordValue.args)
+    ? recordValue.args.filter((item): item is string => typeof item === "string")
+    : [];
+  if (!kind || !status || !id || !connectionId || !profileName || args.length === 0) return null;
+  const createdAt = readString(recordValue.createdAt) ?? new Date().toISOString();
+  const updatedAt = readString(recordValue.updatedAt) ?? createdAt;
+  return {
+    id,
+    kind,
+    status,
+    connectionId,
+    profileName,
+    args,
+    reason,
+    routeId: readString(recordValue.routeId),
+    issueId: readString(recordValue.issueId),
+    messageId: readString(recordValue.messageId),
+    attemptCount: typeof recordValue.attemptCount === "number" ? Math.max(0, recordValue.attemptCount) : 0,
+    lastError: readString(recordValue.lastError),
+    createdAt,
+    updatedAt,
+    nextAttemptAt: readString(recordValue.nextAttemptAt),
+    lastAttemptAt: readString(recordValue.lastAttemptAt),
+  };
+}
+
+async function readRetryQueue(ctx: PluginContext): Promise<RetryQueueItem[]> {
+  const stored = await ctx.state.get(retryQueueScope());
+  const rawItems = Array.isArray(stored)
+    ? stored
+    : Array.isArray(asRecord(stored)?.items)
+      ? asRecord(stored)!.items as unknown[]
+      : [];
+  return rawItems
+    .map((item) => normalizeRetryQueueItem(item))
+    .filter((item): item is RetryQueueItem => item !== null);
+}
+
+async function writeRetryQueue(ctx: PluginContext, items: RetryQueueItem[]): Promise<void> {
+  await ctx.state.set(retryQueueScope(), {
+    items: items
+      .slice()
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, RETRY_QUEUE_LIMIT),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function retryQueueSummary(items: RetryQueueItem[]): RetryQueueSummary {
+  const pendingItems = items.filter((item) => item.status === "queued");
+  return {
+    totalCount: items.length,
+    pendingCount: pendingItems.length,
+    failedCount: items.filter((item) => item.status === "failed").length,
+    succeededCount: items.filter((item) => item.status === "succeeded").length,
+    items: items
+      .slice()
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, 20),
+  };
+}
+
+function larkResultError(result: LarkCliResult | null): string {
+  if (!result) return "没有可投递的飞书目标。";
+  return result.stderr.trim() || result.stdout.trim() || `lark-cli exit ${result.code ?? "unknown"}`;
+}
+
+async function enqueueRetryItem(
+  ctx: PluginContext,
+  input: {
+    kind: RetryQueueItem["kind"];
+    connection: FeishuConnectionConfig;
+    args: string[];
+    reason: string;
+    result: LarkCliResult | null;
+    routeId?: string;
+    issueId?: string;
+    messageId?: string;
+  },
+): Promise<RetryQueueItem> {
+  const now = new Date().toISOString();
+  const id = retryQueueId(input.kind, input.connection.id, input.args);
+  const items = await readRetryQueue(ctx);
+  const existing = items.find((item) => item.id === id);
+  const nextItem: RetryQueueItem = {
+    ...existing,
+    id,
+    kind: input.kind,
+    status: "queued",
+    connectionId: input.connection.id,
+    profileName: input.connection.profileName,
+    args: input.args,
+    reason: input.reason,
+    routeId: input.routeId ?? existing?.routeId,
+    issueId: input.issueId ?? existing?.issueId,
+    messageId: input.messageId ?? existing?.messageId,
+    attemptCount: existing?.attemptCount ?? 0,
+    lastError: larkResultError(input.result),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    nextAttemptAt: now,
+  };
+  await writeRetryQueue(ctx, [nextItem, ...items.filter((item) => item.id !== id)]);
+  record("warning", "已加入飞书重试队列", {
+    id,
+    kind: input.kind,
+    connectionId: input.connection.id,
+    profileName: input.connection.profileName,
+    routeId: nextItem.routeId,
+    issueId: nextItem.issueId,
+    messageId: nextItem.messageId,
+    error: nextItem.lastError,
+  });
+  return nextItem;
+}
+
+async function retryFailedDeliveries(
+  ctx: PluginContext,
+  config: FeishuConnectorConfig,
+): Promise<{
+  ok: boolean;
+  attemptedCount: number;
+  successCount: number;
+  failedCount: number;
+  retryQueue: RetryQueueSummary;
+  results: Array<{ id: string; ok: boolean; error?: string }>;
+}> {
+  const items = await readRetryQueue(ctx);
+  const retryable = items.filter((item) => item.status === "queued" || item.status === "failed");
+  const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+  const byId = new Map(items.map((item) => [item.id, item]));
+
+  for (const item of retryable) {
+    const attemptedAt = new Date().toISOString();
+    const result = await runLarkCli({
+      bin: larkCliBin(config),
+      args: item.args,
+      dryRun: false,
+    });
+    const updated: RetryQueueItem = {
+      ...item,
+      status: result.ok ? "succeeded" : "failed",
+      attemptCount: item.attemptCount + 1,
+      lastError: result.ok ? undefined : larkResultError(result),
+      lastAttemptAt: attemptedAt,
+      updatedAt: attemptedAt,
+      nextAttemptAt: result.ok ? undefined : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    };
+    byId.set(item.id, updated);
+    results.push({ id: item.id, ok: result.ok, error: updated.lastError });
+    record(result.ok ? "info" : "error", "飞书重试队列已执行一条投递", {
+      id: item.id,
+      kind: item.kind,
+      ok: result.ok,
+      error: updated.lastError,
+    });
+  }
+
+  const nextItems = [...byId.values()];
+  await writeRetryQueue(ctx, nextItems);
+  const summary = retryQueueSummary(nextItems);
+  const failedCount = results.filter((item) => !item.ok).length;
+  return {
+    ok: failedCount === 0,
+    attemptedCount: results.length,
+    successCount: results.length - failedCount,
+    failedCount,
+    retryQueue: summary,
+    results,
+  };
+}
+
 function readString(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
@@ -420,6 +981,10 @@ function readString(...values: unknown[]): string | undefined {
 
 function truncateText(value: string, maxLength = 700): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function larkCliBin(config: FeishuConnectorConfig): string {
+  return resolveLarkCliBin({ configuredBin: config.larkCliBin });
 }
 
 function summarizeLarkResult(result: LarkCliResult | null): Record<string, unknown> {
@@ -442,10 +1007,131 @@ function larkIdempotencyKey(prefix: string, ...parts: string[]): string {
 
 function parseJsonRecord(value: string): Record<string, unknown> | null {
   try {
-    return asRecord(JSON.parse(value));
+    return asRecord(JSON.parse(stripAnsiText(value)));
   } catch {
     return null;
   }
+}
+
+function stripAnsiText(value: string): string {
+  return value.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function webhookPayload(input: { parsedBody?: unknown; rawBody: string }): Record<string, unknown> {
+  return asRecord(input.parsedBody) ?? parseJsonRecord(input.rawBody) ?? {};
+}
+
+function webhookHeader(headers: Record<string, string | string[]>, name: string): string | undefined {
+  const needle = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== needle) continue;
+    return Array.isArray(value) ? value[0] : value;
+  }
+  return undefined;
+}
+
+function timingSafeStringEquals(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function decryptFeishuWebhookPayload(encrypt: string, encryptKey: string): Record<string, unknown> {
+  const encrypted = Buffer.from(encrypt, "base64");
+  if (encrypted.length <= 16) throw new Error("飞书加密事件格式不正确：密文太短。");
+  const key = crypto.createHash("sha256").update(encryptKey).digest();
+  const iv = encrypted.subarray(0, 16);
+  const ciphertext = encrypted.subarray(16);
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  const parsed = parseJsonRecord(decrypted);
+  if (!parsed) throw new Error("飞书加密事件解密后不是有效 JSON。");
+  return parsed;
+}
+
+function verifyFeishuWebhookSignature(input: {
+  headers: Record<string, string | string[]>;
+  rawBody: string;
+  parsedBody?: unknown;
+}, encryptKey: string, requireSignature: boolean): boolean {
+  const signature = readString(webhookHeader(input.headers, "x-lark-signature"));
+  const timestamp = readString(
+    webhookHeader(input.headers, "x-lark-request-timestamp"),
+    webhookHeader(input.headers, "x-lark-timestamp"),
+  );
+  const nonce = readString(
+    webhookHeader(input.headers, "x-lark-request-nonce"),
+    webhookHeader(input.headers, "x-lark-nonce"),
+  );
+  if (!signature || !timestamp || !nonce) {
+    if (requireSignature) throw new Error("飞书公网回调缺少签名头，已拒绝。");
+    return false;
+  }
+  const rawBody = input.rawBody || JSON.stringify(input.parsedBody ?? {});
+  const digest = crypto.createHash("sha256").update(`${timestamp}${nonce}${encryptKey}${rawBody}`).digest("hex");
+  if (!timingSafeStringEquals(signature, digest)) throw new Error("飞书公网回调签名校验失败。");
+  return true;
+}
+
+async function resolveWebhookSecret(ctx: PluginContext, secretRef: string | undefined, label: string): Promise<string | undefined> {
+  if (!secretRef) return undefined;
+  try {
+    return await ctx.secrets.resolve(secretRef);
+  } catch (error) {
+    throw new Error(`无法读取${label} Secret Ref「${secretRef}」：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function prepareWebhookPayload(
+  ctx: PluginContext,
+  config: FeishuConnectorConfig,
+  input: { headers: Record<string, string | string[]>; parsedBody?: unknown; rawBody: string },
+): Promise<{ payload: Record<string, unknown>; encrypted: boolean; tokenVerified: boolean; signatureVerified: boolean }> {
+  const basePayload = webhookPayload(input);
+  const encrypt = readString(basePayload.encrypt);
+  const encryptKey = await resolveWebhookSecret(ctx, config.eventEncryptKeyRef, "飞书事件 Encrypt Key");
+  const signatureVerified = encryptKey
+    ? verifyFeishuWebhookSignature(input, encryptKey, config.eventRequireSignature === true)
+    : false;
+  if (config.eventRequireSignature === true && !encryptKey) {
+    throw new Error("已开启公网回调签名校验，但没有配置 Encrypt Key Secret Ref。");
+  }
+  if (encrypt && !encryptKey) {
+    throw new Error("收到飞书加密事件，但没有配置 Encrypt Key Secret Ref，无法解密。");
+  }
+  const payload = encrypt && encryptKey ? decryptFeishuWebhookPayload(encrypt, encryptKey) : basePayload;
+  const verificationToken = await resolveWebhookSecret(ctx, config.eventVerificationTokenRef, "飞书事件 Verification Token");
+  const actualToken = readString(payload.token, asRecord(payload.header)?.token);
+  if (!verificationToken) {
+    return { payload, encrypted: Boolean(encrypt), tokenVerified: false, signatureVerified };
+  }
+  if (!actualToken || !timingSafeStringEquals(actualToken, verificationToken)) {
+    throw new Error("飞书事件 Verification Token 校验失败。");
+  }
+  return { payload, encrypted: Boolean(encrypt), tokenVerified: true, signatureVerified };
+}
+
+function webhookAppId(payload: Record<string, unknown>): string | undefined {
+  const header = asRecord(payload.header) ?? {};
+  const event = asRecord(payload.event) ?? {};
+  return readString(
+    header.app_id,
+    header.appId,
+    payload.app_id,
+    payload.appId,
+    event.app_id,
+    event.appId,
+  );
+}
+
+function webhookConnectionIds(config: FeishuConnectorConfig, payload: Record<string, unknown>): string[] {
+  const enabled = getEnabledConnections(config);
+  const appId = webhookAppId(payload);
+  if (appId) {
+    const matching = enabled.filter((connection) => connection.appId === appId);
+    if (matching.length > 0) return matching.map((connection) => connection.id);
+  }
+  return enabled.map((connection) => connection.id);
 }
 
 function firstMgetMessage(result: LarkCliResult): Record<string, unknown> | null {
@@ -463,7 +1149,7 @@ async function enrichChatName(
   if (message.chatName || !message.chatId || config.dryRunCli === true) return message;
 
   const result = await runLarkCli({
-    bin: config.larkCliBin ?? "lark-cli",
+    bin: larkCliBin(config),
     args: [
       "--profile",
       connection.profileName,
@@ -506,7 +1192,7 @@ async function enrichInboundMessage(
   let enrichedMessage = message;
   if (!alreadyHasCoreFields) {
     const result = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: buildMessageGetArgs({
         profileName: connection.profileName,
         identity: "bot",
@@ -569,7 +1255,7 @@ async function getConfig(ctx: PluginContext): Promise<FeishuConnectorConfig> {
 
 async function listLarkProfiles(config: FeishuConnectorConfig): Promise<{ profiles: ProfileRow[]; error?: string }> {
   const result = await runLarkCli({
-    bin: config.larkCliBin ?? "lark-cli",
+    bin: larkCliBin(config),
     args: ["profile", "list"],
     timeoutMs: 10_000,
   });
@@ -612,7 +1298,7 @@ async function readBotInfo(
   profileName: string,
 ): Promise<Pick<ProfileRow, "botName" | "botOpenId" | "botAvatarUrl" | "botActivateStatus">> {
   const result = await runLarkCli({
-    bin: config.larkCliBin ?? "lark-cli",
+    bin: larkCliBin(config),
     args: [
       "--profile",
       profileName,
@@ -680,7 +1366,7 @@ async function searchFeishuDirectory(
 
   if (chatQuery) {
     const chatResult = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: [
         "--profile",
         profileName,
@@ -706,7 +1392,7 @@ async function searchFeishuDirectory(
 
   if (userQuery) {
     const userResult = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: [
         "--profile",
         profileName,
@@ -832,6 +1518,23 @@ function dedupKey(message: FeishuInboundMessage, connectionId: string): string {
   return `${connectionId}:${eventOrMessage}`;
 }
 
+function mergeProcessedMessageIds(existing: FeishuSessionData | null | undefined, messageId: string): string[] {
+  const seen = new Set<string>();
+  for (const id of existing?.processedMessageIds ?? []) {
+    if (id) seen.add(id);
+  }
+  if (existing?.rootMessageId) seen.add(existing.rootMessageId);
+  if (existing?.lastMessageId) seen.add(existing.lastMessageId);
+  if (messageId) seen.add(messageId);
+  return [...seen].slice(-50);
+}
+
+function sessionAlreadyHandledMessage(existing: FeishuSessionData | null | undefined, message: FeishuInboundMessage): boolean {
+  if (!existing?.paperclipIssueId || !message.messageId) return false;
+  if (existing.processedMessageIds?.includes(message.messageId)) return true;
+  return existing.lastMessageId === message.messageId || existing.rootMessageId === message.messageId;
+}
+
 async function markDeduped(ctx: PluginContext, message: FeishuInboundMessage, connectionId: string): Promise<boolean> {
   const stateKey = dedupKey(message, connectionId);
   const existing = await ctx.state.get({
@@ -938,6 +1641,15 @@ async function resolveRouteFromSession(
 ): Promise<ResolvedRouteConfig> {
   const configuredRoute = (config.routes ?? []).find((route) => route.id === session.routeId);
   if (configuredRoute) return resolveRouteForRun(ctx, configuredRoute);
+  for (const route of config.routes ?? []) {
+    if (route.enabled === false) continue;
+    if (route.connectionId && route.connectionId !== session.connectionId) continue;
+    const resolved = await resolveRouteForRun(ctx, route).catch(() => null);
+    if (!resolved) continue;
+    if (resolved.companyId !== companyId) continue;
+    if (session.paperclipAgentId && resolved.targetAgentId !== session.paperclipAgentId) continue;
+    return resolved;
+  }
   return {
     id: session.routeId ?? "existing-feishu-session",
     matchType: "default",
@@ -945,6 +1657,23 @@ async function resolveRouteFromSession(
     companyId,
     targetAgentId: session.paperclipAgentId,
     replyMode: "thread",
+  };
+}
+
+function messageFromSession(session: FeishuSessionData): FeishuInboundMessage {
+  return {
+    connectionId: session.connectionId,
+    messageId: session.rootMessageId ?? session.lastMessageId,
+    chatId: session.chatId,
+    chatName: session.chatName,
+    threadId: session.threadId,
+    rootMessageId: session.rootMessageId,
+    senderOpenId: session.requesterOpenId,
+    senderName: session.requesterName,
+    text: session.paperclipIssueTitle ?? "Paperclip 任务",
+    mentions: [],
+    attachments: session.attachments ?? [],
+    raw: {},
   };
 }
 
@@ -1120,6 +1849,38 @@ async function mentionTargetMismatch(
   };
 }
 
+function connectionMatchesMention(connection: FeishuConnectionConfig, message: FeishuInboundMessage): boolean {
+  const targets = inboundMentionTargets(message);
+  if (!targets.hasExplicitMention) return false;
+  if (connection.appId && targets.appIds.has(connection.appId)) return true;
+
+  const names = new Set<string>();
+  const addName = (value?: string | null) => {
+    if (isTechnicalProfileName(value)) return;
+    const normalized = normalizeMentionValue(value);
+    if (normalized) names.add(normalized);
+  };
+  addName(connection.name);
+  for (const alias of connectionBotAliases(connection)) addName(alias);
+  return [...targets.names].some((name) => names.has(name));
+}
+
+function selectInboundConnection(
+  config: FeishuConnectorConfig,
+  message: FeishuInboundMessage,
+  candidates: FeishuConnectionConfig[],
+): FeishuConnectionConfig | null {
+  if (candidates.length === 0) return null;
+  const mentioned = candidates.find((connection) => connectionMatchesMention(connection, message));
+  if (mentioned) return mentioned;
+
+  const routeMatches = candidates
+    .map((connection) => ({ connection, route: resolveRoute(config, message, connection.id) }))
+    .filter((item): item is { connection: FeishuConnectionConfig; route: FeishuRouteConfig } => !!item.route)
+    .sort((a, b) => (b.route.priority ?? 0) - (a.route.priority ?? 0));
+  return routeMatches[0]?.connection ?? candidates[0] ?? null;
+}
+
 function buildPaperclipIssueUrl(
   config: FeishuConnectorConfig,
   route: ResolvedRouteConfig,
@@ -1148,6 +1909,71 @@ async function upsertSession(
     status: "active",
     data: data as unknown as Record<string, unknown>,
   });
+  if (data.chatId) {
+    await executePluginDb(
+      ctx,
+      `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.conversations)}
+        (chat_id, connection_id, name, conversation_type, last_active_at, raw_data, updated_at)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, $6::jsonb, now())
+       ON CONFLICT (chat_id) DO UPDATE SET
+         connection_id = EXCLUDED.connection_id,
+         name = COALESCE(EXCLUDED.name, feishu_conversations.name),
+         conversation_type = EXCLUDED.conversation_type,
+         last_active_at = EXCLUDED.last_active_at,
+         raw_data = EXCLUDED.raw_data,
+         updated_at = now()`,
+      [
+        data.chatId,
+        data.connectionId,
+        data.chatName ?? null,
+        data.chatId.startsWith("oc_") ? "chat" : "unknown",
+        data.updatedAt,
+        jsonParam(data),
+      ],
+    );
+  }
+  await executePluginDb(
+    ctx,
+    `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.messageRoutes)}
+      (id, connection_id, entry_id, company_id, issue_id, issue_identifier, agent_id, chat_id,
+       requester_open_id, requester_name, message_id, root_message_id, thread_id, reply_mode, session_key, raw_session, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::timestamptz)
+     ON CONFLICT (id) DO UPDATE SET
+       connection_id = EXCLUDED.connection_id,
+       entry_id = EXCLUDED.entry_id,
+       company_id = EXCLUDED.company_id,
+       issue_id = EXCLUDED.issue_id,
+       issue_identifier = EXCLUDED.issue_identifier,
+       agent_id = EXCLUDED.agent_id,
+       chat_id = EXCLUDED.chat_id,
+       requester_open_id = EXCLUDED.requester_open_id,
+       requester_name = EXCLUDED.requester_name,
+       message_id = EXCLUDED.message_id,
+       root_message_id = EXCLUDED.root_message_id,
+       thread_id = EXCLUDED.thread_id,
+       reply_mode = EXCLUDED.reply_mode,
+       raw_session = EXCLUDED.raw_session,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      data.sessionKey,
+      data.connectionId,
+      data.routeId ?? null,
+      companyId,
+      data.paperclipIssueId,
+      data.paperclipIssueIdentifier ?? null,
+      data.paperclipAgentId ?? null,
+      data.chatId ?? null,
+      data.requesterOpenId ?? null,
+      data.requesterName ?? null,
+      data.lastMessageId,
+      data.rootMessageId ?? null,
+      data.threadId ?? null,
+      data.replyMode ?? "thread",
+      data.sessionKey,
+      jsonParam(data),
+      data.updatedAt,
+    ],
+  );
 }
 
 async function writeBaseRecord(
@@ -1165,21 +1991,32 @@ async function writeBaseRecord(
     recordJson,
   });
   const result = await runLarkCli({
-    bin: config.larkCliBin ?? "lark-cli",
+    bin: larkCliBin(config),
     args,
     dryRun: config.dryRunCli === true,
   });
   record(result.ok ? "info" : "error", "多维表格写入已执行", { ok: result.ok, dryRun: result.dryRun });
+  if (!result.ok && result.dryRun !== true) {
+    await enqueueRetryItem(ctx, {
+      kind: "base_record",
+      connection,
+      args,
+      reason: "多维表格写入失败",
+      result,
+    });
+  }
   return result;
 }
 
 async function replyToFeishu(
+  ctx: PluginContext,
   config: FeishuConnectorConfig,
   connection: FeishuConnectionConfig,
   message: FeishuInboundMessage,
   text: string,
   idempotencyKey: string,
   replyInThread: boolean,
+  retryContext: { routeId?: string; issueId?: string; reason?: string } = {},
 ): Promise<LarkCliResult | null> {
   if (!message.messageId && !message.chatId) return null;
   const args = message.messageId
@@ -1199,11 +2036,23 @@ async function replyToFeishu(
       idempotencyKey,
     });
   const result = await runLarkCli({
-    bin: config.larkCliBin ?? "lark-cli",
+    bin: larkCliBin(config),
     args,
     dryRun: config.dryRunCli === true,
   });
   record(result.ok ? "info" : "error", "飞书回复已执行", summarizeLarkResult(result));
+  if (!result.ok && result.dryRun !== true) {
+    await enqueueRetryItem(ctx, {
+      kind: "feishu_reply",
+      connection,
+      args,
+      reason: retryContext.reason ?? "飞书消息回复失败",
+      result,
+      routeId: retryContext.routeId,
+      issueId: retryContext.issueId,
+      messageId: message.messageId,
+    });
+  }
   return result;
 }
 
@@ -1309,7 +2158,7 @@ async function attachFeishuResources(
           output: filename,
         });
         const download = await runLarkCli({
-          bin: config.larkCliBin ?? "lark-cli",
+          bin: larkCliBin(config),
           args,
           timeoutMs: 120_000,
           cwd: tempDir,
@@ -1377,6 +2226,52 @@ function attachmentPromptLines(results: AttachedResourceResult[]): string[] {
     }
   }
   return lines;
+}
+
+function buildFeishuCardContent(input: {
+  title: string;
+  summary: string;
+  actions?: Array<{ text?: unknown; url?: unknown }>;
+}): string {
+  const actions = (input.actions ?? [])
+    .filter((action) => typeof action.text === "string" && action.text.trim() && typeof action.url === "string" && action.url.trim())
+    .map((action) => ({
+      tag: "button",
+      text: {
+        tag: "plain_text",
+        content: String(action.text).trim(),
+      },
+      url: String(action.url).trim(),
+      type: "default",
+    }));
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: "div",
+      text: {
+        tag: "lark_md",
+        content: input.summary,
+      },
+    },
+  ];
+  if (actions.length > 0) {
+    elements.push({
+      tag: "action",
+      actions,
+    });
+  }
+  return JSON.stringify({
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: "plain_text",
+        content: input.title,
+      },
+      template: "blue",
+    },
+    elements,
+  });
 }
 
 function issueStatusLabel(status?: string | null): string {
@@ -1697,12 +2592,14 @@ async function replyOnAgentSessionTerminal(
   });
   const suffix = event.eventType === "done" || !event.message ? "" : `\n\n${event.message}`;
   const result = await replyToFeishu(
+    ctx,
     config,
     connection,
     message,
     `${text}${suffix}`,
     replyKey,
     (route.replyMode ?? "thread") === "thread",
+    { routeId: route.id, issueId: session.paperclipIssueId, reason: "智能体完成回复失败" },
   );
   if (!result?.ok) {
     await ctx.state.delete({
@@ -1774,14 +2671,27 @@ function scheduleTerminalFallbackReply(
 async function handleInboundMessage(
   ctx: PluginContext,
   raw: unknown,
-  options: { connectionId?: string; configOverride?: FeishuConnectorConfig } = {},
+  options: { connectionId?: string; connectionIds?: string[]; configOverride?: FeishuConnectorConfig } = {},
 ): Promise<Record<string, unknown>> {
   const config = options.configOverride ?? await getConfig(ctx);
   let message = extractInboundMessage(raw, options.connectionId);
-  const connection = resolveConnection(config, message.connectionId ?? options.connectionId);
+  const enabledConnections = getEnabledConnections(config);
+  const connectionById = new Map(enabledConnections.map((connection) => [connection.id, connection]));
+  const candidateIds = [...new Set(
+    (options.connectionIds && options.connectionIds.length > 0
+      ? options.connectionIds
+      : [message.connectionId ?? options.connectionId])
+      .filter((connectionId): connectionId is string => typeof connectionId === "string" && connectionId.length > 0),
+  )];
+  const candidateConnections = candidateIds
+    .map((connectionId) => connectionById.get(connectionId))
+    .filter((connection): connection is FeishuConnectionConfig => !!connection);
+  let connection = selectInboundConnection(config, message, candidateConnections)
+    ?? resolveConnection(config, message.connectionId ?? options.connectionId);
   if (!connection) {
     throw new Error("还没有配置可用的飞书机器人连接。请先在「飞书机器人账号」里添加一项，并保持启用。");
   }
+  message = { ...message, connectionId: connection.id };
   lastInboundEventAt = new Date().toISOString();
   record("info", "收到飞书消息事件", inboundMessageDiagnostics(message, connection));
 
@@ -1811,6 +2721,14 @@ async function handleInboundMessage(
   }
 
   message = await enrichInboundMessage(config, connection, message);
+  const enrichedConnection = selectInboundConnection(config, message, candidateConnections);
+  if (enrichedConnection && enrichedConnection.id !== connection.id) {
+    connection = enrichedConnection;
+    message = { ...message, connectionId: connection.id };
+    record("info", "飞书消息已根据 @ 对象或入口规则切换到对应机器人", inboundMessageDiagnostics(message, connection, {
+      candidateConnectionIds: candidateConnections.map((candidate) => candidate.id),
+    }));
+  }
   if (isCurrentBotMessage(connection, message)) {
     record("info", "飞书消息来自当前机器人自身，已忽略以避免自触发", inboundMessageDiagnostics(message, connection, {
       reason: "self_bot_message",
@@ -1849,14 +2767,45 @@ async function handleInboundMessage(
     };
   }
 
+  const sessionKey = buildSessionKey(message, connection.id);
+  const existingBySessionKey = await findSessionByKey(ctx, sessionKey);
+  if (sessionAlreadyHandledMessage(existingBySessionKey?.data, message)) {
+    await markDeduped(ctx, message, connection.id);
+    record("info", "已通过持久消息映射忽略重复的飞书消息", inboundMessageDiagnostics(message, connection, {
+      issueId: existingBySessionKey?.data.paperclipIssueId,
+      routeId: existingBySessionKey?.data.routeId,
+      dedupeSource: "message_route",
+    }));
+    return {
+      ok: true,
+      duplicate: true,
+      persistedDuplicate: true,
+      messageId: message.messageId,
+      issueId: existingBySessionKey?.data.paperclipIssueId,
+    };
+  }
+
   const duplicate = await markDeduped(ctx, message, connection.id);
   if (duplicate) {
     record("info", "已忽略重复的飞书消息", inboundMessageDiagnostics(message, connection));
     return { ok: true, duplicate: true, messageId: message.messageId };
   }
 
-  const sessionKey = buildSessionKey(message, connection.id);
-  const matchedRoute = resolveRoute(config, message, connection.id);
+  const matchingRoutes = resolveMatchingRoutes(config, message, connection.id);
+  const matchedRoute = matchingRoutes[0] ?? null;
+  if (matchedRoute && matchingRoutes.length > 1) {
+    const skippedRoutes = matchingRoutes.slice(1);
+    record("warning", "同一条飞书消息命中多个入口，已只执行最高优先级入口", inboundMessageDiagnostics(message, connection, {
+      selectedRouteId: matchedRoute.id,
+      selectedRouteName: describeRouteEntry(matchedRoute),
+      skippedRoutes: skippedRoutes.map((route) => ({
+        routeId: route.id,
+        routeName: describeRouteEntry(route),
+        priority: route.priority ?? 0,
+      })),
+      conflictDetected: true,
+    }));
+  }
   if (matchedRoute) {
     record("info", "飞书消息已命中业务入口", inboundMessageDiagnostics(message, connection, {
       routeId: matchedRoute.id,
@@ -1870,12 +2819,14 @@ async function handleInboundMessage(
   const directReply = matchedRoute ? quickReplyText(config, message) : null;
   if (matchedRoute && directReply !== null && (matchedRoute.replyMode ?? "thread") !== "none") {
     const result = await replyToFeishu(
+      ctx,
       config,
       connection,
       message,
       directReply,
       larkIdempotencyKey("quick", message.messageId),
       (matchedRoute.replyMode ?? "thread") === "thread",
+      { routeId: matchedRoute.id, reason: "快捷测试回复失败" },
     );
     record(result?.ok ? "info" : "error", "已执行飞书快捷测试回复", {
       routeId: matchedRoute.id,
@@ -1899,7 +2850,7 @@ async function handleInboundMessage(
     route = await resolveRouteForRun(ctx, matchedRoute);
     existingSession = await findSession(ctx, route.companyId, sessionKey);
   } else {
-    const existingByKey = await findSessionByKey(ctx, sessionKey);
+    const existingByKey = existingBySessionKey ?? await findSessionByKey(ctx, sessionKey);
     if (!existingByKey) {
       record("warning", "飞书消息已收到，但没有命中任何业务入口", inboundMessageDiagnostics(message, connection, {
         activeRouteCount: enabledRoutes(config).length,
@@ -1949,18 +2900,23 @@ async function handleInboundMessage(
     sessionKey,
     routeId: route.id,
     chatId: message.chatId,
+    chatName: message.chatName ?? existingSession?.chatName,
     rootMessageId: message.rootMessageId ?? message.messageId,
     threadId: message.threadId,
     requesterOpenId: message.senderOpenId,
+    requesterName: message.senderName,
+    attachments: message.attachments.length > 0 ? message.attachments : existingSession?.attachments,
     paperclipIssueId: issueId,
     paperclipIssueIdentifier: issueIdentifier ?? undefined,
     paperclipIssueTitle: existingSession?.paperclipIssueTitle ?? issueTitle,
     paperclipIssueUrl: paperclipIssueUrl ?? undefined,
     paperclipAgentId: route.targetAgentId,
     paperclipAgentSessionId: existingSession?.paperclipAgentSessionId,
+    replyMode: route.replyMode ?? "thread",
     lastCompletionReplyKey: existingSession?.lastCompletionReplyKey,
     createdAt: existingSession?.createdAt ?? new Date().toISOString(),
     lastMessageId: message.messageId,
+    processedMessageIds: mergeProcessedMessageIds(existingSession, message.messageId),
     updatedAt: new Date().toISOString(),
   };
 
@@ -1979,12 +2935,14 @@ async function handleInboundMessage(
       estimatedDuration: DEFAULT_ESTIMATED_DURATION_LABEL,
     });
     ackResult = await replyToFeishu(
+      ctx,
       config,
       connection,
       message,
       ackText,
       larkIdempotencyKey("ack", message.messageId),
       (route.replyMode ?? "thread") === "thread",
+      { routeId: route.id, issueId, reason: "首次受理回执失败" },
     );
     record(ackResult?.ok ? "info" : "error", "已向飞书发送任务受理回执", {
       routeId: route.id,
@@ -2032,6 +2990,11 @@ async function handleInboundMessage(
       `Paperclip 任务：${issueRef}`,
       `飞书来源：${describeFeishuConversation(message, route)}`,
       `飞书入口：${describeRouteEntry(route)}`,
+      `可用飞书工具：${enabledFeishuToolNames(config, {
+        connectionId: connection.id,
+        routeId: route.id,
+        agentId: route.targetAgentId,
+      }).join(", ") || "无"}`,
       `飞书消息：${message.messageId}`,
       message.rootMessageId && message.rootMessageId !== message.messageId
         ? `飞书话题根消息：${message.rootMessageId}`
@@ -2187,9 +3150,11 @@ async function reconcileConfiguredSubscribers(
   options: { restartAll?: boolean; reason?: string } = {},
 ): Promise<void> {
   const listeningConnections = routeListeningConnections(config);
-  const listeningConnectionIds = new Set(listeningConnections.map((connection) => connection.id));
+  const connectionById = new Map(listeningConnections.map((connection) => [connection.id, connection]));
+  const subscriberPlans = planEventSubscribers(config);
+  const primarySubscriberIds = new Set(subscriberPlans.map((plan) => plan.primaryConnectionId));
   for (const [connectionId, subscriber] of subscribers.entries()) {
-    if (options.restartAll || config.enableEventSubscriber !== true || !listeningConnectionIds.has(connectionId)) {
+    if (options.restartAll || config.enableEventSubscriber !== true || !primarySubscriberIds.has(connectionId)) {
       subscriber.stop();
       subscribers.delete(connectionId);
       record("info", "已停止飞书消息监听", {
@@ -2200,13 +3165,16 @@ async function reconcileConfiguredSubscribers(
     }
   }
   if (!config.enableEventSubscriber) return;
-  for (const connection of listeningConnections) {
-    const existing = subscribers.get(connection.id);
+  for (const plan of subscriberPlans) {
+    const connection = connectionById.get(plan.primaryConnectionId);
+    if (!connection) continue;
+    const existing = subscribers.get(plan.primaryConnectionId);
     if (existing?.isRunning()) continue;
     if (existing) {
-      subscribers.delete(connection.id);
+      subscribers.delete(plan.primaryConnectionId);
       record("warning", "飞书消息监听已退出，正在重新启动", {
-        connectionId: connection.id,
+        connectionId: plan.primaryConnectionId,
+        connectionIds: plan.connectionIds,
         profileName: existing.profileName,
         pid: existing.child.pid ?? null,
         exitCode: existing.child.exitCode,
@@ -2214,28 +3182,32 @@ async function reconcileConfiguredSubscribers(
       });
     }
     const subscriber = startLarkEventSubscriber({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       profileName: connection.profileName,
       eventTypes: config.eventTypes,
       onEvent: (event) => {
-        void handleInboundMessage(ctx, event, { connectionId: connection.id }).catch((error) => {
-          ctx.logger.error("处理飞书消息失败", { connectionId: connection.id, error: String(error) });
-          record("error", "处理飞书消息失败", { connectionId: connection.id, error: String(error) });
+        void handleInboundMessage(ctx, event, {
+          connectionId: plan.primaryConnectionId,
+          connectionIds: plan.connectionIds,
+        }).catch((error) => {
+          ctx.logger.error("处理飞书消息失败", { connectionId: plan.primaryConnectionId, connectionIds: plan.connectionIds, error: String(error) });
+          record("error", "处理飞书消息失败", { connectionId: plan.primaryConnectionId, connectionIds: plan.connectionIds, error: String(error) });
         });
       },
       onError: (error) => {
         if (error.message.includes("not found handler")) return;
-        ctx.logger.warn("飞书消息监听出现提醒", { connectionId: connection.id, error: error.message });
-        record("warning", "飞书消息监听出现提醒", { connectionId: connection.id, error: error.message });
+        ctx.logger.warn("飞书消息监听出现提醒", { connectionId: plan.primaryConnectionId, connectionIds: plan.connectionIds, error: error.message });
+        record("warning", "飞书消息监听出现提醒", { connectionId: plan.primaryConnectionId, connectionIds: plan.connectionIds, error: error.message });
       },
       onClose: (code, signal) => {
-        if (subscribers.get(connection.id) === subscriber) {
-          subscribers.delete(connection.id);
+        if (subscribers.get(plan.primaryConnectionId) === subscriber) {
+          subscribers.delete(plan.primaryConnectionId);
         }
         const expectedStop = signal === "SIGTERM" || signal === "SIGINT";
         if (!expectedStop) {
           record("warning", "飞书消息监听已退出", {
-            connectionId: connection.id,
+            connectionId: plan.primaryConnectionId,
+            connectionIds: plan.connectionIds,
             profileName: connection.profileName,
             exitCode: code,
             signalCode: signal,
@@ -2243,8 +3215,13 @@ async function reconcileConfiguredSubscribers(
         }
       },
     });
-    subscribers.set(connection.id, subscriber);
-    record("info", "已启动飞书消息监听", { connectionId: connection.id, profileName: connection.profileName });
+    subscribers.set(plan.primaryConnectionId, subscriber);
+    record("info", "已启动飞书消息监听", {
+      connectionId: plan.primaryConnectionId,
+      connectionIds: plan.connectionIds,
+      profileName: connection.profileName,
+      subscriberKey: plan.key,
+    });
   }
 }
 
@@ -2278,6 +3255,9 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
   ctx.data.register(DATA_KEYS.status, async () => {
     const config = await getConfig(ctx);
     await reconcileConfiguredSubscribers(ctx, config, { reason: "status-check" });
+    const subscriberPlanByPrimaryId = new Map(
+      planEventSubscribers(config).map((plan) => [plan.primaryConnectionId, plan]),
+    );
     const shouldCheckProfiles = config.dryRunCli !== true && getEnabledConnections(config).length > 0;
     const profilesResult = shouldCheckProfiles
       ? await listLarkProfiles(config).catch((error) => ({
@@ -2291,6 +3271,7 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
         : new Set(profilesResult.profiles.map((profile) => profile.name)),
       profileReadError: profilesResult.error ?? null,
     });
+    const retryQueue = retryQueueSummary(await readRetryQueue(ctx));
     return {
       pluginId: PLUGIN_ID,
       dryRunCli: config.dryRunCli === true,
@@ -2303,12 +3284,14 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
       baseSinkCount: (config.baseSinks ?? []).filter((sink) => sink.enabled !== false).length,
       subscribers: [...subscribers.entries()].map(([connectionId, subscriber]) => ({
         connectionId,
+        connectionIds: subscriberPlanByPrimaryId.get(connectionId)?.connectionIds ?? [connectionId],
         profileName: subscriber.profileName,
         pid: subscriber.child.pid ?? null,
         killed: subscriber.child.killed,
         running: subscriber.isRunning(),
       })),
       monitor,
+      retryQueue,
       lastInboundEventAt,
       recentRecords,
     };
@@ -2339,6 +3322,90 @@ async function registerDataHandlers(ctx: PluginContext): Promise<void> {
     return await listLarkProfiles(config);
   });
 
+  ctx.data.register(DATA_KEYS.capabilities, async () => {
+    const config = await getConfig(ctx);
+    const schemaDiscovery = await discoverLarkCliSchema(config).catch((error) => ({
+      checked: false,
+      reason: `lark-cli schema 扫描失败：${String(error)}`,
+      services: [],
+      commands: [],
+      errors: [String(error)],
+      summary: "lark-cli schema 扫描失败。",
+    }) satisfies LarkCliSchemaDiscovery);
+    return buildFeishuCapabilityCenter(config, schemaDiscovery);
+  });
+
+  ctx.data.register(DATA_KEYS.issueSource, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    if (!issueId) return { found: false, reason: "missing_issue_id" };
+    const sessionRecord = await findSessionByIssueId(ctx, issueId);
+    if (!sessionRecord) return { found: false, sourceKind: null, issueId };
+
+    const config = await getConfig(ctx);
+    const session = sessionRecord.data;
+    const connection = resolveConnection(config, session.connectionId);
+    const route = await resolveRouteFromSession(ctx, config, session, sessionRecord.companyId);
+    const message = messageFromSession(session);
+    const issue = await ctx.issues.get(session.paperclipIssueId, route.companyId).catch(() => null);
+    const comments = await ctx.issues.listComments(session.paperclipIssueId, route.companyId).catch(() => []);
+    const conversationName = displayNameOrNull(session.chatName)
+      ?? displayNameOrNull(route.chatName)
+      ?? legacyIssueLine(issue?.description, "飞书会话");
+    const requesterName = displayNameOrNull(session.requesterName)
+      ?? legacyIssueLine(issue?.description, "提出人");
+    const profilesResult = await listLarkProfiles(config).catch(() => null);
+    const connectionProfile = profilesResult?.profiles.find((profile) => profile.name === connection?.profileName);
+    const botName = displayNameOrNull(connectionProfile?.botName)
+      ?? displayNameOrNull(connection?.botAliases?.[0])
+      ?? displayNameOrNull(connection?.name)
+      ?? "飞书机器人";
+    return {
+      found: true,
+      sourceKind: "feishu",
+      issueId: session.paperclipIssueId,
+      issueIdentifier: issue?.identifier ?? session.paperclipIssueIdentifier ?? null,
+      issueTitle: issue?.title ?? session.paperclipIssueTitle ?? null,
+      entryName: describeRouteEntry(route),
+      routeId: route.id,
+      botName,
+      connectionId: session.connectionId,
+      profileName: connection?.profileName ?? null,
+      conversationName,
+      conversationLabel: conversationName ?? (session.chatId ? "飞书会话（名称待同步）" : null),
+      chatId: session.chatId ?? null,
+      requesterName,
+      requesterOpenId: session.requesterOpenId ?? null,
+      messageId: session.lastMessageId,
+      rootMessageId: session.rootMessageId ?? null,
+      threadId: session.threadId ?? null,
+      replyMode: route.replyMode ?? "thread",
+      issueUrl: session.paperclipIssueUrl ?? null,
+      lastRunId: session.lastRunId ?? null,
+      lastRunStatus: session.lastRunStatus ?? null,
+      updatedAt: session.updatedAt,
+      attachmentCount: session.attachments?.length ?? 0,
+      attachments: (session.attachments ?? []).map((attachment) => ({
+        filename: attachment.filename ?? null,
+        resourceKey: attachment.resourceKey,
+        resourceType: attachment.resourceType,
+      })),
+      recentComments: comments
+        .slice()
+        .sort((a, b) => commentTime(b) - commentTime(a))
+        .slice(0, 5)
+        .map((comment) => {
+          const body = normalizeCommentBody(comment.body) ?? "";
+          return {
+            id: comment.id,
+            body: truncateText(body, 500),
+            authorAgentId: comment.authorAgentId ?? null,
+            authorUserId: comment.authorUserId ?? null,
+            createdAt: comment.createdAt instanceof Date ? comment.createdAt.toISOString() : comment.createdAt ? String(comment.createdAt) : null,
+          };
+        }),
+    };
+  });
+
   ctx.data.register(DATA_KEYS.directory, async (params) => {
     const config = await getConfig(ctx);
     return await searchFeishuDirectory(config, params);
@@ -2356,7 +3423,7 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     if (existing?.isRunning()) existing.stop();
 
     const session = startLarkConfigInit({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       profileName,
       brand,
       lang: "zh",
@@ -2433,7 +3500,7 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     if (!profileName) throw new Error("请先选择要补充用户授权的飞书机器人。");
 
     const result = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: [
         "--profile",
         profileName,
@@ -2494,7 +3561,7 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     }
 
     const result = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: [
         "--profile",
         profileName,
@@ -2527,35 +3594,55 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     const config = await getConfig(ctx);
     const profileName = readString(params.profileName);
     const appId = readString(params.appId);
-    const appSecret = readString(params.appSecret);
+    const inlineAppSecret = readString(params.appSecret);
+    const appSecretRef = readString(params.appSecretRef, params.secretRef);
     const brand = readString(params.brand) === "lark" ? "lark" : "feishu";
     if (!profileName) throw new Error("请填写飞书应用配置名称。");
     if (!appId) throw new Error("请填写飞书 App ID。");
-    if (!appSecret) throw new Error("请填写飞书 App Secret。");
+    const appSecret = inlineAppSecret ?? (appSecretRef ? await ctx.secrets.resolve(appSecretRef) : undefined);
+    if (!appSecret) throw new Error("请填写飞书 App Secret，或提供 Paperclip Secret Ref。");
 
     const result = await runLarkCli({
-      bin: config.larkCliBin ?? "lark-cli",
+      bin: larkCliBin(config),
       args: buildProfileAddArgs({ name: profileName, appId, brand }),
       stdin: `${appSecret}\n`,
       timeoutMs: 30_000,
     });
+    const redactSecret = (value: string): string => value.split(appSecret).join("[redacted]");
     if (!result.ok) {
-      const detail = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
+      const detail = redactSecret([result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n"));
       record("error", "飞书应用绑定失败", {
         profileName,
         appId,
-        result: summarizeLarkResult(result),
+        appSecretRefUsed: Boolean(appSecretRef && !inlineAppSecret),
+        result: {
+          ok: result.ok,
+          dryRun: result.dryRun === true,
+          code: result.code,
+          stderr: result.stderr.trim() ? truncateText(redactSecret(result.stderr.trim())) : undefined,
+          stdout: result.stdout.trim() ? truncateText(redactSecret(result.stdout.trim())) : undefined,
+        },
       });
       throw new Error(detail || "lark-cli profile add 执行失败");
     }
 
-    record("info", "飞书应用已绑定到当前运行环境", { profileName, appId, brand });
+    record("info", "飞书应用已绑定到当前运行环境", {
+      profileName,
+      appId,
+      brand,
+      appSecretRefUsed: Boolean(appSecretRef && !inlineAppSecret),
+    });
     return {
       ok: true,
       profileName,
       appId,
       brand,
-      result: summarizeLarkResult(result),
+      appSecretRefUsed: Boolean(appSecretRef && !inlineAppSecret),
+      result: {
+        ok: result.ok,
+        dryRun: result.dryRun === true,
+        code: result.code,
+      },
     };
   });
 
@@ -2598,9 +3685,145 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
     };
   });
 
+  ctx.actions.register(ACTION_KEYS.checkPermissions, async (params) => {
+    const config = await getConfig(ctx);
+    const result = await checkFeishuPermissions(config, params);
+    await persistPermissionCheck(ctx, config, params, result);
+    return result;
+  });
+
+  ctx.actions.register(ACTION_KEYS.retryFailedDeliveries, async () => {
+    const config = await getConfig(ctx);
+    return await retryFailedDeliveries(ctx, config);
+  });
+
+  ctx.actions.register(ACTION_KEYS.replyIssueSourceThread, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    const text = readString(params.text, params.markdown);
+    if (!issueId) throw new Error("请先打开一个由飞书创建的 Paperclip Issue。");
+    if (!text) throw new Error("请填写要回复到飞书原线程的内容。");
+    return await replyOriginalFeishuThreadFromTool(
+      ctx,
+      readString(params.runId) ?? `issue-action-${issueId}`,
+      { issueId, replyMode: params.replyMode },
+      text,
+      "issue-action",
+      "已回复原飞书会话",
+      "reply_source_thread",
+    );
+  });
+
+  ctx.actions.register(ACTION_KEYS.downloadIssueAttachments, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    if (!issueId) throw new Error("请先打开一个由飞书创建的 Paperclip Issue。");
+    return await downloadFeishuAttachmentsFromTool(ctx, readString(params.runId) ?? `issue-action-${issueId}`, { issueId });
+  });
+
+  ctx.actions.register(ACTION_KEYS.writeIssueBaseRecord, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    if (!issueId) throw new Error("请先打开一个由飞书创建的 Paperclip Issue。");
+    const sessionRecord = await findSessionByIssueId(ctx, issueId);
+    if (!sessionRecord) throw new Error("没有找到这个 Issue 对应的飞书来源，不能自动写入入口配置的多维表格。");
+
+    const config = await getConfig(ctx);
+    const route = await resolveRouteFromSession(ctx, config, sessionRecord.data, sessionRecord.companyId);
+    const sink = resolveBaseSink(config, readString(params.sinkId) ?? route.baseSinkId);
+    if (!sink) throw new Error("这个飞书入口没有配置可用的多维表格规则。请先在高级页配置同步规则。");
+    const connection = resolveConnection(config, sink.connectionId ?? sessionRecord.data.connectionId);
+    if (!connection) throw new Error("多维表格规则没有找到可用的飞书机器人连接。");
+    const disabled = disabledFeishuCapabilityResult(config, "write_base_record", {
+      connectionId: connection.id,
+      routeId: route.id,
+      agentId: sessionRecord.data.paperclipAgentId,
+    });
+    if (disabled) return disabled;
+
+    const issue = await ctx.issues.get(sessionRecord.data.paperclipIssueId, route.companyId).catch(() => null);
+    const message = messageFromSession(sessionRecord.data);
+    const extraRecord = typeof params.record === "object" && params.record !== null && !Array.isArray(params.record)
+      ? params.record as Record<string, unknown>
+      : {};
+    const recordJson = {
+      ...buildBaseRecord(sink, {
+        message,
+        route,
+        issueId: sessionRecord.data.paperclipIssueId,
+        issueRef: issue?.identifier ?? sessionRecord.data.paperclipIssueIdentifier,
+        issueUrl: sessionRecord.data.paperclipIssueUrl,
+        issueTitle: issue?.title ?? sessionRecord.data.paperclipIssueTitle,
+        agentName: route.targetAgentName,
+        runId: sessionRecord.data.lastRunId,
+        runStatus: sessionRecord.data.lastRunStatus,
+      }),
+      ...extraRecord,
+    };
+    const result = await writeBaseRecord(ctx, config, connection, sink, recordJson);
+    return result.ok
+      ? { content: result.dryRun ? "测试模式：多维表格没有真实写入，命令已生成。" : "多维表格已写入。", data: result }
+      : { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
+  });
+
+  ctx.actions.register(ACTION_KEYS.lookupIssueRequester, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    if (!issueId) throw new Error("请先打开一个由飞书创建的 Paperclip Issue。");
+    const sessionRecord = await findSessionByIssueId(ctx, issueId);
+    if (!sessionRecord) throw new Error("没有找到这个 Issue 对应的飞书来源，不能自动查询提出人。");
+
+    const config = await getConfig(ctx);
+    const connection = resolveConnection(config, sessionRecord.data.connectionId);
+    const disabled = disabledFeishuCapabilityResult(config, "lookup_user", {
+      connectionId: connection?.id,
+      routeId: sessionRecord.data.routeId,
+      agentId: sessionRecord.data.paperclipAgentId,
+    });
+    if (disabled) return disabled;
+    const query = readString(params.query, sessionRecord.data.requesterName, sessionRecord.data.requesterOpenId);
+    if (!query) throw new Error("这个飞书来源没有提出人姓名或 open_id，无法查询。");
+    const result = await searchFeishuDirectory(config, {
+      profileName: connection?.profileName,
+      userQuery: query,
+    });
+    return {
+      content: result.userError
+        ? `飞书用户查询失败：${result.userError}`
+        : result.users.length > 0
+          ? `找到 ${result.users.length} 个飞书用户。`
+          : "没有找到匹配的飞书用户。",
+      data: result,
+      error: result.userError,
+    };
+  });
+
+  ctx.actions.register(ACTION_KEYS.replyIssueCommentToFeishu, async (params) => {
+    const issueId = readString(params.issueId, params.issue_id);
+    const commentId = readString(params.commentId, params.comment_id);
+    if (!issueId) throw new Error("请先打开一个由飞书创建的 Paperclip Issue。");
+    if (!commentId) throw new Error("请选择要回复到飞书的评论。");
+    const sessionRecord = await findSessionByIssueId(ctx, issueId);
+    if (!sessionRecord) throw new Error("没有找到这个 Issue 对应的飞书来源，不能自动回复评论。");
+    const config = await getConfig(ctx);
+    const route = await resolveRouteFromSession(ctx, config, sessionRecord.data, sessionRecord.companyId);
+    const comments = await ctx.issues.listComments(sessionRecord.data.paperclipIssueId, route.companyId);
+    const comment = comments.find((item) => item.id === commentId);
+    const text = normalizeCommentBody(comment?.body);
+    if (!comment || !text) throw new Error("没有找到这条评论，或评论正文为空。");
+    return await replyOriginalFeishuThreadFromTool(
+      ctx,
+      readString(params.runId) ?? `issue-comment-${commentId}`,
+      { issueId, replyMode: params.replyMode },
+      text,
+      "issue-comment",
+      "已把评论回复到原飞书会话",
+      "reply_source_thread",
+    );
+  });
+
   ctx.actions.register(ACTION_KEYS.simulateInboundMessage, async (params) => {
     return await handleInboundMessage(ctx, params.raw ?? params, {
       connectionId: typeof params.connectionId === "string" ? params.connectionId : undefined,
+      connectionIds: Array.isArray(params.connectionIds)
+        ? params.connectionIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+        : undefined,
     });
   });
 
@@ -2619,7 +3842,7 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
       msgType: typeof params.msgType === "string" ? params.msgType : undefined,
       idempotencyKey: typeof params.idempotencyKey === "string" ? params.idempotencyKey : undefined,
     });
-    return await runLarkCli({ bin: config.larkCliBin ?? "lark-cli", args, dryRun: config.dryRunCli === true });
+    return await runLarkCli({ bin: larkCliBin(config), args, dryRun: config.dryRunCli === true });
   });
 
   ctx.actions.register(ACTION_KEYS.writeBaseRecord, async (params) => {
@@ -2633,6 +3856,560 @@ async function registerActionHandlers(ctx: PluginContext): Promise<void> {
       : {};
     return await writeBaseRecord(ctx, config, connection, sink, recordJson);
   });
+}
+
+async function replyOriginalFeishuThreadFromTool(
+  ctx: PluginContext,
+  runId: string,
+  payload: Record<string, unknown>,
+  text: string,
+  idempotencyScope: string,
+  successVerb: string,
+  capabilityKey = "reply_source_thread",
+): Promise<ToolResult> {
+  const issueId = typeof payload.issueId === "string" ? payload.issueId : undefined;
+  const sessionRecord = await findSessionForTool(ctx, runId, issueId);
+  if (!sessionRecord) {
+    return {
+      error: "没有找到当前运行对应的飞书原会话。只有从飞书入口创建的 Paperclip 任务，才能自动回到原会话。",
+    };
+  }
+
+  const config = await getConfig(ctx);
+  const connection = resolveConnection(config, sessionRecord.data.connectionId);
+  if (!connection) return { error: "没有找到当前飞书会话对应的机器人连接。" };
+
+  const route = await resolveRouteFromSession(ctx, config, sessionRecord.data, sessionRecord.companyId);
+  const disabled = disabledFeishuCapabilityResult(config, capabilityKey, {
+    connectionId: connection.id,
+    routeId: route.id,
+    agentId: sessionRecord.data.paperclipAgentId,
+  });
+  if (disabled) return disabled;
+  const message = messageFromSession(sessionRecord.data);
+  const explicitReplyMode = payload.replyMode === "message" || payload.replyMode === "thread"
+    ? payload.replyMode
+    : undefined;
+  const replyInThread = explicitReplyMode
+    ? explicitReplyMode === "thread"
+    : (route.replyMode ?? "thread") !== "message";
+  const result = await replyToFeishu(
+    ctx,
+    config,
+    connection,
+    message,
+    text,
+    larkIdempotencyKey(idempotencyScope, runId, message.messageId, text),
+    replyInThread,
+    { routeId: route.id, issueId: sessionRecord.data.paperclipIssueId, reason: "Agent 飞书工具回复失败" },
+  );
+  const conversation = describeFeishuConversation(message, route);
+  record(result?.ok ? "info" : "error", "Agent 工具已尝试回复原飞书会话", {
+    runId,
+    issueId: sessionRecord.data.paperclipIssueId,
+    routeName: describeRouteEntry(route),
+    conversation,
+    result: summarizeLarkResult(result),
+  });
+  if (!result?.ok) {
+    return { error: result?.stderr || `lark-cli exited with ${result?.code ?? "unknown"}`, data: result };
+  }
+  return {
+    content: result.dryRun
+      ? `测试模式：${successVerb}（未真实发送）。原飞书会话：${conversation}。`
+      : `${successVerb}。原飞书会话：${conversation}。`,
+    data: result,
+  };
+}
+
+async function findSessionForTool(
+  ctx: PluginContext,
+  runId: string,
+  issueId?: string,
+): Promise<{ companyId: string; data: FeishuSessionData } | null> {
+  return await findSessionByRunId(ctx, runId)
+    ?? (issueId ? await findSessionByIssueId(ctx, issueId) : null);
+}
+
+async function downloadFeishuAttachmentsFromTool(
+  ctx: PluginContext,
+  runId: string,
+  payload: Record<string, unknown>,
+): Promise<ToolResult> {
+  const issueId = typeof payload.issueId === "string" ? payload.issueId : undefined;
+  const sessionRecord = await findSessionForTool(ctx, runId, issueId);
+  if (!sessionRecord) {
+    return {
+      error: "没有找到当前运行对应的飞书原会话。只有从飞书入口创建的 Paperclip 任务，才能下载原消息附件。",
+    };
+  }
+
+  const config = await getConfig(ctx);
+  const connection = resolveConnection(config, sessionRecord.data.connectionId);
+  if (!connection) return { error: "没有找到当前飞书会话对应的机器人连接。" };
+  const disabled = disabledFeishuCapabilityResult(config, "download_attachments", {
+    connectionId: connection.id,
+    routeId: sessionRecord.data.routeId,
+    agentId: sessionRecord.data.paperclipAgentId,
+  });
+  if (disabled) return disabled;
+
+  const message = messageFromSession(sessionRecord.data);
+  if (message.attachments.length === 0) {
+    return {
+      content: "原飞书消息没有可下载附件。",
+      data: { attachments: [] },
+    };
+  }
+
+  const results = await attachFeishuResources(
+    ctx,
+    config,
+    connection,
+    message,
+    sessionRecord.companyId,
+    sessionRecord.data.paperclipIssueId,
+  );
+  const failedCount = results.filter((item) => item.error).length;
+  record(failedCount > 0 ? "warning" : "info", "Agent 工具已处理原飞书附件", {
+    runId,
+    issueId: sessionRecord.data.paperclipIssueId,
+    attachmentCount: results.length,
+    failedCount,
+  });
+  return {
+    content: failedCount > 0
+      ? `已处理 ${results.length} 个飞书附件，其中 ${failedCount} 个失败。`
+      : `已处理 ${results.length} 个飞书附件。`,
+    data: { attachments: results },
+  };
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim())
+    : [];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+const SCHEMA_SERVICE_BY_LARK_CLI_SERVICE: Record<string, string | null> = {
+  im: "im",
+  drive: "drive",
+  docs: "drive",
+  calendar: "calendar",
+  mail: "mail",
+  wiki: "wiki",
+  task: "task",
+  approval: "approval",
+  minutes: "minutes",
+  okr: "okr",
+  sheets: "sheets",
+  slides: "slides",
+  vc: "vc",
+  attendance: "attendance",
+  base: null,
+  contact: null,
+  schema: null,
+};
+
+function splitLarkCliCommand(command: string): {
+  cliService: string;
+  cliCommand?: string;
+} {
+  const [cliService = "", cliCommand] = command.split(/\s+/).filter(Boolean);
+  return { cliService, cliCommand };
+}
+
+function readUpdateNotice(result: LarkCliResult): LarkCliSchemaDiscovery["updateNotice"] {
+  const parsed = parseJsonRecord(result.stdout) ?? parseJsonRecord(result.stderr);
+  const notice = asRecord(asRecord(parsed?._notice)?.update);
+  if (!notice) return null;
+  return {
+    current: readString(notice.current),
+    latest: readString(notice.latest),
+    message: readString(notice.message),
+  };
+}
+
+function parseRootSchemaServices(stdout: string): string[] {
+  const parsed = parseJsonRecord(stdout);
+  const resources = asRecord(parsed?.resources);
+  if (resources) return Object.keys(resources);
+
+  const services = new Set<string>();
+  for (const line of stripAnsiText(stdout).split(/\r?\n/)) {
+    const match = line.match(/^\s*([a-z][a-z0-9_-]+)\s{2,}/i);
+    if (match?.[1] && match[1] !== "Usage") services.add(match[1]);
+  }
+  return [...services].sort((a, b) => a.localeCompare(b));
+}
+
+function inspectSchemaService(stdout: string): {
+  methodCount: number;
+  scopes: string[];
+} {
+  const parsed = parseJsonRecord(stdout);
+  const resources = asRecord(parsed?.resources);
+  if (!resources) return { methodCount: 0, scopes: [] };
+
+  let methodCount = 0;
+  const scopes: string[] = [];
+  for (const resource of Object.values(resources)) {
+    const methods = asRecord(asRecord(resource)?.methods);
+    if (!methods) continue;
+    for (const method of Object.values(methods)) {
+      methodCount += 1;
+      const methodScopes = asRecord(method)?.scopes;
+      if (Array.isArray(methodScopes)) {
+        scopes.push(...methodScopes.filter((scope): scope is string => typeof scope === "string"));
+      }
+    }
+  }
+  return { methodCount, scopes: uniqueStrings(scopes) };
+}
+
+function schemaDiscoverySkipped(config: FeishuConnectorConfig): LarkCliSchemaDiscovery {
+  return {
+    checked: false,
+    reason: config.dryRunCli === true
+      ? "当前是测试模式，能力中心不会自动探测本机 lark-cli。关闭测试模式或配置服务器 CLI 后会显示 schema 扫描结果。"
+      : "未执行 lark-cli schema 扫描。",
+    services: [],
+    commands: [],
+    errors: [],
+    summary: "未扫描 lark-cli schema。",
+  };
+}
+
+async function discoverLarkCliSchema(config: FeishuConnectorConfig): Promise<LarkCliSchemaDiscovery> {
+  const explicitBin = config.larkCliBin?.trim();
+  if (config.dryRunCli === true && (!explicitBin || explicitBin === "lark-cli")) {
+    return schemaDiscoverySkipped(config);
+  }
+
+  const bin = larkCliBin(config);
+  const checkedAt = new Date().toISOString();
+  const errors: string[] = [];
+  let updateNotice: LarkCliSchemaDiscovery["updateNotice"] = null;
+
+  const root = await runLarkCli({
+    bin,
+    args: ["schema", "--format", "json"],
+    timeoutMs: 5_000,
+  });
+  updateNotice = readUpdateNotice(root);
+  if (!root.ok) errors.push(root.stderr.trim() || `lark-cli schema exited with ${root.code}`);
+
+  const rootServices = new Set(parseRootSchemaServices(root.stdout));
+  const commandSpecs = FEISHU_CAPABILITY_DEFINITIONS.flatMap((definition) =>
+    definition.larkCliCommands.map((command) => ({
+      capabilityKey: definition.key,
+      command,
+      ...splitLarkCliCommand(command),
+      schemaService: SCHEMA_SERVICE_BY_LARK_CLI_SERVICE[splitLarkCliCommand(command).cliService],
+    })),
+  );
+  const schemaServiceNames = uniqueStrings(commandSpecs
+    .map((spec) => spec.schemaService)
+    .filter((service): service is string => typeof service === "string" && service.length > 0));
+
+  const services: LarkCliSchemaDiscovery["services"] = [];
+  const serviceScopes = new Map<string, string[]>();
+  for (const service of schemaServiceNames) {
+    if (root.ok && rootServices.size > 0 && !rootServices.has(service)) {
+      services.push({
+        name: service,
+        available: false,
+        methodCount: 0,
+        scopeCount: 0,
+        sampleScopes: [],
+        error: "当前 lark-cli schema 未列出这个 service。",
+      });
+      continue;
+    }
+
+    const result = await runLarkCli({
+      bin,
+      args: ["schema", service, "--format", "json"],
+      timeoutMs: 8_000,
+    });
+    updateNotice = updateNotice ?? readUpdateNotice(result);
+    if (!result.ok) {
+      const error = result.stderr.trim() || result.stdout.trim() || `lark-cli schema ${service} exited with ${result.code}`;
+      services.push({
+        name: service,
+        available: false,
+        methodCount: 0,
+        scopeCount: 0,
+        sampleScopes: [],
+        error,
+      });
+      errors.push(error);
+      continue;
+    }
+
+    const inspected = inspectSchemaService(result.stdout);
+    serviceScopes.set(service, inspected.scopes);
+    services.push({
+      name: service,
+      available: true,
+      methodCount: inspected.methodCount,
+      scopeCount: inspected.scopes.length,
+      sampleScopes: inspected.scopes.slice(0, 12),
+    });
+  }
+
+  const helpOutputs = new Map<string, LarkCliResult>();
+  for (const service of uniqueStrings(commandSpecs.map((spec) => spec.cliService).filter(Boolean))) {
+    const args = service === "schema" ? ["schema", "--help"] : [service, "--help"];
+    const result = await runLarkCli({ bin, args, timeoutMs: 5_000 });
+    updateNotice = updateNotice ?? readUpdateNotice(result);
+    helpOutputs.set(service, result);
+  }
+
+  const servicesByName = new Map(services.map((service) => [service.name, service]));
+  const commands: LarkCliSchemaDiscovery["commands"] = commandSpecs.map((spec) => {
+    const help = helpOutputs.get(spec.cliService);
+    const cliHelpAvailable = help
+      ? help.ok && (!spec.cliCommand || stripAnsiText(help.stdout).includes(spec.cliCommand))
+      : null;
+    const schemaService = spec.schemaService ?? null;
+    const schemaAvailable = schemaService ? servicesByName.get(schemaService)?.available === true : null;
+    const scopes = schemaService ? serviceScopes.get(schemaService) ?? [] : [];
+    const status = schemaAvailable
+      ? "schema_backed"
+      : cliHelpAvailable
+        ? "cli_help_backed"
+        : help || schemaService
+          ? "not_found"
+          : "not_checked";
+    const note = schemaAvailable
+      ? `lark-cli schema 已覆盖 service：${schemaService}`
+      : cliHelpAvailable
+        ? "这是 lark-cli 高阶封装命令，可在 CLI help 中找到；不等同于 Paperclip skill 自动同步。"
+        : "当前 CLI/schema 未发现这个命令，可能需要更新 lark-cli 或调整能力映射。";
+    return {
+      capabilityKey: spec.capabilityKey,
+      command: spec.command,
+      cliService: spec.cliService,
+      cliCommand: spec.cliCommand,
+      schemaService,
+      schemaAvailable,
+      cliHelpAvailable,
+      scopes: scopes.slice(0, 12),
+      status,
+      note,
+    };
+  });
+
+  const backedCount = commands.filter((command) =>
+    command.status === "schema_backed" || command.status === "cli_help_backed"
+  ).length;
+  return {
+    checked: true,
+    checkedAt,
+    cliBin: bin,
+    updateNotice,
+    services,
+    commands,
+    errors,
+    summary: `已扫描 lark-cli schema/help：${backedCount}/${commands.length} 个能力命令在当前 CLI 中可发现。lark-* skills 仍不会自动变成 Paperclip tools。`,
+  };
+}
+
+function isUnsafeLarkCliToken(value: string): boolean {
+  return value.includes("\0") || value === "--app-secret" || value === "--app-secret-stdin";
+}
+
+function readScopesFromAuthStatus(stdout: string): {
+  verified: boolean;
+  identity?: string;
+  tokenStatus?: string;
+  profileName?: string;
+  grantedScopes: string[];
+} {
+  const parsed = parseJsonRecord(stdout) ?? {};
+  const scopeText = readString(parsed.scope, parsed.scopes) ?? "";
+  return {
+    verified: parsed.verified === true,
+    identity: readString(parsed.identity),
+    tokenStatus: readString(parsed.tokenStatus),
+    profileName: readString(parsed.profileName, parsed.profile),
+    grantedScopes: uniqueStrings(scopeText.split(/\s+/).filter(Boolean)),
+  };
+}
+
+function permissionViolationsFromText(value: string): string[] {
+  const parsed = parseJsonRecord(value);
+  const root = asRecord(parsed?.error) ?? parsed;
+  const direct = root?.permission_violations;
+  if (Array.isArray(direct)) {
+    return uniqueStrings(direct.filter((item): item is string => typeof item === "string"));
+  }
+  return uniqueStrings([...value.matchAll(/[a-z]+:[a-z0-9_.:-]+/g)].map((match) => match[0]));
+}
+
+function recommendedScopesFromConfig(config: FeishuConnectorConfig): string[] {
+  const center = buildFeishuCapabilityCenter(config);
+  return uniqueStrings([
+    ...center.recommendedPermissionJson.scopes.tenant,
+    ...center.recommendedPermissionJson.scopes.user,
+  ]);
+}
+
+function disabledFeishuCapabilityResult(
+  config: FeishuConnectorConfig,
+  capabilityKey: string,
+  context: FeishuCapabilityContext = {},
+): ToolResult | null {
+  const definition = findFeishuCapabilityDefinition(capabilityKey);
+  if (!definition) {
+    return { error: `未知的飞书能力：${capabilityKey}。请先在能力中心确认这个能力。` };
+  }
+  if (!isFeishuCapabilityEnabled(config, definition, context)) {
+    return { error: `飞书能力 ${capabilityKey} 未开启。请先到能力中心开启，并确认权限后再调用。` };
+  }
+  return null;
+}
+
+function enabledFeishuToolNames(
+  config: FeishuConnectorConfig,
+  context: FeishuCapabilityContext = {},
+): string[] {
+  return uniqueStrings(FEISHU_CAPABILITY_DEFINITIONS
+    .filter((definition) => definition.implemented && definition.toolName && isFeishuCapabilityEnabled(config, definition, context))
+    .map((definition) => definition.toolName!));
+}
+
+async function checkFeishuPermissions(
+  config: FeishuConnectorConfig,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const connection = resolveConnection(config, readString(params.connectionId));
+  const profileName = connection?.profileName ?? readString(params.profileName);
+  if (!profileName) {
+    throw new Error("请先选择飞书机器人连接，或提供 lark-cli profile。");
+  }
+
+  const args = buildAuthStatusArgs({ profileName, verify: true });
+  const result = await runLarkCli({ bin: larkCliBin(config), args, timeoutMs: 30_000 });
+  const recommendedScopes = recommendedScopesFromConfig(config);
+  if (!result.ok) {
+    const missingScopes = permissionViolationsFromText(`${result.stderr}\n${result.stdout}`);
+    return {
+      ok: false,
+      profileName,
+      command: result.command,
+      args: result.args,
+      missingScopes,
+      message: missingScopes.length > 0
+        ? `缺少飞书权限：${missingScopes.join("、")}。请到飞书开放平台导入推荐权限并重新发布应用；用户身份还需要重新授权。`
+        : result.stderr || `lark-cli exited with ${result.code}`,
+      result,
+    };
+  }
+
+  const status = readScopesFromAuthStatus(result.stdout);
+  const missingScopes = recommendedScopes.filter((scope) => !status.grantedScopes.includes(scope));
+  return {
+    ok: missingScopes.length === 0,
+    profileName: status.profileName ?? profileName,
+    verified: status.verified,
+    identity: status.identity,
+    tokenStatus: status.tokenStatus,
+    grantedScopes: status.grantedScopes,
+    recommendedScopes,
+    missingScopes,
+    message: missingScopes.length > 0
+      ? `缺少飞书权限：${missingScopes.join("、")}。请到高级页复制推荐权限 JSON，导入飞书开放平台并重新发布应用；用户身份还需要重新授权。`
+      : "权限检查通过：当前 profile 已覆盖能力中心推荐 scopes。",
+    result,
+  };
+}
+
+async function persistPermissionCheck(
+  ctx: PluginContext,
+  config: FeishuConnectorConfig,
+  params: Record<string, unknown>,
+  result: Record<string, unknown>,
+): Promise<void> {
+  const connection = resolveConnection(config, readString(params.connectionId));
+  const profileName = readString(result.profileName, params.profileName, connection?.profileName) ?? null;
+  const checkedAt = new Date().toISOString();
+  const id = `permission-${crypto
+    .createHash("sha256")
+    .update([connection?.id ?? "", profileName ?? "", checkedAt].join(":"))
+    .digest("hex")
+    .slice(0, 32)}`;
+  await executePluginDb(
+    ctx,
+    `INSERT INTO ${dbTable(ctx.db.namespace, DB_TABLES.permissionChecks)}
+      (id, connection_id, profile_name, ok, missing_scopes, granted_scopes, raw_result, checked_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::timestamptz)`,
+    [
+      id,
+      connection?.id ?? null,
+      profileName,
+      result.ok === true,
+      jsonParam(Array.isArray(result.missingScopes) ? result.missingScopes : []),
+      jsonParam(Array.isArray(result.grantedScopes) ? result.grantedScopes : []),
+      jsonParam(result),
+      checkedAt,
+    ],
+  );
+}
+
+async function runControlledLarkCliCapabilityFromTool(
+  ctx: PluginContext,
+  runId: string,
+  payload: Record<string, unknown>,
+): Promise<ToolResult> {
+  const capabilityKey = readString(payload.capabilityKey, payload.capability);
+  if (!capabilityKey) return { error: "请提供要调用的飞书能力 key。" };
+  const definition = findFeishuCapabilityDefinition(capabilityKey);
+  if (!definition) return { error: `未知的飞书能力：${capabilityKey}。请先在能力中心确认这个能力。` };
+
+  const config = await getConfig(ctx);
+  const connection = resolveConnection(config, readString(payload.connectionId));
+  const sessionRecord = await findSessionByRunId(ctx, runId);
+  const disabled = disabledFeishuCapabilityResult(config, capabilityKey, {
+    connectionId: sessionRecord?.data.connectionId ?? connection?.id,
+    routeId: sessionRecord?.data.routeId,
+    agentId: sessionRecord?.data.paperclipAgentId,
+  });
+  if (disabled) return disabled;
+
+  const command = readStringArray(payload.command ?? payload.args);
+  if (command.length === 0) return { error: "请提供要运行的 lark-cli 命令参数数组。" };
+  if (command.some(isUnsafeLarkCliToken)) {
+    return { error: "这个 lark-cli 参数涉及敏感凭据，不能通过 Agent 兜底工具调用。" };
+  }
+  if (!isLarkCliCommandAllowedForCapability(definition, command)) {
+    return {
+      error: `命令 ${command.slice(0, 2).join(" ")} 不在能力 ${capabilityKey} 的允许命令里。允许：${definition.larkCliCommands.join("、")}`,
+    };
+  }
+
+  const profileName = connection?.profileName ?? readString(payload.profileName);
+  const args = profileName ? ["--profile", profileName, ...command] : command;
+  const result = await runLarkCli({
+    bin: larkCliBin(config),
+    args,
+    dryRun: config.dryRunCli === true,
+    timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : 60_000,
+  });
+  record(result.ok ? "info" : "error", "Agent 使用受控 lark-cli 兜底能力", {
+    runId,
+    capabilityKey,
+    command: command.slice(0, 3).join(" "),
+    result: summarizeLarkResult(result),
+  });
+  return result.ok
+    ? { content: result.dryRun ? "测试模式：lark-cli 能力未真实执行，命令已生成。" : "lark-cli 能力已执行。", data: result }
+    : { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
 }
 
 async function registerToolHandlers(ctx: PluginContext): Promise<void> {
@@ -2652,11 +4429,16 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
         },
       },
     },
-    async (params): Promise<ToolResult> => {
+    async (params, runCtx): Promise<ToolResult> => {
       const config = await getConfig(ctx);
       const payload = params as Record<string, unknown>;
       const connection = resolveConnection(config, typeof payload.connectionId === "string" ? payload.connectionId : undefined);
       if (!connection) return { error: "还没有配置可用的飞书机器人连接。" };
+      const disabled = disabledFeishuCapabilityResult(config, "send_message", {
+        connectionId: connection.id,
+        agentId: runCtx.agentId,
+      });
+      if (disabled) return disabled;
       const args = buildSendMessageArgs({
         profileName: connection.profileName,
         identity: "bot",
@@ -2665,7 +4447,7 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
         text: typeof payload.text === "string" ? payload.text : undefined,
         markdown: typeof payload.markdown === "string" ? payload.markdown : undefined,
       });
-      const result = await runLarkCli({ bin: config.larkCliBin ?? "lark-cli", args, dryRun: config.dryRunCli === true });
+      const result = await runLarkCli({ bin: larkCliBin(config), args, dryRun: config.dryRunCli === true });
       return result.ok
         ? { content: result.dryRun ? "测试模式：飞书消息没有真实发送，命令已生成。" : "飞书消息已发送。", data: result }
         : { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
@@ -2686,13 +4468,18 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
         required: ["sinkId", "record"],
       },
     },
-    async (params): Promise<ToolResult> => {
+    async (params, runCtx): Promise<ToolResult> => {
       const config = await getConfig(ctx);
       const payload = params as Record<string, unknown>;
       const sink = resolveBaseSink(config, typeof payload.sinkId === "string" ? payload.sinkId : undefined);
       if (!sink) return { error: "没有找到可用的多维表格写入规则。请检查第 3 步里的规则代号是否一致，并确认已启用。" };
       const connection = resolveConnection(config, sink.connectionId);
       if (!connection) return { error: "多维表格写入规则没有找到可用的飞书机器人连接。" };
+      const disabled = disabledFeishuCapabilityResult(config, "write_base_record", {
+        connectionId: connection.id,
+        agentId: runCtx.agentId,
+      });
+      if (disabled) return disabled;
       const recordJson = typeof payload.record === "object" && payload.record !== null && !Array.isArray(payload.record)
         ? payload.record as Record<string, unknown>
         : {};
@@ -2700,6 +4487,281 @@ async function registerToolHandlers(ctx: PluginContext): Promise<void> {
       return result.ok
         ? { content: result.dryRun ? "测试模式：多维表格没有真实写入，命令已生成。" : "多维表格已写入。", data: result }
         : { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.sendCard,
+    {
+      displayName: "发送飞书卡片",
+      description: "通过已配置的飞书机器人发送结构化飞书卡片。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          connectionId: { type: "string", title: "飞书机器人连接代号" },
+          chatId: { type: "string", title: "飞书群/会话 chat_id" },
+          userId: { type: "string", title: "飞书用户 ID" },
+          title: { type: "string", title: "卡片标题" },
+          summary: { type: "string", title: "卡片正文摘要" },
+          actions: {
+            type: "array",
+            title: "按钮",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string", title: "按钮文字" },
+                url: { type: "string", title: "按钮链接" },
+              },
+            },
+          },
+        },
+        required: ["title", "summary"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const config = await getConfig(ctx);
+      const payload = params as Record<string, unknown>;
+      const connection = resolveConnection(config, readString(payload.connectionId));
+      if (!connection) return { error: "还没有配置可用的飞书机器人连接。" };
+      const disabled = disabledFeishuCapabilityResult(config, "send_card", {
+        connectionId: connection.id,
+        agentId: runCtx.agentId,
+      });
+      if (disabled) return disabled;
+      const title = readString(payload.title);
+      const summary = readString(payload.summary);
+      if (!title || !summary) return { error: "请提供飞书卡片标题和摘要。" };
+      const actions = Array.isArray(payload.actions)
+        ? payload.actions.filter((item): item is { text?: unknown; url?: unknown } => typeof item === "object" && item !== null)
+        : [];
+      const args = buildSendMessageArgs({
+        profileName: connection.profileName,
+        identity: "bot",
+        chatId: readString(payload.chatId),
+        userId: readString(payload.userId),
+        content: buildFeishuCardContent({ title, summary, actions }),
+        msgType: "interactive",
+      });
+      const result = await runLarkCli({ bin: larkCliBin(config), args, dryRun: config.dryRunCli === true });
+      return result.ok
+        ? { content: result.dryRun ? "测试模式：飞书卡片没有真实发送，命令已生成。" : "飞书卡片已发送。", data: result }
+        : { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.replyOriginalThread,
+    {
+      displayName: "回复原飞书会话",
+      description: "在飞书创建的 Paperclip 任务中，把智能体的进展或结果回复到原飞书消息线程。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          text: { type: "string", title: "要回复的文本" },
+          issueId: { type: "string", title: "Paperclip 任务 ID（可选）" },
+          replyMode: {
+            type: "string",
+            title: "回复方式",
+            enum: ["thread", "message"],
+          },
+        },
+        required: ["text"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      const text = typeof payload.text === "string" ? payload.text.trim() : "";
+      if (!text) return { error: "请提供要回复到飞书的文本内容。" };
+      return await replyOriginalFeishuThreadFromTool(ctx, runCtx.runId, payload, text, "tool", "已回复原飞书会话", "reply_source_thread");
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.replySourceThread,
+    {
+      displayName: "回复飞书来源线程",
+      description: "在飞书创建的 Paperclip 任务中，把智能体的进展或结果回复到原飞书消息线程。这个名称是 reply_original_thread 的产品化别名。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          text: { type: "string", title: "要回复的文本" },
+          issueId: { type: "string", title: "Paperclip 任务 ID（可选）" },
+          replyMode: {
+            type: "string",
+            title: "回复方式",
+            enum: ["thread", "message"],
+          },
+        },
+        required: ["text"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      const text = typeof payload.text === "string" ? payload.text.trim() : "";
+      if (!text) return { error: "请提供要回复到飞书的文本内容。" };
+      return await replyOriginalFeishuThreadFromTool(ctx, runCtx.runId, payload, text, "tool", "已回复原飞书会话", "reply_source_thread");
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.askClarification,
+    {
+      displayName: "向飞书提出追问",
+      description: "任务信息不足时，在原飞书消息线程里向提出人追问。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          question: { type: "string", title: "要追问的问题" },
+          issueId: { type: "string", title: "Paperclip 任务 ID（可选）" },
+        },
+        required: ["question"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      const question = typeof payload.question === "string" ? payload.question.trim() : "";
+      if (!question) return { error: "请提供要追问的问题。" };
+      const text = question.startsWith("需要补充信息：") ? question : `需要补充信息：${question}`;
+      return await replyOriginalFeishuThreadFromTool(ctx, runCtx.runId, payload, text, "clarify", "已向原飞书会话追问", "ask_clarification");
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.downloadAttachments,
+    {
+      displayName: "下载原飞书附件",
+      description: "下载创建当前 Paperclip 任务的飞书原消息附件，并挂到 Issue。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          issueId: { type: "string", title: "Paperclip 任务 ID（可选）" },
+        },
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      return await downloadFeishuAttachmentsFromTool(ctx, runCtx.runId, payload);
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.lookupUser,
+    {
+      displayName: "查找飞书用户",
+      description: "按姓名、工号或关键词查找飞书联系人。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", title: "姓名、工号或关键词" },
+          connectionId: { type: "string", title: "飞书机器人连接代号（可选）" },
+          profileName: { type: "string", title: "lark-cli profile（可选）" },
+        },
+        required: ["query"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      const query = typeof payload.query === "string" ? payload.query.trim() : "";
+      if (!query) return { error: "请提供要查找的飞书用户姓名、工号或关键词。" };
+
+      const config = await getConfig(ctx);
+      const connection = resolveConnection(config, typeof payload.connectionId === "string" ? payload.connectionId : undefined);
+      const profileName = connection?.profileName ?? readString(payload.profileName);
+      const disabled = disabledFeishuCapabilityResult(config, "lookup_user", {
+        connectionId: connection?.id,
+        agentId: runCtx.agentId,
+      });
+      if (disabled) return disabled;
+      const result = await searchFeishuDirectory(config, { profileName, userQuery: query });
+      if (result.userError) {
+        return { error: result.userError, data: result };
+      }
+      return {
+        content: result.users.length > 0
+          ? `找到 ${result.users.length} 个飞书用户。`
+          : "没有找到匹配的飞书用户。",
+        data: result,
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.fetchDoc,
+    {
+      displayName: "读取飞书文档",
+      description: "通过 lark-cli 读取飞书云文档内容，并把正文返回给 Agent。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          doc: { type: "string", title: "飞书文档 URL 或 token" },
+          connectionId: { type: "string", title: "飞书机器人连接代号（可选）" },
+          profileName: { type: "string", title: "lark-cli profile（可选）" },
+          identity: {
+            type: "string",
+            title: "访问身份",
+            enum: ["user", "bot"],
+            default: "user",
+          },
+        },
+        required: ["doc"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      const payload = params as Record<string, unknown>;
+      const doc = readString(payload.doc, payload.url, payload.token);
+      if (!doc) return { error: "请提供飞书文档 URL 或 token。" };
+      const config = await getConfig(ctx);
+      const connection = resolveConnection(config, readString(payload.connectionId));
+      const profileName = connection?.profileName ?? readString(payload.profileName);
+      const disabled = disabledFeishuCapabilityResult(config, "fetch_doc", {
+        connectionId: connection?.id,
+        agentId: runCtx.agentId,
+      });
+      if (disabled) return disabled;
+      if (!profileName) return { error: "请先配置飞书机器人连接，或提供可用的 lark-cli profile。" };
+      const identity = payload.identity === "bot" ? "bot" : "user";
+      const args = buildFetchDocArgs({
+        profileName,
+        identity,
+        doc,
+        format: "pretty",
+      });
+      const result = await runLarkCli({ bin: larkCliBin(config), args, dryRun: config.dryRunCli === true, timeoutMs: 60_000 });
+      if (!result.ok) return { error: result.stderr || `lark-cli exited with ${result.code}`, data: result };
+      const text = result.stdout.trim();
+      return {
+        content: result.dryRun ? "测试模式：飞书文档没有真实读取，命令已生成。" : "已读取飞书文档。",
+        data: {
+          ...result,
+          text,
+        },
+      };
+    },
+  );
+
+  ctx.tools.register(
+    TOOL_NAMES.runLarkCliCapability,
+    {
+      displayName: "受控运行 lark-cli 能力",
+      description: "高级兜底工具。只能运行能力中心已开启且命令前缀在允许列表里的 lark-cli 能力。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          capabilityKey: { type: "string", title: "能力 key" },
+          command: {
+            type: "array",
+            title: "lark-cli 命令参数数组",
+            items: { type: "string" },
+          },
+          connectionId: { type: "string", title: "飞书机器人连接代号（可选）" },
+          profileName: { type: "string", title: "lark-cli profile（可选）" },
+          timeoutMs: { type: "number", title: "超时时间毫秒（可选）" },
+        },
+        required: ["capabilityKey", "command"],
+      },
+    },
+    async (params, runCtx): Promise<ToolResult> => {
+      return await runControlledLarkCliCapabilityFromTool(ctx, runCtx.runId, params as Record<string, unknown>);
     },
   );
 }
@@ -2892,11 +4954,13 @@ const plugin: PaperclipPlugin = definePlugin({
   async setup(ctx) {
     currentContext = ctx;
     installProcessShutdownHandlers();
+    const config = await getConfig(ctx);
+    await syncConfigToDatabase(ctx, config);
     await registerDataHandlers(ctx);
     await registerActionHandlers(ctx);
     await registerToolHandlers(ctx);
     await registerEventHandlers(ctx);
-    await startConfiguredSubscribers(ctx, await getConfig(ctx));
+    await startConfiguredSubscribers(ctx, config);
     startSubscriberWatchdog(ctx);
     record("info", "飞书连接器已启动", { pluginId: PLUGIN_ID });
   },
@@ -2940,6 +5004,7 @@ const plugin: PaperclipPlugin = definePlugin({
     const ctx = currentContext;
     if (!ctx) return;
     const config = normalizeConfig(newConfig);
+    await syncConfigToDatabase(ctx, config);
     await startConfiguredSubscribers(ctx, config);
     record("info", "飞书连接器配置已更新", {
       enabledConnections: getEnabledConnections(config).length,
@@ -2955,6 +5020,12 @@ const plugin: PaperclipPlugin = definePlugin({
     const enabledBaseSinkIds = new Set((normalized.baseSinks ?? []).filter((sink) => sink.enabled !== false).map((sink) => sink.id));
     if (normalized.enableEventSubscriber) {
       warnings.push("只有本地测试或单实例部署才建议开启「自动监听飞书消息」。云服务器部署建议用单独的监听服务，避免重复收消息。");
+    }
+    if (normalized.eventRequireSignature && !normalized.eventEncryptKeyRef) {
+      errors.push("已开启公网回调签名校验，但没有填写 Encrypt Key Secret Ref。请先把飞书事件订阅里的 Encrypt Key 存到 Paperclip Secret/Vault。");
+    }
+    if (!normalized.eventVerificationTokenRef && !normalized.eventEncryptKeyRef) {
+      warnings.push("公网 webhook 还没有配置 Verification Token 或 Encrypt Key Secret Ref。生产环境建议至少配置一项，避免外部请求伪造飞书事件。");
     }
     for (const connection of getEnabledConnections(normalized)) {
       if (isTechnicalProfileName(connection.name) && connectionBotAliases(connection).length === 0) {
@@ -3022,6 +5093,70 @@ const plugin: PaperclipPlugin = definePlugin({
       }
     }
     return { ok: errors.length === 0, warnings, errors };
+  },
+
+  async onWebhook(input) {
+    if (input.endpointKey !== WEBHOOK_KEYS.feishuEvents) {
+      throw new Error(`Unsupported Feishu webhook endpoint: ${input.endpointKey}`);
+    }
+    const ctx = currentContext;
+    if (!ctx) throw new Error("飞书连接器还没有启动，暂时无法处理公网回调。");
+    const config = await getConfig(ctx);
+    const prepared = await prepareWebhookPayload(ctx, config, input);
+    const payload = prepared.payload;
+    const challenge = readString(payload.challenge);
+    const callbackType = readString(payload.type);
+    if (challenge && callbackType === "url_verification") {
+      record("info", "收到飞书 URL 验证回调", {
+        endpointKey: input.endpointKey,
+        requestId: input.requestId,
+        encrypted: prepared.encrypted,
+        tokenVerified: prepared.tokenVerified,
+        signatureVerified: prepared.signatureVerified,
+        note: "当前 Paperclip webhook 宿主返回固定成功响应；如飞书要求回显 challenge，需要使用宿主支持自定义响应的回调入口。",
+      });
+      return;
+    }
+
+    const result = await handleInboundMessage(ctx, payload, {
+      connectionIds: webhookConnectionIds(config, payload),
+    });
+    record(result.ok ? "info" : "warning", "已通过飞书公网回调处理事件", {
+      endpointKey: input.endpointKey,
+      requestId: input.requestId,
+      encrypted: prepared.encrypted,
+      tokenVerified: prepared.tokenVerified,
+      signatureVerified: prepared.signatureVerified,
+      eventId: readString(asRecord(payload.header)?.event_id, asRecord(payload.header)?.eventId, payload.event_id, payload.eventId),
+      appId: webhookAppId(payload),
+      result,
+    });
+  },
+
+  async onApiRequest(input) {
+    if (input.routeKey !== API_ROUTE_KEYS.simulateInboundMessage) {
+      return { status: 404, body: { error: `Unsupported Feishu connector API route: ${input.routeKey}` } };
+    }
+    const ctx = currentContext;
+    if (!ctx) return { status: 503, body: { error: "飞书连接器还没有启动，暂时无法处理 API 请求。" } };
+    const body = asRecord(input.body) ?? {};
+    const raw = body.raw ?? body.message ?? body;
+    const connectionId = readString(body.connectionId);
+    const connectionIds = Array.isArray(body.connectionIds)
+      ? body.connectionIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : undefined;
+    const result = await handleInboundMessage(ctx, raw, {
+      connectionId,
+      connectionIds,
+    });
+    return {
+      status: result.ok ? 200 : 422,
+      body: {
+        ...result,
+        apiRoute: API_ROUTE_KEYS.simulateInboundMessage,
+        companyId: input.companyId,
+      },
+    };
   },
 
   async onShutdown() {

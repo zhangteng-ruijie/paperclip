@@ -1,6 +1,45 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FeishuIdentity, LarkCliResult } from "./types.js";
+
+const DEFAULT_LARK_CLI_BIN = "lark-cli";
+const LARK_CLI_ENV_BIN = "PAPERCLIP_FEISHU_LARK_CLI_BIN";
+
+function defaultModuleDir(): string {
+  return path.dirname(fileURLToPath(import.meta.url));
+}
+
+function findBundledLarkCliBin(startDir: string): string | null {
+  let current = path.resolve(startDir);
+  let previous = "";
+  while (current !== previous) {
+    const candidate = path.join(current, "node_modules", "@larksuite", "cli", "scripts", "run.js");
+    if (existsSync(candidate)) return candidate;
+    previous = current;
+    current = path.dirname(current);
+  }
+  return null;
+}
+
+export function resolveLarkCliBin(input: {
+  configuredBin?: string | null;
+  env?: Record<string, string | undefined>;
+  moduleDir?: string;
+} = {}): string {
+  const configured = input.configuredBin?.trim();
+  if (configured && configured !== DEFAULT_LARK_CLI_BIN) return configured;
+
+  const envBin = input.env?.[LARK_CLI_ENV_BIN]?.trim() ?? process.env[LARK_CLI_ENV_BIN]?.trim();
+  if (envBin) return envBin;
+
+  const bundled = findBundledLarkCliBin(input.moduleDir ?? defaultModuleDir());
+  if (bundled) return bundled;
+
+  return configured || DEFAULT_LARK_CLI_BIN;
+}
 
 function profileArgs(profileName?: string): string[] {
   return profileName ? ["--profile", profileName] : [];
@@ -139,6 +178,38 @@ export function buildResourceDownloadArgs(input: {
     "--output",
     input.output,
   ];
+}
+
+export function buildFetchDocArgs(input: {
+  profileName?: string;
+  identity?: FeishuIdentity;
+  doc: string;
+  format?: "pretty" | "json" | "markdown";
+}): string[] {
+  const args = [
+    ...profileArgs(input.profileName),
+    "docs",
+    "+fetch",
+    "--as",
+    input.identity ?? "user",
+    "--doc",
+    input.doc,
+  ];
+  pushOptional(args, "--format", input.format);
+  return args;
+}
+
+export function buildAuthStatusArgs(input: {
+  profileName?: string;
+  verify?: boolean;
+} = {}): string[] {
+  const args = [
+    ...profileArgs(input.profileName),
+    "auth",
+    "status",
+  ];
+  if (input.verify !== false) args.push("--verify");
+  return args;
 }
 
 export function buildProfileAddArgs(input: {

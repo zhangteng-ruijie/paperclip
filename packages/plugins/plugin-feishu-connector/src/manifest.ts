@@ -1,9 +1,11 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import {
+  API_ROUTE_KEYS,
   PLUGIN_ID,
   PLUGIN_VERSION,
   TOOL_NAMES,
   UI_EXPORTS,
+  WEBHOOK_KEYS,
 } from "./constants.js";
 import { DEFAULT_CONFIG } from "./config.js";
 
@@ -29,16 +31,47 @@ const manifest: PaperclipPluginManifestV1 = {
     "agent.sessions.send",
     "activity.log.write",
     "metrics.write",
+    "database.namespace.migrate",
+    "database.namespace.read",
+    "database.namespace.write",
     "plugin.state.read",
     "plugin.state.write",
+    "secrets.read-ref",
+    "webhooks.receive",
+    "api.routes.register",
     "events.subscribe",
     "agent.tools.register",
     "instance.settings.register",
+    "ui.sidebar.register",
     "ui.dashboardWidget.register",
+    "ui.detailTab.register",
+    "ui.action.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
     ui: "./dist/ui",
+  },
+  webhooks: [
+    {
+      endpointKey: WEBHOOK_KEYS.feishuEvents,
+      displayName: "飞书事件回调",
+      description: "接收飞书开放平台推送的消息事件，并按入口规则创建或更新 Paperclip Issue。",
+    },
+  ],
+  apiRoutes: [
+    {
+      routeKey: API_ROUTE_KEYS.simulateInboundMessage,
+      method: "POST",
+      path: "/simulate-inbound-message",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "body", key: "companyId" },
+    },
+  ],
+  database: {
+    namespaceSlug: "feishu_connector",
+    migrationsDir: "migrations",
+    coreReadTables: ["issues"],
   },
   instanceConfigSchema: {
     type: "object",
@@ -366,12 +399,31 @@ const manifest: PaperclipPluginManifestV1 = {
         default: DEFAULT_CONFIG.eventTypes,
         description: "普通用户不用改。默认监听飞书收到消息事件。",
       },
+      eventVerificationTokenRef: {
+        type: "string",
+        title: "事件 Verification Token Secret Ref",
+        "x-order": 92,
+        description: "可选。把飞书事件订阅里的 Verification Token 存到 Paperclip Secret/Vault 后，在这里填写引用名。插件只保存引用，不保存 token 明文。",
+      },
+      eventEncryptKeyRef: {
+        type: "string",
+        title: "事件 Encrypt Key Secret Ref",
+        "x-order": 94,
+        description: "可选。把飞书事件订阅里的 Encrypt Key 存到 Paperclip Secret/Vault 后，在这里填写引用名。用于解密加密事件，也可用于签名校验。",
+      },
+      eventRequireSignature: {
+        type: "boolean",
+        title: "公网回调必须校验签名",
+        "x-order": 96,
+        default: DEFAULT_CONFIG.eventRequireSignature,
+        description: "云端 webhook 建议开启。开启后，飞书回调必须带 x-lark-signature、timestamp 和 nonce，并通过 Encrypt Key 校验。",
+      },
       larkCliBin: {
         type: "string",
         title: "高级：lark-cli 命令路径",
         "x-order": 100,
         default: DEFAULT_CONFIG.larkCliBin,
-        description: "普通用户不用改。只有系统找不到 lark-cli 时才需要填完整路径。",
+        description: "普通用户不用改。保持默认时插件会优先使用包内自带 CLI；需要强制走服务器固定路径时才填写完整路径。",
       },
     },
   },
@@ -429,6 +481,230 @@ const manifest: PaperclipPluginManifestV1 = {
         required: ["sinkId", "record"],
       },
     },
+    {
+      name: TOOL_NAMES.sendCard,
+      displayName: "发送飞书卡片",
+      description: "通过已配置的飞书机器人发送结构化飞书卡片。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          connectionId: {
+            type: "string",
+            title: "飞书机器人连接代号",
+            description: "留空时使用第一个启用的机器人。",
+          },
+          chatId: {
+            type: "string",
+            title: "飞书群/会话 chat_id",
+          },
+          userId: {
+            type: "string",
+            title: "飞书用户 ID",
+          },
+          title: {
+            type: "string",
+            title: "卡片标题",
+          },
+          summary: {
+            type: "string",
+            title: "卡片正文摘要",
+          },
+          actions: {
+            type: "array",
+            title: "按钮",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string", title: "按钮文字" },
+                url: { type: "string", title: "按钮链接" },
+              },
+            },
+          },
+        },
+        required: ["title", "summary"],
+      },
+    },
+    {
+      name: TOOL_NAMES.replyOriginalThread,
+      displayName: "回复原飞书会话",
+      description: "在由飞书消息创建的 Paperclip 任务中，把内容回复到原飞书消息线程。默认会根据当前 Agent 运行自动找到原会话。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            title: "要回复的文本",
+          },
+          issueId: {
+            type: "string",
+            title: "Paperclip 任务 ID（可选）",
+            description: "一般不用填。只有当前运行找不到飞书会话时，才用任务 ID 兜底查找。",
+          },
+          replyMode: {
+            type: "string",
+            title: "回复方式",
+            enum: ["thread", "message"],
+            enumNames: ["在原消息线程里回复", "直接发到原飞书会话"],
+            default: "thread",
+          },
+        },
+        required: ["text"],
+      },
+    },
+    {
+      name: TOOL_NAMES.replySourceThread,
+      displayName: "回复飞书来源线程",
+      description: "在由飞书消息创建的 Paperclip 任务中，把内容回复到原飞书消息线程。建议新 Agent 使用这个工具名；旧工具名继续兼容。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            title: "要回复的文本",
+          },
+          issueId: {
+            type: "string",
+            title: "Paperclip 任务 ID（可选）",
+            description: "一般不用填。只有当前运行找不到飞书会话时，才用任务 ID 兜底查找。",
+          },
+          replyMode: {
+            type: "string",
+            title: "回复方式",
+            enum: ["thread", "message"],
+            enumNames: ["在原消息线程里回复", "直接发到原飞书会话"],
+            default: "thread",
+          },
+        },
+        required: ["text"],
+      },
+    },
+    {
+      name: TOOL_NAMES.askClarification,
+      displayName: "向飞书提出追问",
+      description: "任务信息不足时，在原飞书消息线程里向提出人追问。只适用于从飞书入口创建的 Paperclip 任务。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            title: "要追问的问题",
+          },
+          issueId: {
+            type: "string",
+            title: "Paperclip 任务 ID（可选）",
+            description: "一般不用填。只有当前运行找不到飞书会话时，才用任务 ID 兜底查找。",
+          },
+        },
+        required: ["question"],
+      },
+    },
+    {
+      name: TOOL_NAMES.downloadAttachments,
+      displayName: "下载原飞书附件",
+      description: "下载创建当前 Paperclip 任务的飞书原消息附件，并挂到 Issue。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          issueId: {
+            type: "string",
+            title: "Paperclip 任务 ID（可选）",
+            description: "一般不用填。只有当前运行找不到飞书会话时，才用任务 ID 兜底查找。",
+          },
+        },
+      },
+    },
+    {
+      name: TOOL_NAMES.lookupUser,
+      displayName: "查找飞书用户",
+      description: "按姓名、工号或关键词查找飞书联系人，供智能体在需要确认收件人或提出人身份时使用。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            title: "姓名、工号或关键词",
+          },
+          connectionId: {
+            type: "string",
+            title: "飞书机器人连接代号（可选）",
+            description: "留空时使用第一个启用的机器人。",
+          },
+          profileName: {
+            type: "string",
+            title: "lark-cli profile（可选）",
+            description: "工程师调试时才需要。普通智能体不要填写。",
+          },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: TOOL_NAMES.fetchDoc,
+      displayName: "读取飞书文档",
+      description: "读取飞书云文档内容，供智能体总结或分析。默认使用用户授权身份。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          doc: {
+            type: "string",
+            title: "飞书文档 URL 或 token",
+          },
+          connectionId: {
+            type: "string",
+            title: "飞书机器人连接代号（可选）",
+            description: "用于选择绑定在同一飞书应用下的 profile。",
+          },
+          profileName: {
+            type: "string",
+            title: "lark-cli profile（可选）",
+            description: "工程师调试时才需要。普通智能体不要填写。",
+          },
+          identity: {
+            type: "string",
+            title: "访问身份",
+            enum: ["user", "bot"],
+            enumNames: ["用户授权", "机器人身份"],
+            default: "user",
+          },
+        },
+        required: ["doc"],
+      },
+    },
+    {
+      name: TOOL_NAMES.runLarkCliCapability,
+      displayName: "受控运行 lark-cli 能力",
+      description: "高级兜底工具。只能运行能力中心已开启且命令前缀在允许列表里的 lark-cli 能力。",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          capabilityKey: {
+            type: "string",
+            title: "能力 key",
+            description: "来自能力中心，例如 fetch_doc、lookup_user。",
+          },
+          command: {
+            type: "array",
+            title: "lark-cli 命令参数数组",
+            items: { type: "string" },
+            description: "不要包含 lark-cli 二进制名。插件会按连接注入 profile。",
+          },
+          connectionId: {
+            type: "string",
+            title: "飞书机器人连接代号（可选）",
+          },
+          profileName: {
+            type: "string",
+            title: "lark-cli profile（可选）",
+            description: "工程师调试时才需要。普通智能体不要填写。",
+          },
+          timeoutMs: {
+            type: "number",
+            title: "超时时间毫秒（可选）",
+          },
+        },
+        required: ["capabilityKey", "command"],
+      },
+    },
   ],
   ui: {
     slots: [
@@ -443,6 +719,32 @@ const manifest: PaperclipPluginManifestV1 = {
         id: "feishu-connector-status",
         displayName: "飞书连接器",
         exportName: UI_EXPORTS.dashboardWidget,
+      },
+      {
+        type: "sidebar",
+        id: "feishu-connector-sidebar-link",
+        displayName: "飞书连接器",
+        exportName: UI_EXPORTS.sidebarLink,
+      },
+      {
+        type: "sidebarPanel",
+        id: "feishu-connector-sidebar-panel",
+        displayName: "飞书连接器状态",
+        exportName: UI_EXPORTS.sidebarPanel,
+      },
+      {
+        type: "detailTab",
+        id: "feishu-issue-source",
+        displayName: "飞书",
+        exportName: UI_EXPORTS.issueTab,
+        entityTypes: ["issue"],
+      },
+      {
+        type: "commentContextMenuItem",
+        id: "feishu-comment-reply-action",
+        displayName: "回复到飞书",
+        exportName: UI_EXPORTS.commentReplyAction,
+        entityTypes: ["comment"],
       },
     ],
   },

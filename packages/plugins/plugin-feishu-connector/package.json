@@ -30,6 +30,7 @@
   "author": "Paperclip",
   "license": "MIT",
   "dependencies": {
+    "@larksuite/cli": "^1.0.29",
     "@paperclipai/plugin-sdk": "workspace:*",
     "@paperclipai/shared": "workspace:*"
   },
