@@ -121,6 +121,10 @@ function pluginSettingsHref(props?: PluginInstanceProps | null): string {
 
 type CapabilityCenterData = {
   summary: string;
+  defaultPolicy?: {
+    mode: "authorized" | "conservative";
+    text: string;
+  };
   syncPolicy: {
     cliAutoBundled: boolean;
     larkSkillsAutoSynced: boolean;
@@ -4273,7 +4277,7 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                   <div key="steps" style={checklistGridStyle}>
                     <ChecklistItem key="create-app" done={profiles.length > 0 || activeConnections.length > 0} title="1. 创建或选择飞书应用" detail="普通用户选已有公司机器人；管理员可以新建飞书机器人应用。" />
                     <ChecklistItem key="bot-enabled" done={activeConnections.length > 0} title="2. 开启机器人能力" detail="飞书应用必须有机器人能力，并加入目标群聊。" />
-                    <ChecklistItem key="permissions" done={enabledCapabilityCount > 0} title="3. 导入推荐权限" detail="到能力中心复制推荐权限 JSON；审批、任务、邮箱默认不启用。" />
+                    <ChecklistItem key="permissions" done={enabledCapabilityCount > 0} title="3. 导入推荐权限" detail="到能力中心复制推荐权限 JSON；已接入能力默认按飞书应用授权开放，不需要逐项确认。" />
                     <ChecklistItem key="publish" done={false} title="4. 发布飞书应用" detail="飞书可能需要管理员确认、发布版本、配置事件订阅和可见范围。" />
                     <ChecklistItem key="paperclip-check" done={hasUsableConnection} title="5. 回到 Paperclip 检查连接" detail="刷新机器人列表后点“检查连接”，再去飞书群里发测试话术。" />
                   </div>
@@ -4369,6 +4373,15 @@ export function FeishuSettingsPage(props: PluginSettingsPageProps & PluginInstan
                       <div key="title" style={{ fontWeight: 900 }}>Agent 调用的是插件受控工具，不是裸跑 lark-cli</div>
                       <div key="body" style={{ ...helpStyle, marginTop: "6px" }}>
                         {capabilityCenter.data?.summary}
+                      </div>
+                    </div>
+                    <div key="default-policy" style={subtleBoxStyle}>
+                      <div key="label" style={helpStyle}>默认开放策略</div>
+                      <div key="value" style={{ fontWeight: 800 }}>
+                        {capabilityCenter.data?.defaultPolicy?.mode === "conservative" ? "保守模式" : "按飞书应用授权开放"}
+                      </div>
+                      <div key="detail" style={{ ...helpStyle, marginTop: "6px" }}>
+                        {capabilityCenter.data?.defaultPolicy?.text}
                       </div>
                     </div>
                     <div key="relationship" style={gridTwoStyle}>

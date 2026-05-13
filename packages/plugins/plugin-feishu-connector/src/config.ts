@@ -20,11 +20,12 @@ const optionalStringKeys = [
 
 export const DEFAULT_CONFIG: Required<Pick<
   FeishuConnectorConfig,
-  "larkCliBin" | "dryRunCli" | "paperclipBaseUrl" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
+  "larkCliBin" | "dryRunCli" | "capabilityDefaultPolicy" | "paperclipBaseUrl" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
   | "eventRequireSignature" | "enableQuickReply" | "quickReplyRegex" | "quickReplyText"
 >> = {
   larkCliBin: "lark-cli",
   dryRunCli: true,
+  capabilityDefaultPolicy: "authorized",
   paperclipBaseUrl: "",
   enableEventSubscriber: false,
   eventTypes: "im.message.receive_v1",
@@ -75,6 +76,9 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     dryRunCli: typeof source.dryRunCli === "boolean"
       ? source.dryRunCli
       : DEFAULT_CONFIG.dryRunCli,
+    capabilityDefaultPolicy: source.capabilityDefaultPolicy === "conservative"
+      ? "conservative"
+      : DEFAULT_CONFIG.capabilityDefaultPolicy,
     paperclipBaseUrl: typeof source.paperclipBaseUrl === "string"
       ? source.paperclipBaseUrl.trim()
       : DEFAULT_CONFIG.paperclipBaseUrl,

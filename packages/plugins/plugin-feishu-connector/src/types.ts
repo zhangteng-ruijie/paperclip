@@ -44,6 +44,7 @@ export interface FeishuBaseSinkConfig {
 }
 
 export type FeishuCapabilityScope = "instance" | "bot" | "entry" | "agent";
+export type FeishuCapabilityDefaultPolicy = "authorized" | "conservative";
 
 export interface FeishuCapabilityConfig {
   key: string;
@@ -57,6 +58,7 @@ export interface FeishuCapabilityConfig {
 export interface FeishuConnectorConfig {
   larkCliBin?: string;
   dryRunCli?: boolean;
+  capabilityDefaultPolicy?: FeishuCapabilityDefaultPolicy;
   paperclipBaseUrl?: string;
   enableEventSubscriber?: boolean;
   eventTypes?: string;
