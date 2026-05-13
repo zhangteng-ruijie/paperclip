@@ -191,7 +191,10 @@ describe("Feishu connector worker", () => {
     expect(issues[0]?.description).toContain("接收入口：指定飞书会话「老板资讯群」 → 资讯数字人");
     expect(issues[0]?.description).not.toContain("入口代号");
     expect(issues[0]?.description).not.toContain("boss-chat");
-    expect(issues[0]?.description).toContain("飞书会话：老板资讯群（oc_boss）");
+    expect(issues[0]?.description).toContain("飞书会话：老板资讯群");
+    expect(issues[0]?.description).toContain("原消息：已记录，可回原线程");
+    expect(issues[0]?.description).not.toContain("oc_boss");
+    expect(issues[0]?.description).not.toContain("om_1");
     expect(issues[0]?.assigneeAgentId).toBe("agent-1");
     const issueSource = await harness.getData<Record<string, unknown>>("issue-source", {
       issueId: issues[0]!.id,
@@ -1044,7 +1047,8 @@ describe("Feishu connector worker", () => {
     expect(result.ok).toBe(true);
     const issues = await harness.ctx.issues.list({ companyId: "company-1" });
     expect(issues).toHaveLength(1);
-    expect(issues[0]?.description).toContain("飞书会话：IT-AI应用组（oc_it_ai）");
+    expect(issues[0]?.description).toContain("飞书会话：IT-AI应用组");
+    expect(issues[0]?.description).not.toContain("oc_it_ai");
     expect(issues[0]?.description).toContain("接收入口：包含「小思」的飞书消息 → 资讯数字人");
     expect(issues[0]?.description).not.toContain("keyword-xiaosi-to-zhanggong");
   });
@@ -1083,7 +1087,8 @@ describe("Feishu connector worker", () => {
       { runId: inbound.runId as string, companyId: "company-1", agentId: "agent-1" },
     );
 
-    expect(toolResult.content).toContain("原飞书会话：IT-AI应用组（oc_boss）");
+    expect(toolResult.content).toContain("原飞书会话：IT-AI应用组");
+    expect(toolResult.content).not.toContain("oc_boss");
     const data = toolResult.data as { dryRun?: boolean; args?: string[] };
     expect(data.dryRun).toBe(true);
     expect(data.args).toEqual(expect.arrayContaining([
@@ -1833,7 +1838,8 @@ describe("Feishu connector worker", () => {
     const issues = await harness.ctx.issues.list({ companyId: "company-1" });
     expect(issues).toHaveLength(1);
     expect(issues[0]?.description).toContain("接收入口：包含「小锐」的飞书消息 → 资讯数字人");
-    expect(issues[0]?.description).toContain("飞书会话：张腾的智能体团队（oc_team）");
+    expect(issues[0]?.description).toContain("飞书会话：张腾的智能体团队");
+    expect(issues[0]?.description).not.toContain("oc_team");
     expect(JSON.stringify(result)).toContain("route-xiaorui");
   });
 
@@ -2071,7 +2077,10 @@ describe("Feishu connector worker", () => {
     const comments = await harness.ctx.issues.listComments(first.issueId as string, "company-1");
     expect(comments).toHaveLength(1);
     expect(comments[0]?.body).toContain("海外竞品");
-    expect(comments[0]?.body).toContain("飞书会话：老板资讯群（oc_boss）");
+    expect(comments[0]?.body).toContain("飞书会话：老板资讯群");
+    expect(comments[0]?.body).toContain("原消息：已记录，可回原线程");
+    expect(comments[0]?.body).not.toContain("oc_boss");
+    expect(comments[0]?.body).not.toContain("om_2");
     expect(comments[0]?.body).toContain("接收入口：指定飞书会话「老板资讯群」 → 资讯数字人");
     expect(comments[0]?.body).not.toContain("入口代号");
     expect(comments[0]?.body).not.toContain("boss-chat");
@@ -2201,7 +2210,9 @@ describe("Feishu connector worker", () => {
     expect(sentPrompts.join("\n")).toContain("需求材料.pdf 已作为 Paperclip 附件上传");
     expect(sentPrompts.join("\n")).toContain("不要直接使用 lark-cli");
     expect(sentPrompts.join("\n")).toContain("默认指 Paperclip 任务，不是飞书待办");
-    expect(sentPrompts.join("\n")).toContain("飞书来源：老板资讯群（oc_boss）");
+    expect(sentPrompts.join("\n")).toContain("飞书来源：老板资讯群");
+    expect(sentPrompts.join("\n")).toContain("飞书消息：已记录，可通过飞书工具回到原线程");
+    expect(sentPrompts.join("\n")).not.toContain("oc_boss");
     expect(sentPrompts.join("\n")).toContain("飞书入口：指定飞书会话「老板资讯群」 → 资讯数字人");
     expect(sentPrompts.join("\n")).toContain("可用飞书工具：");
     expect(sentPrompts.join("\n")).toContain("feishu.reply_source_thread");

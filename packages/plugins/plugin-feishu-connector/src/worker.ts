@@ -46,7 +46,7 @@ import {
   createCommentBody,
   createIssueDescription,
   createIssueTitle,
-  describeFeishuConversation,
+  describeFeishuConversationForDisplay,
   describeRouteEntry,
   describeRouteTrigger,
   extractInboundMessage,
@@ -249,6 +249,7 @@ function isLikelyFeishuInternalId(value?: string | null): boolean {
 function displayNameOrNull(value?: string | null): string | null {
   const trimmed = value?.trim();
   if (!trimmed || isLikelyFeishuInternalId(trimmed)) return null;
+  if (/名称待同步|已记录/.test(trimmed)) return null;
   return trimmed;
 }
 
@@ -2988,16 +2989,16 @@ async function handleInboundMessage(
       ...attachmentPromptLines(attachedResources),
       "",
       `Paperclip 任务：${issueRef}`,
-      `飞书来源：${describeFeishuConversation(message, route)}`,
+      `飞书来源：${describeFeishuConversationForDisplay(message, route)}`,
       `飞书入口：${describeRouteEntry(route)}`,
       `可用飞书工具：${enabledFeishuToolNames(config, {
         connectionId: connection.id,
         routeId: route.id,
         agentId: route.targetAgentId,
       }).join(", ") || "无"}`,
-      `飞书消息：${message.messageId}`,
+      "飞书消息：已记录，可通过飞书工具回到原线程",
       message.rootMessageId && message.rootMessageId !== message.messageId
-        ? `飞书话题根消息：${message.rootMessageId}`
+        ? "飞书话题：已记录"
         : null,
     ].filter(Boolean).join("\n");
 
@@ -3903,7 +3904,7 @@ async function replyOriginalFeishuThreadFromTool(
     replyInThread,
     { routeId: route.id, issueId: sessionRecord.data.paperclipIssueId, reason: "Agent 飞书工具回复失败" },
   );
-  const conversation = describeFeishuConversation(message, route);
+  const conversation = describeFeishuConversationForDisplay(message, route);
   record(result?.ok ? "info" : "error", "Agent 工具已尝试回复原飞书会话", {
     runId,
     issueId: sessionRecord.data.paperclipIssueId,

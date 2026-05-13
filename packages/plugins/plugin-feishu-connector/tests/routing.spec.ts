@@ -109,7 +109,10 @@ describe("Feishu routing helpers", () => {
     };
 
     expect(message.chatName).toBe("IT-AI应用组");
-    expect(feishuContextLines(message, route)).toContain("飞书会话：IT-AI应用组（oc_it_ai）");
+    expect(feishuContextLines(message, route)).toContain("飞书会话：IT-AI应用组");
+    expect(feishuContextLines(message, route)).toContain("原消息：已记录，可回原线程");
+    expect(feishuContextLines(message, route).join("\n")).not.toContain("oc_it_ai");
+    expect(feishuContextLines(message, route).join("\n")).not.toContain("om_chat_name");
     expect(feishuContextLines(message, route)).toContain("接收入口：包含「小思」的飞书消息 → 张工 - AI总工");
   });
 

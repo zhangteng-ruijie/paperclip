@@ -331,27 +331,58 @@ export function describeFeishuConversation(
   return "未知飞书会话";
 }
 
+function isLikelyFeishuInternalId(value?: string | null): boolean {
+  const normalized = (value ?? "").trim();
+  if (!normalized) return false;
+  return /^(?:oc|ou|om|on|od|of|cli)_[a-z0-9][a-z0-9_-]{5,}$/i.test(normalized);
+}
+
+function feishuDisplayText(value?: string | null): string | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed || isLikelyFeishuInternalId(trimmed)) return null;
+  return trimmed;
+}
+
+export function describeFeishuConversationForDisplay(
+  message: FeishuInboundMessage,
+  route?: FeishuRouteConfig,
+): string {
+  return feishuDisplayText(message.chatName)
+    ?? feishuDisplayText(route?.chatName)
+    ?? feishuDisplayText(route?.userName)
+    ?? (feishuDisplayText(message.senderName) ? `来自 ${feishuDisplayText(message.senderName)} 的单聊` : null)
+    ?? "已记录，名称待同步";
+}
+
+export function describeFeishuRequesterForDisplay(message: FeishuInboundMessage): string {
+  return feishuDisplayText(message.senderName) ?? "已记录，名称待同步";
+}
+
+function describeFeishuAttachmentForDisplay(attachment: FeishuInboundAttachment): string {
+  const filename = feishuDisplayText(attachment.filename);
+  return `${filename ?? "未命名飞书附件"}（${attachment.resourceType}）`;
+}
+
 export function feishuContextLines(
   message: FeishuInboundMessage,
   route?: FeishuRouteConfig,
 ): string[] {
-  const sender = message.senderName ?? message.senderOpenId ?? message.senderUserId ?? "unknown";
   const lines = [
     "来源：飞书",
     route ? `接收入口：${describeRouteEntry(route)}` : undefined,
-    `飞书会话：${describeFeishuConversation(message, route)}`,
-    `提出人：${sender}`,
-    `飞书消息：${message.messageId}`,
+    `飞书会话：${describeFeishuConversationForDisplay(message, route)}`,
+    `提出人：${describeFeishuRequesterForDisplay(message)}`,
+    "原消息：已记录，可回原线程",
   ];
   if (message.rootMessageId && message.rootMessageId !== message.messageId) {
-    lines.push(`飞书话题根消息：${message.rootMessageId}`);
+    lines.push("飞书话题：已记录");
   }
   if (
     message.threadId &&
     message.threadId !== message.messageId &&
     message.threadId !== message.rootMessageId
   ) {
-    lines.push(`飞书线程：${message.threadId}`);
+    lines.push("飞书线程：已记录");
   }
   return lines.filter((line): line is string => typeof line === "string" && line.length > 0);
 }
@@ -367,16 +398,15 @@ export function createIssueDescription(message: FeishuInboundMessage, route: Fei
     lines.push("");
     lines.push("附件：");
     for (const attachment of message.attachments) {
-      lines.push(`- ${attachment.filename ?? attachment.resourceKey}（${attachment.resourceType}）`);
+      lines.push(`- ${describeFeishuAttachmentForDisplay(attachment)}`);
     }
   }
   return lines.join("\n");
 }
 
 export function createCommentBody(message: FeishuInboundMessage, route?: FeishuRouteConfig): string {
-  const sender = message.senderName ?? message.senderOpenId ?? message.senderUserId ?? "unknown";
   const lines = [
-    `飞书后续消息，来自 ${sender}：`,
+    `飞书后续消息，来自 ${describeFeishuRequesterForDisplay(message)}：`,
     "",
     message.text.trim() || "（空飞书消息）",
     "",
@@ -385,7 +415,7 @@ export function createCommentBody(message: FeishuInboundMessage, route?: FeishuR
   if (message.attachments.length > 0) {
     lines.push("", "附件：");
     for (const attachment of message.attachments) {
-      lines.push(`- ${attachment.filename ?? attachment.resourceKey}（${attachment.resourceType}）`);
+      lines.push(`- ${describeFeishuAttachmentForDisplay(attachment)}`);
     }
   }
   return lines.join("\n");
