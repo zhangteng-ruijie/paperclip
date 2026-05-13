@@ -194,24 +194,14 @@ function listBundledPluginExamples(): AvailablePluginExample[] {
   });
 }
 
-function errorCode(error: unknown): unknown {
-  let current = error;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (typeof current !== "object" || current === null) return undefined;
-    if ("code" in current) return (current as { code?: unknown }).code;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return undefined;
-}
-
 /**
  * Resolve a plugin by either database ID or plugin key.
  *
  * Lookup order:
  * - UUID-like IDs: getById first, then getByKey.
- * - Scoped package keys (e.g. "@scope/name"): getByKey only, never getById.
- * - Other non-UUID IDs: getByKey first, then try getById for test/memory registries.
- *   Any UUID parse error from getById is ignored.
+ * - All non-UUID values: getByKey only, never getById. The persisted plugin
+ *   ID column is a PostgreSQL UUID, so probing it with keys such as
+ *   "acme.plugin" raises a database cast error before a key lookup can happen.
  *
  * @param registry - The plugin registry service instance
  * @param pluginId - Either a database UUID or plugin key (manifest id)
@@ -222,28 +212,13 @@ async function resolvePlugin(
   pluginId: string,
 ) {
   const isUuid = UUID_REGEX.test(pluginId);
-  const isScopedPackageKey = pluginId.startsWith("@") || pluginId.includes("/");
 
   if (!isUuid) {
-    const byKey = await registry.getByKey(pluginId);
-    if (byKey) return byKey;
+    return registry.getByKey(pluginId);
   }
 
-  // Scoped package IDs are valid plugin keys but invalid UUIDs.
-  // Skip getById() entirely to avoid Postgres uuid parse errors.
-  if (isScopedPackageKey && !isUuid) {
-    return null;
-  }
-
-  try {
-    const byId = await registry.getById(pluginId);
-    if (byId) return byId;
-  } catch (error) {
-    // Ignore invalid UUID cast errors and continue with key lookup.
-    if (errorCode(error) !== "22P02") {
-      throw error;
-    }
-  }
+  const byId = await registry.getById(pluginId);
+  if (byId) return byId;
 
   return registry.getByKey(pluginId);
 }
