@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import pino from "pino";
+import { pino, transport } from "pino";
 import { pinoHttp } from "pino-http";
 import { readConfigFile } from "../config-file.js";
 import { resolveDefaultLogsDir, resolveHomeAwarePath } from "../home-paths.js";
@@ -30,7 +30,7 @@ const sharedOpts = {
 export const logger = pino({
   level: "debug",
   redact: ["req.headers.authorization"],
-}, pino.transport({
+}, transport({
   targets: [
     {
       target: "pino-pretty",

@@ -245,7 +245,7 @@ export function pluginUiStaticRoutes(db: Db, options: PluginUiStaticRouteOptions
     // Extract the relative file path from the named wildcard.
     // In Express 5 with path-to-regexp v8, named wildcards may return
     // an array of path segments or a single string.
-    const rawParam = req.params.filePath;
+    const rawParam = (req.params as { pluginId: string; filePath?: string | string[] }).filePath;
     const rawFilePath = Array.isArray(rawParam)
       ? rawParam.join("/")
       : rawParam as string | undefined;

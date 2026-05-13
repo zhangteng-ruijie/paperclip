@@ -3657,7 +3657,10 @@ export function accessRoutes(
       await assertCompanyPermission(req, invite.companyId, "users:invite");
     }
     if (invite.acceptedAt) throw conflict("Invite already consumed");
-    if (invite.revokedAt) return res.json(invite);
+    if (invite.revokedAt) {
+      res.json(invite);
+      return;
+    }
 
     const revoked = await db
       .update(invites)
