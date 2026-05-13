@@ -6,21 +6,29 @@ import {
 } from "./constants.js";
 import type {
   FeishuBaseSinkConfig,
+  FeishuCapabilityConfig,
+  FeishuCapabilityScope,
   FeishuConnectionConfig,
   FeishuConnectorConfig,
   FeishuRouteConfig,
 } from "./types.js";
 
+const optionalStringKeys = [
+  "eventVerificationTokenRef",
+  "eventEncryptKeyRef",
+] as const;
+
 export const DEFAULT_CONFIG: Required<Pick<
   FeishuConnectorConfig,
   "larkCliBin" | "dryRunCli" | "paperclipBaseUrl" | "enableEventSubscriber" | "eventTypes" | "ackOnInbound" | "ackMessageTemplate" | "completionMessageTemplate"
-  | "enableQuickReply" | "quickReplyRegex" | "quickReplyText"
+  | "eventRequireSignature" | "enableQuickReply" | "quickReplyRegex" | "quickReplyText"
 >> = {
   larkCliBin: "lark-cli",
   dryRunCli: true,
   paperclipBaseUrl: "",
   enableEventSubscriber: false,
   eventTypes: "im.message.receive_v1",
+  eventRequireSignature: false,
   ackOnInbound: false,
   ackMessageTemplate: DEFAULT_ACK_TEMPLATE,
   completionMessageTemplate: DEFAULT_COMPLETION_TEMPLATE,
@@ -49,10 +57,18 @@ function normalizeStringList(value: unknown): string[] {
     .filter(Boolean))];
 }
 
+function normalizeCapabilityScope(value: unknown): FeishuCapabilityScope {
+  return value === "bot" || value === "entry" || value === "agent" ? value : "instance";
+}
+
 export function normalizeConfig(input: Record<string, unknown> | null | undefined): FeishuConnectorConfig {
   const source = isRecord(input) ? input : {};
+  const optionalStrings = Object.fromEntries(optionalStringKeys
+    .map((key) => [key, typeof source[key] === "string" ? source[key].trim() : undefined])
+    .filter(([, value]) => typeof value === "string" && value.length > 0));
   return {
     ...DEFAULT_CONFIG,
+    ...optionalStrings,
     larkCliBin: typeof source.larkCliBin === "string" && source.larkCliBin.trim()
       ? source.larkCliBin.trim()
       : DEFAULT_CONFIG.larkCliBin,
@@ -66,6 +82,7 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
     eventTypes: typeof source.eventTypes === "string" && source.eventTypes.trim()
       ? source.eventTypes.trim()
       : DEFAULT_CONFIG.eventTypes,
+    eventRequireSignature: source.eventRequireSignature === true,
     ackOnInbound: source.ackOnInbound === true,
     ackMessageTemplate: typeof source.ackMessageTemplate === "string"
       ? source.ackMessageTemplate
@@ -99,6 +116,14 @@ export function normalizeConfig(input: Record<string, unknown> | null | undefine
       typeof sink?.baseToken === "string" &&
       typeof sink?.tableIdOrName === "string"
     ),
+    capabilities: asArray<FeishuCapabilityConfig>(source.capabilities)
+      .filter((capability) => typeof capability?.key === "string")
+      .map((capability) => ({
+        ...capability,
+        key: capability.key.trim(),
+        scope: normalizeCapabilityScope(capability.scope),
+      }))
+      .filter((capability) => capability.key.length > 0),
   };
 }
 

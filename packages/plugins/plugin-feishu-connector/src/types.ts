@@ -43,12 +43,26 @@ export interface FeishuBaseSinkConfig {
   fieldMap?: Record<string, string>;
 }
 
+export type FeishuCapabilityScope = "instance" | "bot" | "entry" | "agent";
+
+export interface FeishuCapabilityConfig {
+  key: string;
+  enabled?: boolean;
+  scope?: FeishuCapabilityScope;
+  connectionId?: string;
+  routeId?: string;
+  agentId?: string;
+}
+
 export interface FeishuConnectorConfig {
   larkCliBin?: string;
   dryRunCli?: boolean;
   paperclipBaseUrl?: string;
   enableEventSubscriber?: boolean;
   eventTypes?: string;
+  eventVerificationTokenRef?: string;
+  eventEncryptKeyRef?: string;
+  eventRequireSignature?: boolean;
   ackOnInbound?: boolean;
   ackMessageTemplate?: string;
   completionMessageTemplate?: string;
@@ -58,6 +72,7 @@ export interface FeishuConnectorConfig {
   connections?: FeishuConnectionConfig[];
   routes?: FeishuRouteConfig[];
   baseSinks?: FeishuBaseSinkConfig[];
+  capabilities?: FeishuCapabilityConfig[];
 }
 
 export interface FeishuInboundMessage {
@@ -99,21 +114,26 @@ export interface FeishuSessionData {
   sessionKey: string;
   routeId?: string;
   chatId?: string;
+  chatName?: string;
   rootMessageId?: string;
   threadId?: string;
   requesterOpenId?: string;
+  requesterName?: string;
+  attachments?: FeishuInboundAttachment[];
   paperclipIssueId: string;
   paperclipIssueIdentifier?: string;
   paperclipIssueTitle?: string;
   paperclipIssueUrl?: string;
   paperclipAgentId?: string;
   paperclipAgentSessionId?: string;
+  replyMode?: "none" | "message" | "thread";
   lastRunId?: string;
   lastRunStatus?: string;
   lastRunFinishedAt?: string;
   lastCompletionReplyKey?: string;
   createdAt?: string;
   lastMessageId: string;
+  processedMessageIds?: string[];
   updatedAt: string;
 }
 

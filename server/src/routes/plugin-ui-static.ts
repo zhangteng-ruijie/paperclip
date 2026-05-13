@@ -65,6 +65,20 @@ const CACHE_CONTROL_IMMUTABLE = `public, max-age=${ONE_YEAR_SECONDS}, immutable`
  */
 const CACHE_CONTROL_REVALIDATE = "public, max-age=0, must-revalidate";
 
+/** UUID v4 regex used for plugin ID route resolution. */
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function errorCode(error: unknown): unknown {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) return undefined;
+    if ("code" in current) return (current as { code?: unknown }).code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 /**
  * MIME types for common plugin UI bundle file extensions.
  */
@@ -243,14 +257,14 @@ export function pluginUiStaticRoutes(db: Db, options: PluginUiStaticRouteOptions
 
     // Step 1: Look up the plugin
     let plugin = null;
+    const isUuid = UUID_REGEX.test(pluginId);
+    if (!isUuid) {
+      plugin = await registry.getByKey(pluginId);
+    }
     try {
-      plugin = await registry.getById(pluginId);
+      plugin ??= await registry.getById(pluginId);
     } catch (error) {
-      const maybeCode =
-        typeof error === "object" && error !== null && "code" in error
-          ? (error as { code?: unknown }).code
-          : undefined;
-      if (maybeCode !== "22P02") {
+      if (errorCode(error) !== "22P02") {
         throw error;
       }
     }

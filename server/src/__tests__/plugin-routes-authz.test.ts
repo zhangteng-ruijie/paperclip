@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockRegistry = vi.hoisted(() => ({
   getById: vi.fn(),
   getByKey: vi.fn(),
+  getConfig: vi.fn(),
   upsertConfig: vi.fn(),
   getCompanySettings: vi.fn(),
   upsertCompanySettings: vi.fn(),
@@ -224,6 +225,30 @@ describe.sequential("plugin install and upgrade authz", () => {
     expect(mockLifecycle.disable).not.toHaveBeenCalled();
   }, 20_000);
 
+  it("rejects plugin config saves that contain secret refs even for instance admins", async () => {
+    readyPlugin();
+
+    const { app } = await createApp({
+      type: "board",
+      userId: "admin-1",
+      source: "session",
+      isInstanceAdmin: true,
+      companyIds: [companyA],
+    });
+
+    const res = await request(app)
+      .post(`/api/plugins/${pluginId}/config`)
+      .send({
+        configJson: {
+          apiKeyRef: "77777777-7777-4777-8777-777777777777",
+        },
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/secret references are disabled/i);
+    expect(mockRegistry.upsertConfig).not.toHaveBeenCalled();
+  }, 20_000);
+
   it("allows instance admins to upgrade plugins", async () => {
     const pluginId = "11111111-1111-4111-8111-111111111111";
     mockRegistry.getById.mockResolvedValue({
@@ -250,6 +275,50 @@ describe.sequential("plugin install and upgrade authz", () => {
 
     expect(res.status).toBe(200);
     expect(mockLifecycle.upgrade).toHaveBeenCalledWith(pluginId, "1.1.0");
+  }, 20_000);
+});
+
+describe.sequential("plugin route id resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resolves manifest plugin keys without treating them as UUIDs", async () => {
+    mockRegistry.getByKey.mockResolvedValue({
+      id: pluginId,
+      pluginKey: "paperclipai.feishu-connector",
+      version: "1.0.0",
+      status: "ready",
+    });
+    mockRegistry.getConfig.mockResolvedValue({
+      pluginId,
+      configJson: { dryRunCli: true },
+    });
+
+    const { app } = await createApp(boardActor());
+
+    const res = await request(app)
+      .get("/api/plugins/paperclipai.feishu-connector/config");
+
+    expect(res.status).toBe(200);
+    expect(res.body.configJson).toEqual({ dryRunCli: true });
+    expect(mockRegistry.getByKey).toHaveBeenCalledWith("paperclipai.feishu-connector");
+    expect(mockRegistry.getById).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it("treats nested Postgres invalid-uuid errors as plugin-key misses", async () => {
+    const wrappedInvalidUuid = new Error("invalid input syntax for type uuid");
+    (wrappedInvalidUuid as Error & { cause?: unknown }).cause = { code: "22P02" };
+    mockRegistry.getByKey.mockResolvedValue(null);
+    mockRegistry.getById.mockRejectedValue(wrappedInvalidUuid);
+
+    const { app } = await createApp(boardActor());
+
+    const res = await request(app)
+      .get("/api/plugins/missing.manifest-key/config");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Plugin not found");
   }, 20_000);
 });
 
