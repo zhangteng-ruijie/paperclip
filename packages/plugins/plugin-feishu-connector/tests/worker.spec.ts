@@ -372,7 +372,8 @@ describe("Feishu connector worker", () => {
     expect(capabilities).toHaveProperty("recommendedPermissionJson.scopes.tenant");
     expect(JSON.stringify(capabilities)).toContain("im:message:send_as_bot");
     expect(JSON.stringify(capabilities)).toContain("docx:document:readonly");
-    expect(JSON.stringify(capabilities)).toContain("审批/任务/邮箱默认关闭");
+    expect(JSON.stringify(capabilities)).toContain("默认按飞书应用授权开放");
+    expect(JSON.stringify(capabilities)).toContain("用户在能力中心关闭");
     expect(JSON.stringify(capabilities)).toContain("消息与群聊");
     expect(JSON.stringify(capabilities)).toContain("feishu.reply_source_thread");
     expect(JSON.stringify(capabilities)).toContain("feishu.ask_clarification");
@@ -385,6 +386,34 @@ describe("Feishu connector worker", () => {
     expect(JSON.stringify(capabilities)).toContain("知识库");
     expect(JSON.stringify(capabilities)).toContain("云空间文件");
     expect(JSON.stringify(capabilities)).toContain("更新 lark-cli 不会自动同步 lark-* skills 到 Paperclip skill");
+    const capabilityList = capabilities.capabilities as Array<{ key: string; enabled: boolean; statusLabel: string }>;
+    expect(capabilityList.find((capability) => capability.key === "send_card")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(capabilityList.find((capability) => capability.key === "fetch_doc")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(capabilityList.find((capability) => capability.key === "mail")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(capabilityList.find((capability) => capability.key === "task")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(capabilityList.find((capability) => capability.key === "calendar_events")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(capabilityList.find((capability) => capability.key === "wiki")).toMatchObject({
+      enabled: true,
+      statusLabel: expect.stringContaining("已开启"),
+    });
+    expect(JSON.stringify(capabilities)).toContain("mail:user_mailbox.message:send");
+    expect(JSON.stringify(capabilities)).toContain("calendar:calendar.event:create");
+    expect(JSON.stringify(capabilities)).toContain("task:task:write");
   });
 
   it("declares the productized UI surfaces including the plugin sidebar", () => {
@@ -892,8 +921,30 @@ describe("Feishu connector worker", () => {
     expect(JSON.stringify(conflicts[0]?.data)).toContain("低优先级锐捷入口");
   });
 
-  it("keeps the generic lark-cli capability runner closed until a capability is enabled", async () => {
-    const harness = createTestHarness({ manifest, config });
+  it("opens implemented lark-cli capabilities by default but still respects explicit off switches", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-default-capability-runner-"));
+    const fakeCli = path.join(tempDir, "fake-lark-cli.mjs");
+    await fs.writeFile(fakeCli, [
+      "#!/usr/bin/env node",
+      "const args = process.argv.slice(2);",
+      "if (args.includes('docs') && args.includes('+fetch')) {",
+      "  console.log(JSON.stringify({ ok: true, args }));",
+      "  process.exit(0);",
+      "}",
+      "console.error('unexpected args ' + args.join(' '));",
+      "process.exit(1);",
+    ].join("\n"));
+    await fs.chmod(fakeCli, 0o755);
+
+    const harness = createTestHarness({
+      manifest,
+      config: {
+        ...config,
+        dryRunCli: false,
+        larkCliBin: fakeCli,
+        capabilities: [],
+      },
+    });
     harness.seed({ companies: [company()], agents: [agent()] });
     await plugin.definition.setup(harness.ctx);
 
@@ -901,12 +952,96 @@ describe("Feishu connector worker", () => {
       TOOL_NAMES.runLarkCliCapability,
       {
         capabilityKey: "fetch_doc",
+        connectionId: "news-bot",
         command: ["docs", "+fetch", "--as", "user", "--doc", "https://ruijie.feishu.cn/docx/example"],
       },
-      { runId: "run-generic-closed", companyId: "company-1", agentId: "agent-1" },
+      { runId: "run-generic-default-open", companyId: "company-1", agentId: "agent-1" },
     );
 
-    expect(result.error).toContain("未开启");
+    expect(result.content).toContain("lark-cli 能力已执行");
+    expect(result.data).toEqual(expect.objectContaining({
+      args: expect.arrayContaining(["--profile", "paperclip-news-bot", "docs", "+fetch"]),
+    }));
+
+    const blockedHarness = createTestHarness({
+      manifest,
+      config: {
+        ...config,
+        dryRunCli: false,
+        larkCliBin: fakeCli,
+        capabilities: [{ key: "fetch_doc", enabled: false }],
+      },
+    });
+    blockedHarness.seed({ companies: [company()], agents: [agent()] });
+    await plugin.definition.setup(blockedHarness.ctx);
+
+    const blocked = await blockedHarness.executeTool<Record<string, unknown>>(
+      TOOL_NAMES.runLarkCliCapability,
+      {
+        capabilityKey: "fetch_doc",
+        connectionId: "news-bot",
+        command: ["docs", "+fetch", "--as", "user", "--doc", "https://ruijie.feishu.cn/docx/example"],
+      },
+      { runId: "run-generic-explicitly-closed", companyId: "company-1", agentId: "agent-1" },
+    );
+
+    expect(blocked.error).toContain("未开启");
+  });
+
+  it("opens lark-cli service-backed platform capabilities through the audited runner by default", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-platform-capability-runner-"));
+    const fakeCli = path.join(tempDir, "fake-lark-cli.mjs");
+    await fs.writeFile(fakeCli, [
+      "#!/usr/bin/env node",
+      "const args = process.argv.slice(2);",
+      "if (args.includes('task') && args.includes('+get-my-tasks')) {",
+      "  console.log(JSON.stringify({ ok: true, service: 'task', args }));",
+      "  process.exit(0);",
+      "}",
+      "if (args.includes('calendar') && args.includes('+agenda')) {",
+      "  console.log(JSON.stringify({ ok: true, service: 'calendar', args }));",
+      "  process.exit(0);",
+      "}",
+      "console.error('unexpected args ' + args.join(' '));",
+      "process.exit(1);",
+    ].join("\n"));
+    await fs.chmod(fakeCli, 0o755);
+
+    const harness = createTestHarness({
+      manifest,
+      config: {
+        ...config,
+        dryRunCli: false,
+        larkCliBin: fakeCli,
+        capabilities: [],
+      },
+    });
+    harness.seed({ companies: [company()], agents: [agent()] });
+    await plugin.definition.setup(harness.ctx);
+
+    const taskResult = await harness.executeTool<Record<string, unknown>>(
+      TOOL_NAMES.runLarkCliCapability,
+      {
+        capabilityKey: "task",
+        connectionId: "news-bot",
+        command: ["task", "+get-my-tasks", "--as", "user", "--complete=false"],
+      },
+      { runId: "run-platform-task", companyId: "company-1", agentId: "agent-1" },
+    );
+    expect(taskResult.content).toContain("lark-cli 能力已执行");
+    expect((taskResult.data as { stdout?: string }).stdout).toContain('"service":"task"');
+
+    const calendarResult = await harness.executeTool<Record<string, unknown>>(
+      TOOL_NAMES.runLarkCliCapability,
+      {
+        capabilityKey: "calendar_events",
+        connectionId: "news-bot",
+        command: ["calendar", "+agenda", "--as", "user", "--start", "2026-05-13"],
+      },
+      { runId: "run-platform-calendar", companyId: "company-1", agentId: "agent-1" },
+    );
+    expect(calendarResult.content).toContain("lark-cli 能力已执行");
+    expect((calendarResult.data as { stdout?: string }).stdout).toContain('"service":"calendar"');
   });
 
   it("runs only enabled and allowlisted lark-cli capabilities through the audited runner", async () => {
