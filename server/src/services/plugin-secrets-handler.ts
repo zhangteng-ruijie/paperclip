@@ -96,16 +96,68 @@ export function extractSecretRefPathsFromConfig(
     return refs;
   }
 
-  // Fallback: no schema or no secret-ref annotations — collect all UUIDs.
+  // Known ID field names that store UUIDs but are NOT secret references.
+  // These are regular entity IDs (company, agent, project, etc.) and should
+  // not trigger the secret-ref detection logic.
+  const KNOWN_ID_FIELD_NAMES = new Set([
+    // Core entity IDs commonly used in plugin configs
+    "companyId",
+    "targetAgentId",
+    "projectId",
+    "connectionId",
+    "userId",
+    "chatId",
+    "issueId",
+    "baseSinkId",
+    "taskId",
+    "buildId",
+    "runId",
+    "sessionId",
+    "channelId",
+    "botId",
+    "appId",
+    "tenantId",
+    "userOpenId",
+    // Other known ID patterns that might look like UUIDs but aren't secrets
+    "id",
+    "ref",
+    "key",
+  ]);
+
+  /**
+   * Check if a field name is a known ID field that should be excluded from
+   * secret-ref UUID detection.
+   */
+  function isKnownIdFieldName(fieldName: string): boolean {
+    // Direct match
+    if (KNOWN_ID_FIELD_NAMES.has(fieldName)) return true;
+    // Skip fields ending with Id (e.g., someCustomId)
+    if (fieldName.endsWith("Id")) return true;
+    // Skip fields ending with Ref that aren't secret refs
+    // (actual secret refs have format: "secret-ref" in schema)
+    if (fieldName.endsWith("Ref") && !fieldName.includes("Secret")) return true;
+    return false;
+  }
+
+  // Fallback: no schema or no secret-ref annotations — collect UUIDs
+  // but exclude known ID fields to avoid false positives.
   // This preserves backwards compatibility for plugins that omit
   // instanceConfigSchema.
-  function walkAll(value: unknown): void {
+  function walkAll(value: unknown, currentPath: string[] = []): void {
     if (typeof value === "string") {
-      if (isUuidSecretRef(value)) addRef(value, "$");
+      if (isUuidSecretRef(value)) {
+        // Get the field name from the path
+        const fieldName = currentPath[currentPath.length - 1] ?? "";
+        if (!isKnownIdFieldName(fieldName)) {
+          addRef(value, currentPath.join(".") || "$");
+        }
+      }
     } else if (Array.isArray(value)) {
-      for (const item of value) walkAll(item);
+      for (const item of value) walkAll(item, currentPath);
     } else if (value !== null && typeof value === "object") {
-      for (const v of Object.values(value as Record<string, unknown>)) walkAll(v);
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        walkAll(v, [...currentPath, k]);
+      }
     }
   }
 
