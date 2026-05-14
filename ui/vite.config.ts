@@ -30,6 +30,9 @@ export default defineConfig(({ mode }) => ({
         target: "http://localhost:3100",
         ws: true,
       },
+      "/_plugins": {
+        target: "http://localhost:3100",
+      },
     },
   },
 }));
