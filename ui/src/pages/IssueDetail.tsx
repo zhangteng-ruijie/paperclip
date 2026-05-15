@@ -3740,6 +3740,7 @@ export function IssueDetail() {
       <IssueDocumentsSection
         issue={issue}
         canDeleteDocuments={Boolean(session?.user?.id)}
+        canManageDocumentLocks={Boolean(session?.user?.id)}
         feedbackVotes={feedbackVotes}
         feedbackDataSharingPreference={feedbackDataSharingPreference}
         feedbackTermsUrl={VISIBLE_FEEDBACK_TERMS_URL}

@@ -64,6 +64,8 @@ const ACTIVITY_ROW_VERBS_EN: Record<string, string> = {
   "issue.attachment_removed": "removed attachment from",
   "issue.document_created": "created document for",
   "issue.document_updated": "updated document on",
+  "issue.document_locked": "locked document on",
+  "issue.document_unlocked": "unlocked document on",
   "issue.document_deleted": "deleted document from",
   "issue.monitor_scheduled": "scheduled monitor on",
   "issue.monitor_triggered": "triggered monitor for",
@@ -162,6 +164,8 @@ const ISSUE_ACTIVITY_LABELS_EN: Record<string, string> = {
   "issue.attachment_removed": "removed an attachment",
   "issue.document_created": "created a document",
   "issue.document_updated": "updated a document",
+  "issue.document_locked": "locked a document",
+  "issue.document_unlocked": "unlocked a document",
   "issue.document_deleted": "deleted a document",
   "issue.monitor_scheduled": "scheduled a monitor",
   "issue.monitor_triggered": "triggered a monitor",
@@ -519,8 +523,14 @@ export function formatIssueActivityAction(
   }
 
   if (
-    (action === "issue.document_created" || action === "issue.document_updated" || action === "issue.document_deleted")
-    && details
+    (
+      action === "issue.document_created" ||
+      action === "issue.document_updated" ||
+      action === "issue.document_locked" ||
+      action === "issue.document_unlocked" ||
+      action === "issue.document_deleted"
+    ) &&
+    details
   ) {
     const key = typeof details.key === "string" ? details.key : isZh ? "文档" : "document";
     const title = typeof details.title === "string" && details.title
