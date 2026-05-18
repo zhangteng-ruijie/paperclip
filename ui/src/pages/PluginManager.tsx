@@ -253,7 +253,9 @@ export function PluginManager() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{example.displayName}</span>
-                        <Badge variant="outline">{copy.plugins.exampleBadge}</Badge>
+                        <Badge variant="outline">
+                          {example.tag === "first-party" ? "First-party" : copy.plugins.exampleBadge}
+                        </Badge>
                         {installedPlugin ? (
                           <Badge
                             variant={installedPlugin.status === "ready" ? "default" : "secondary"}
