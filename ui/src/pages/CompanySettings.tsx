@@ -29,7 +29,7 @@ import {
 import { hidePaperclipIngUrl } from "../lib/external-links";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
-import { Settings, Check, Download, Upload } from "lucide-react";
+import { Settings, Check, CloudUpload, Download, Upload } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import { formatDateTime } from "../lib/utils";
 import { JsonSchemaForm, getDefaultValues, validateJsonSchemaForm } from "@/components/JsonSchemaForm";
@@ -63,6 +63,10 @@ export function CompanySettings() {
   const copy = getCompanySettingsCopy(locale);
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
+  const { data: experimentalSettings } = useQuery({
+    queryKey: queryKeys.instance.experimentalSettings,
+    queryFn: () => instanceSettingsApi.getExperimental(),
+  });
   // General settings local state
   const [companyName, setCompanyName] = useState("");
   const [description, setDescription] = useState("");
@@ -91,6 +95,7 @@ export function CompanySettings() {
     Number.isInteger(attachmentMaxBytes)
     && attachmentMaxBytes >= BYTES_PER_MIB
     && attachmentMaxBytes <= MAX_COMPANY_ATTACHMENT_MAX_BYTES;
+  const cloudSyncEnabled = experimentalSettings?.enableCloudSync === true;
 
   const generalDirty =
     !!selectedCompany &&
@@ -611,7 +616,15 @@ export function CompanySettings() {
             <a href="/org" className="underline hover:text-foreground">{copy.orgChart}</a>{" "}
             {copy.companyPackagesDescriptionSuffix}
           </p>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {cloudSyncEnabled ? (
+              <Button size="sm" asChild>
+                <a href="/company/settings/cloud-upstream">
+                  <CloudUpload className="mr-1.5 h-3.5 w-3.5" />
+                  Send to Paperclip Cloud
+                </a>
+              </Button>
+            ) : null}
             <Button size="sm" variant="outline" asChild>
               <a href="/company/export">
                 <Download className="mr-1.5 h-3.5 w-3.5" />
