@@ -45,10 +45,10 @@ export function CompanyInvites() {
     return () => window.clearTimeout(timeout);
   }, [latestInviteCopied]);
 
-  async function copyInviteUrl(url: string) {
+  async function copyText(text: string, unavailableBody: string) {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
+        await navigator.clipboard.writeText(text);
         return true;
       }
     } catch {
@@ -57,7 +57,7 @@ export function CompanyInvites() {
 
     pushToast({
       title: copy.invites.clipboardUnavailable,
-      body: copy.invites.clipboardUnavailableBody,
+      body: unavailableBody,
       tone: "warn",
     });
     return false;
@@ -101,7 +101,7 @@ export function CompanyInvites() {
     onSuccess: async (invite) => {
       setLatestInviteUrl(invite.inviteUrl);
       setLatestInviteCopied(false);
-      const copied = await copyInviteUrl(invite.inviteUrl);
+      const copied = await copyText(invite.inviteUrl, copy.invites.clipboardUnavailableBody);
 
       await queryClient.invalidateQueries({ queryKey: inviteHistoryQueryKey });
       pushToast({
@@ -239,7 +239,7 @@ export function CompanyInvites() {
             <button
               type="button"
               onClick={async () => {
-                const copied = await copyInviteUrl(latestInviteUrl);
+                const copied = await copyText(latestInviteUrl, copy.invites.clipboardUnavailableBody);
                 setLatestInviteCopied(copied);
               }}
               className="w-full rounded-md border border-border bg-muted/60 px-3 py-2 text-left text-sm break-all transition-colors hover:bg-background"
@@ -297,7 +297,7 @@ export function CompanyInvites() {
                           {formatInviteState(invite.state, locale)}
                         </span>
                       </td>
-                      <td className="px-5 py-3 align-top">{invite.humanRole ? formatAccessRoleLabel(invite.humanRole, locale) : "—"}</td>
+                      <td className="px-5 py-3 align-top">{formatInviteAudience(invite, locale)}</td>
                       <td className="px-5 py-3 align-top">
                         <div>{invite.invitedByUser?.name || invite.invitedByUser?.email || copy.invites.unknownInviter}</div>
                         {invite.invitedByUser?.email && invite.invitedByUser.name ? (
@@ -352,4 +352,18 @@ export function CompanyInvites() {
       </section>
     </div>
   );
+}
+
+function formatInviteAudience(
+  invite: Awaited<ReturnType<typeof accessApi.listInvites>>["invites"][number],
+  locale: string | null | undefined,
+) {
+  const isZh = locale === "zh-CN";
+  if (invite.allowedJoinTypes === "agent") return isZh ? "智能体" : "Agent";
+  if (invite.allowedJoinTypes === "both") {
+    const role = invite.humanRole ? formatAccessRoleLabel(invite.humanRole, locale) : null;
+    if (isZh) return role ? `人员或智能体 · ${role}` : "人员或智能体";
+    return role ? `Human or agent · ${role}` : "Human or agent";
+  }
+  return invite.humanRole ? formatAccessRoleLabel(invite.humanRole, locale) : isZh ? "人员" : "Human";
 }
