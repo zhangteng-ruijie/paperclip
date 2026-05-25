@@ -268,9 +268,8 @@ export function InviteLandingPage() {
     if (!list || !inviteQuery.data?.companyId) return;
     if (list.some((c) => c.id === inviteQuery.data!.companyId)) {
       clearPendingInviteToken(token);
-      navigate("/", { replace: true });
     }
-  }, [companiesQuery.data, inviteQuery.data, token, navigate]);
+  }, [companiesQuery.data, inviteQuery.data, token]);
 
   const invite = inviteQuery.data;
   const isCheckingExistingMembership =
@@ -289,6 +288,9 @@ export function InviteLandingPage() {
   const requestedHumanRole = formatHumanRole(invite?.humanRole);
   const inviteJoinRequestStatus = invite?.joinRequestStatus ?? null;
   const inviteJoinRequestType = invite?.joinRequestType ?? null;
+  const canCompleteAcceptedHumanInvite =
+    inviteJoinRequestType === "human" &&
+    (inviteJoinRequestStatus === "pending_approval" || inviteJoinRequestStatus === "approved");
   const requiresHumanAccount =
     healthQuery.data?.deploymentMode === "authenticated" &&
     !sessionQuery.data &&
@@ -298,7 +300,7 @@ export function InviteLandingPage() {
     Boolean(sessionQuery.data) &&
     !showsAgentForm &&
     invite?.inviteType !== "bootstrap_ceo" &&
-    !inviteJoinRequestStatus &&
+    (!inviteJoinRequestStatus || canCompleteAcceptedHumanInvite) &&
     !isCheckingExistingMembership &&
     !isCurrentMember &&
     !result &&
@@ -338,6 +340,7 @@ export function InviteLandingPage() {
       const asBootstrap = isBootstrapAcceptancePayload(payload);
       setResult({ kind: asBootstrap ? "bootstrap" : "join", payload });
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
       await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       if (invite?.companyId && isApprovedHumanJoinPayload(payload, showsAgentForm)) {
         setSelectedCompanyId(invite.companyId, { source: "manual" });
@@ -372,6 +375,7 @@ export function InviteLandingPage() {
       setAuthFeedback(null);
       rememberPendingInviteToken(token);
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
       const { companies: freshCompanies } = await queryClient.fetchQuery(companiesListQueryOptions);
 
       if (invite?.companyId && freshCompanies.some((company) => company.id === invite.companyId)) {
@@ -406,12 +410,13 @@ export function InviteLandingPage() {
 
   const joinButtonLabel = useMemo(() => {
     if (!invite) return locale === "zh-CN" ? "继续" : "Continue";
+    if (isCurrentMember) return locale === "zh-CN" ? "打开公司" : "Open company";
     if (invite.inviteType === "bootstrap_ceo") return t("invite.acceptBootstrapInvite");
     if (showsAgentForm) return t("invite.submitJoinRequest");
     return sessionQuery.data
       ? (locale === "zh-CN" ? "接受邀请" : "Accept invite")
       : (locale === "zh-CN" ? "继续" : "Continue");
-  }, [invite, locale, sessionQuery.data, showsAgentForm, t]);
+  }, [invite, isCurrentMember, locale, sessionQuery.data, showsAgentForm, t]);
 
   if (!token) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-destructive">{t("invite.invalidToken")}</div>;
@@ -454,7 +459,7 @@ export function InviteLandingPage() {
     );
   }
 
-  if (inviteJoinRequestStatus === "pending_approval") {
+  if (inviteJoinRequestStatus === "pending_approval" && !canCompleteAcceptedHumanInvite) {
     return (
       <AwaitingJoinApprovalPanel
         companyDisplayName={companyDisplayName}
@@ -465,7 +470,7 @@ export function InviteLandingPage() {
     );
   }
 
-  if (inviteJoinRequestStatus) {
+  if (inviteJoinRequestStatus && !canCompleteAcceptedHumanInvite) {
     return (
       <div className="mx-auto max-w-xl py-10">
         <div className="rounded-lg border border-border bg-card p-6" data-testid="invite-error">
@@ -903,27 +908,29 @@ export function InviteLandingPage() {
               <div className="space-y-4">
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {shouldAutoAcceptHumanInvite
-                      ? (locale === "zh-CN" ? "正在提交加入请求" : "Submitting join request")
-                      : invite.inviteType === "bootstrap_ceo"
-                        ? t("invite.acceptBootstrapInvite")
-                        : (locale === "zh-CN" ? "接受公司邀请" : "Accept company invite")}
+                    {isCurrentMember
+                      ? (locale === "zh-CN" ? "已在此公司" : "Already in this company")
+                      : shouldAutoAcceptHumanInvite
+                        ? (locale === "zh-CN" ? "正在完成公司访问" : "Completing company access")
+                        : invite.inviteType === "bootstrap_ceo"
+                          ? t("invite.acceptBootstrapInvite")
+                          : (locale === "zh-CN" ? "接受公司邀请" : "Accept company invite")}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {shouldAutoAcceptHumanInvite
                       ? (locale === "zh-CN"
-                          ? `正在为 ${companyDisplayName} 提交你的加入请求。`
-                          : `Submitting your join request for ${companyDisplayName}.`)
+                          ? `正在为 ${companyDisplayName} 授予你的访问权限。`
+                          : `Granting your access to ${companyDisplayName}.`)
                       : isCurrentMember
                         ? (locale === "zh-CN"
                             ? `此账号已经属于 ${companyDisplayName}。`
                             : `This account already belongs to ${companyDisplayName}.`)
                         : (locale === "zh-CN"
-                            ? `这将${invite.inviteType === "bootstrap_ceo" ? "完成 Paperclip 初始化" : `提交或完成你加入 ${companyDisplayName} 的请求`}。`
+                            ? `这将${invite.inviteType === "bootstrap_ceo" ? "完成 Paperclip 初始化" : `授予或完成你访问 ${companyDisplayName} 的权限`}。`
                             : `This will ${
                                 invite.inviteType === "bootstrap_ceo"
                                   ? "finish setting up Paperclip"
-                                  : `submit or complete your join request for ${companyDisplayName}`
+                                  : `grant or complete your access to ${companyDisplayName}`
                               }.`)}
                   </p>
                 </div>
@@ -937,8 +944,16 @@ export function InviteLandingPage() {
                 ) : (
                   <Button
                     className="w-full rounded-none"
-                    disabled={acceptMutation.isPending || isCurrentMember}
-                    onClick={() => acceptMutation.mutate()}
+                    disabled={acceptMutation.isPending}
+                    onClick={() => {
+                      if (isCurrentMember && invite.companyId) {
+                        clearPendingInviteToken(token);
+                        setSelectedCompanyId(invite.companyId, { source: "manual" });
+                        navigate("/", { replace: true });
+                        return;
+                      }
+                      acceptMutation.mutate();
+                    }}
                   >
                     {acceptMutation.isPending
                       ? (locale === "zh-CN" ? "处理中…" : "Working...")

@@ -45,13 +45,26 @@ export function buildBetterAuthAdvancedOptions(input: { disableSecureCookies: bo
   };
 }
 
-export function shouldDisableSecureAuthCookies(config: Config): boolean {
-  const configuredPublicUrl = (
-    process.env.PAPERCLIP_PUBLIC_URL?.trim() ||
-    (config.authBaseUrlMode === "explicit" ? config.authPublicBaseUrl?.trim() : "")
+export function shouldDisableSecureAuthCookies(input: {
+  deploymentMode: Config["deploymentMode"];
+  deploymentExposure?: Config["deploymentExposure"];
+  authBaseUrlMode: Config["authBaseUrlMode"];
+  authPublicBaseUrl: string | undefined;
+  publicUrl?: string | undefined;
+}): boolean {
+  const publicUrl = (
+    input.publicUrl?.trim() ||
+    (input.authBaseUrlMode === "explicit" ? input.authPublicBaseUrl?.trim() : "")
   );
-  if (!configuredPublicUrl) return true;
-  return configuredPublicUrl.startsWith("http://");
+  if (publicUrl) return publicUrl.startsWith("http://");
+
+  return (
+    input.deploymentMode === "authenticated" &&
+    (
+      (input.deploymentExposure === "private" && input.authBaseUrlMode === "auto") ||
+      input.deploymentExposure === undefined
+    )
+  );
 }
 
 function headersFromNodeHeaders(rawHeaders: IncomingHttpHeaders): Headers {
@@ -107,6 +120,7 @@ export function createBetterAuthInstance(
   opts?: { pluginSsoStore?: PluginSsoStore },
 ): BetterAuthInstance {
   const baseUrl = config.authBaseUrlMode === "explicit" ? config.authPublicBaseUrl : undefined;
+  const publicUrl = process.env.PAPERCLIP_PUBLIC_URL?.trim() || baseUrl;
   const secret = process.env.BETTER_AUTH_SECRET ?? process.env.PAPERCLIP_AGENT_JWT_SECRET;
   if (!secret) {
     throw new Error(
@@ -114,7 +128,13 @@ export function createBetterAuthInstance(
       "For local development, set BETTER_AUTH_SECRET=paperclip-dev-secret in your .env file.",
     );
   }
-  const disableSecureCookies = shouldDisableSecureAuthCookies(config);
+  const disableSecureCookies = shouldDisableSecureAuthCookies({
+    deploymentMode: config.deploymentMode,
+    deploymentExposure: config.deploymentExposure,
+    authBaseUrlMode: config.authBaseUrlMode,
+    authPublicBaseUrl: config.authPublicBaseUrl,
+    publicUrl,
+  });
 
   const authConfig = {
     baseURL: baseUrl,
