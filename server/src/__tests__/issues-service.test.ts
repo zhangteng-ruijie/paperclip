@@ -1579,6 +1579,65 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(comments[0]?.body).toBe("Comment should be visible");
   });
 
+  it("lists user comments when deriving run attribution from nearby heartbeat runs", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const agentId = randomUUID();
+    const commentId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Runner",
+      role: "engineer",
+      adapterType: "process",
+      adapterConfig: {},
+      status: "idle",
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Attribution query issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "completed",
+      contextSnapshot: { issueId },
+      startedAt: new Date("2026-05-25T12:56:00.000Z"),
+      finishedAt: new Date("2026-05-25T12:57:00.000Z"),
+      createdAt: new Date("2026-05-25T12:56:00.000Z"),
+      updatedAt: new Date("2026-05-25T12:57:00.000Z"),
+    });
+
+    await db.insert(issueComments).values({
+      id: commentId,
+      companyId,
+      issueId,
+      authorUserId: "user-1",
+      body: "Human-visible attachment comment",
+      createdAt: new Date("2026-05-25T12:56:42.765Z"),
+      updatedAt: new Date("2026-05-25T12:56:42.765Z"),
+    });
+
+    const comments = await svc.listComments(issueId);
+
+    expect(comments.map((comment) => comment.id)).toEqual([commentId]);
+  });
+
   it("lists user comments when a candidate attribution run log is missing", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();

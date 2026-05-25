@@ -2936,8 +2936,8 @@ export function issueService(db: Db) {
     }, null);
     if (minCommentCreatedAtMs === null || maxCommentCreatedAtMs === null) return comments;
 
-    const minCommentCreatedAt = new Date(minCommentCreatedAtMs).toISOString();
-    const maxCommentCreatedAt = new Date(
+    const minCommentCreatedAtIso = new Date(minCommentCreatedAtMs).toISOString();
+    const maxCommentCreatedAtWithSlackIso = new Date(
       maxCommentCreatedAtMs + ISSUE_COMMENT_RUN_LOG_DERIVATION_END_SLACK_MS,
     ).toISOString();
 
@@ -2967,8 +2967,8 @@ export function issueService(db: Db) {
                 and ${activityLog.runId} = ${heartbeatRuns.id}
             )`,
           ),
-          sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt}) >= ${minCommentCreatedAt}::timestamptz`,
-          sql`coalesce(${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}) <= ${maxCommentCreatedAt}::timestamptz`,
+          sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.createdAt}) >= ${minCommentCreatedAtIso}::timestamptz`,
+          sql`coalesce(${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}) <= ${maxCommentCreatedAtWithSlackIso}::timestamptz`,
         ),
       )
       .orderBy(desc(heartbeatRuns.createdAt));
