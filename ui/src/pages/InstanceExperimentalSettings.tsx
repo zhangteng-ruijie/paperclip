@@ -209,6 +209,8 @@ export function InstanceExperimentalSettings() {
 
   const enableEnvironments = experimentalQuery.data?.enableEnvironments === true;
   const enableIsolatedWorkspaces = experimentalQuery.data?.enableIsolatedWorkspaces === true;
+  const enableIssuePlanDecompositions =
+    experimentalQuery.data?.enableIssuePlanDecompositions === true;
   const enableCloudSync = experimentalQuery.data?.enableCloudSync === true;
   const autoRestartDevServerWhenIdle = experimentalQuery.data?.autoRestartDevServerWhenIdle === true;
   const enableIssueGraphLivenessAutoRecovery =
@@ -298,6 +300,28 @@ export function InstanceExperimentalSettings() {
             onCheckedChange={() => toggleMutation.mutate({ enableIsolatedWorkspaces: !enableIsolatedWorkspaces })}
             disabled={toggleMutation.isPending}
             aria-label={adminCopy.experimental.toggleIsolatedWorkspacesAria}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Issue Plan Decomposition Panel</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Show accepted-plan decomposition history on issue detail pages. Intended for debugging and validating
+              subtask creation behavior while the presentation is still being refined.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableIssuePlanDecompositions}
+            onCheckedChange={() =>
+              toggleMutation.mutate({
+                enableIssuePlanDecompositions: !enableIssuePlanDecompositions,
+              })
+            }
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle issue plan decomposition panel experimental setting"
           />
         </div>
       </section>
