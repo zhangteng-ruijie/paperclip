@@ -178,6 +178,7 @@ export type {
   IssueWorkProductProvider,
   IssueWorkProductStatus,
   IssueWorkProductReviewState,
+  AttachmentArtifactWorkProductMetadata,
 } from "./work-product.js";
 export type {
   Issue,
