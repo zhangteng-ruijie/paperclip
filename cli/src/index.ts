@@ -13,6 +13,8 @@ import { registerContextCommands } from "./commands/client/context.js";
 import { registerCompanyCommands } from "./commands/client/company.js";
 import { registerIssueCommands } from "./commands/client/issue.js";
 import { registerAgentCommands } from "./commands/client/agent.js";
+import { registerProjectCommands } from "./commands/client/project.js";
+import { registerGoalCommands } from "./commands/client/goal.js";
 import { registerApprovalCommands } from "./commands/client/approval.js";
 import { registerActivityCommands } from "./commands/client/activity.js";
 import { registerDashboardCommands } from "./commands/client/dashboard.js";
@@ -28,6 +30,17 @@ import { registerWorktreeCommands } from "./commands/worktree.js";
 import { registerPluginCommands } from "./commands/client/plugin.js";
 import { registerClientAuthCommands } from "./commands/client/auth.js";
 import { cliT } from "./localization.js";
+import { registerConnectCommand } from "./commands/client/connect.js";
+import { registerTokenCommands } from "./commands/client/token.js";
+import { registerPromptCommands } from "./commands/client/prompt.js";
+import { registerRunCommands } from "./commands/client/run.js";
+import { registerCostCommands } from "./commands/client/cost.js";
+import { registerWorkspaceCommands } from "./commands/client/workspace.js";
+import { registerAccessCommands } from "./commands/client/access.js";
+import { registerRoutineApiCommands } from "./commands/client/routine-api.js";
+import { registerAdapterCommands } from "./commands/client/adapter.js";
+import { registerAssetCommands } from "./commands/client/asset.js";
+import { registerSkillCommands } from "./commands/client/skill.js";
 import { cliVersion } from "./version.js";
 
 const program = new Command();
@@ -107,7 +120,7 @@ program
   .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
   .action(addAllowedHostname);
 
-program
+const run = program
   .command("run")
   .description(cliT("command.run.description"))
   .option("-c, --config <path>", cliT("option.config"))
@@ -117,6 +130,8 @@ program
   .option("--repair", cliT("command.run.repair"), true)
   .option("--no-repair", cliT("command.run.noRepair"))
   .action(runCommand);
+
+registerRunCommands(run);
 
 const heartbeat = program.command("heartbeat").description(cliT("command.heartbeat.description"));
 
@@ -142,12 +157,24 @@ heartbeat
   .action(heartbeatRun);
 
 registerContextCommands(program);
+registerConnectCommand(program);
 registerCompanyCommands(program);
 registerIssueCommands(program);
 registerAgentCommands(program);
+registerProjectCommands(program);
+registerGoalCommands(program);
+registerTokenCommands(program);
+registerPromptCommands(program);
 registerApprovalCommands(program);
 registerActivityCommands(program);
 registerDashboardCommands(program);
+registerCostCommands(program);
+registerWorkspaceCommands(program);
+registerAccessCommands(program);
+registerRoutineApiCommands(program);
+registerAdapterCommands(program);
+registerAssetCommands(program);
+registerSkillCommands(program);
 registerRoutineCommands(program);
 registerFeedbackCommands(program);
 registerSecretCommands(program);
