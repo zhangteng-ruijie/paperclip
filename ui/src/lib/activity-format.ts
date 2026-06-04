@@ -110,6 +110,7 @@ const ACTIVITY_ROW_VERBS_EN: Record<string, string> = {
   "company.created": "created company",
   "company.updated": "updated company",
   "company.archived": "archived",
+  "company.reactivated": "reactivated",
   "company.budget_updated": "updated budget for",
 };
 
