@@ -84,6 +84,8 @@ export {
   companySkillFileUpdateSchema,
   catalogSkillKindSchema,
   catalogSkillFileSchema,
+  catalogSkillGitHubSourceSchema,
+  catalogSkillSourceSchema,
   catalogSkillSchema,
   catalogSkillListQuerySchema,
   catalogSkillFileDetailSchema,
