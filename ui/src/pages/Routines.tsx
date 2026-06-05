@@ -106,9 +106,9 @@ type RoutineGroup = {
 };
 
 const defaultRoutineViewState: RoutineViewState = {
-  sortField: "updated",
-  sortDir: "desc",
-  groupBy: "none",
+  sortField: "title",
+  sortDir: "asc",
+  groupBy: "project",
   collapsedGroups: [],
 };
 
@@ -553,9 +553,13 @@ export function Routines() {
     [projects],
   );
   const liveIssueIds = useMemo(() => collectLiveIssueIds(liveRuns), [liveRuns]);
+  const visibleRoutines = useMemo(
+    () => (routines ?? []).filter((routine) => routine.status !== "archived"),
+    [routines],
+  );
   const sortedRoutines = useMemo(
-    () => sortRoutines(routines ?? [], routineViewState.sortField, routineViewState.sortDir),
-    [routineViewState.sortDir, routineViewState.sortField, routines],
+    () => sortRoutines(visibleRoutines, routineViewState.sortField, routineViewState.sortDir),
+    [routineViewState.sortDir, routineViewState.sortField, visibleRoutines],
   );
   const routineGroups = useMemo(
     () => buildRoutineGroups(sortedRoutines, routineViewState.groupBy, projectById, agentById, locale),
@@ -653,7 +657,7 @@ export function Routines() {
         <TabsContent value="routines" className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              {formatRoutineCount((routines ?? []).length, locale)}
+              {formatRoutineCount(visibleRoutines.length, locale)}
             </p>
             <div className="flex items-center gap-1">
               <Popover>
@@ -1010,7 +1014,7 @@ export function Routines() {
 
       {activeTab === "routines" ? (
         <div>
-          {(routines ?? []).length === 0 ? (
+          {visibleRoutines.length === 0 ? (
             <div className="py-12">
               <EmptyState
                 icon={Repeat}

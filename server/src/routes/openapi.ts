@@ -416,6 +416,10 @@ const responses = {
     description: "Not found",
     content: { "application/json": { schema: ErrorSchema } },
   },
+  unprocessable: {
+    description: "Unprocessable entity",
+    content: { "application/json": { schema: ErrorSchema } },
+  },
   serverError: {
     description: "Internal server error",
     content: { "application/json": { schema: ErrorSchema } },
@@ -593,6 +597,7 @@ const CREATED_OPERATIONS = new Set([
   "POST /api/issues/{id}/documents/{key}/annotations",
   "POST /api/issues/{id}/documents/{key}/annotations/{threadId}/comments",
   "POST /api/issues/{id}/work-products",
+  "POST /api/issues/{id}/low-trust/promotions",
   "POST /api/issues/{id}/approvals",
   "POST /api/companies/{companyId}/issues",
   "POST /api/issues/{id}/children",
@@ -870,6 +875,24 @@ registry.registerPath({
   request: { params: z.object({ companyId: z.string() }) },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
 });
+
+// ─── Teams Catalog ──────────────────────────────────────────────────────────
+
+for (const route of [
+  ["get", "/api/teams/catalog", "List catalog teams"],
+  ["get", "/api/teams/catalog/{catalogId}/files", "Get catalog team file"],
+  ["get", "/api/teams/catalog/{catalogId}", "Get catalog team"],
+  ["get", "/api/companies/{companyId}/teams/catalog/installed", "List installed catalog teams"],
+  ["post", "/api/companies/{companyId}/teams/catalog/{catalogId}/preview", "Preview catalog team install"],
+  ["post", "/api/companies/{companyId}/teams/catalog/{catalogId}/install", "Install catalog team"],
+] as const) {
+  registerCurrentRoute({
+    method: route[0],
+    path: route[1],
+    tags: ["teams"],
+    summary: route[2],
+  });
+}
 
 // ─── Agents ──────────────────────────────────────────────────────────────────
 
@@ -4218,6 +4241,20 @@ registerCurrentRoute({
   summary: "Add a document annotation comment",
   body: createDocumentAnnotationCommentSchema,
   responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 404: r.notFound },
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/issues/{id}/low-trust/promotions",
+  tags: ["issues"],
+  summary: "Promote quarantined low-trust output",
+  body: z.object({
+    sourceArtifactKind: z.enum(["comment", "document", "work_product", "issue"]),
+    sourceArtifactId: z.string().uuid(),
+    title: z.string().trim().min(1).max(200),
+    summary: z.string().trim().min(1).max(8_000),
+  }),
+  responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
 });
 
 registerCurrentRoute({

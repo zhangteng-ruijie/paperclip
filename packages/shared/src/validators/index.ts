@@ -103,6 +103,27 @@ export {
   type CompanySkillReset,
 } from "./company-skill.js";
 export {
+  catalogTeamKindSchema,
+  catalogTeamTrustLevelSchema,
+  catalogTeamCompatibilitySchema,
+  catalogTeamFileKindSchema,
+  catalogTeamSkillRequirementTypeSchema,
+  catalogTeamSkillRequirementSchema,
+  catalogTeamEnvInputSummarySchema,
+  catalogTeamSourceRefSchema,
+  catalogTeamFileSchema,
+  catalogTeamSchema,
+  catalogTeamListQuerySchema,
+  catalogTeamFileDetailSchema,
+  catalogTeamSourcePolicySchema,
+  catalogTeamPreviewSchema,
+  catalogTeamInstallSchema,
+  catalogTeamSkillPreparationSchema,
+  type CatalogTeamListQuery,
+  type CatalogTeamPreview,
+  type CatalogTeamInstall,
+} from "./teams-catalog.js";
+export {
   agentSkillStateSchema,
   agentSkillSyncModeSchema,
   agentSkillEntrySchema,
@@ -129,6 +150,19 @@ export {
   type CompanyPortabilityPreview,
   type CompanyPortabilityImport,
 } from "./company-portability.js";
+
+export {
+  trustPresetSchema,
+  lowTrustBoundarySchema,
+  lowTrustReviewPresetPolicySchema,
+  trustAuthorizationPolicySchema,
+  sourceTrustArtifactKindSchema,
+  sourceTrustMetadataSchema,
+  type TrustPresetInput,
+  type LowTrustBoundaryInput,
+  type TrustAuthorizationPolicyInput,
+  type SourceTrustMetadataInput,
+} from "./trust-policy.js";
 
 export {
   createAgentSchema,

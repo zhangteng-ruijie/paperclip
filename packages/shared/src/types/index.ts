@@ -46,6 +46,20 @@ export {
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MAX_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
 } from "./instance.js";
+export {
+  TRUST_PRESETS,
+  DEFAULT_TRUST_PRESET,
+  LOW_TRUST_REVIEW_PRESET,
+  LOW_TRUST_REVIEW_PRESET_VERSION,
+  LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
+  LOW_TRUST_TOOL_CLASSES,
+  type TrustPreset,
+  type LowTrustToolClass,
+  type LowTrustOutputPromotionTarget,
+  type LowTrustBoundary,
+  type LowTrustReviewPresetPolicy,
+  type TrustAuthorizationPolicy,
+} from "../trust-policy.js";
 export type {
   CompanySkillSourceType,
   CompanySkillTrustLevel,
@@ -84,6 +98,29 @@ export type {
   CompanySkillInstallCatalogRequest,
   CompanySkillInstallCatalogResult,
 } from "./company-skill.js";
+export type {
+  CatalogTeamKind,
+  CatalogTeamTrustLevel,
+  CatalogTeamCompatibility,
+  CatalogTeamFileKind,
+  CatalogTeamSkillRequirementType,
+  CatalogTeamSkillRequirement,
+  CatalogTeamEnvInputSummary,
+  CatalogTeamSourceRef,
+  CatalogTeamFile,
+  CatalogTeam,
+  CatalogManifest,
+  CatalogTeamListQuery,
+  CatalogTeamFileDetail,
+  CatalogTeamSourcePolicy,
+  CatalogTeamImportOptions,
+  CatalogTeamInstallOptions,
+  CatalogTeamSkillPreparationAction,
+  CatalogTeamSkillPreparation,
+  CatalogTeamImportPreviewResult,
+  CatalogTeamInstallResult,
+  InstalledCatalogTeam,
+} from "./teams-catalog.js";
 export type {
   AgentSkillSyncMode,
   AgentSkillState,
