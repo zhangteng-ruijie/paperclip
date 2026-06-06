@@ -143,7 +143,7 @@ export function CommandPalette() {
         <CommandEmpty>
           {showSearchAll ? (
             <span>
-              No quick issue matches. Press{" "}
+              No quick task matches. Press{" "}
               <kbd className="rounded border border-border bg-muted px-1 py-0.5 text-[10px]">↵</kbd>{" "}
               to <span className="font-medium">search all</span> or keep typing to refine.
             </span>

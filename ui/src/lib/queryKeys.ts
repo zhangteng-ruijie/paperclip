@@ -116,6 +116,23 @@ export const queryKeys = {
     list: (companyId: string) => ["goals", companyId] as const,
     detail: (id: string) => ["goals", "detail", id] as const,
   },
+  artifacts: {
+    list: (
+      companyId: string,
+      kind?: string,
+      q?: string,
+      groupBy?: string,
+      groupIssueId?: string,
+    ) =>
+      [
+        "artifacts",
+        companyId,
+        kind ?? "all",
+        q ?? "",
+        groupBy ?? "none",
+        groupIssueId ?? "",
+      ] as const,
+  },
   budgets: {
     overview: (companyId: string) => ["budgets", "overview", companyId] as const,
   },

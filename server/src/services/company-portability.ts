@@ -36,6 +36,7 @@ import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  PROJECT_ICON_NAMES,
   PROJECT_STATUSES,
   ROUTINE_CATCH_UP_POLICIES,
   ROUTINE_CONCURRENCY_POLICIES,
@@ -472,6 +473,10 @@ function normalizePortableProjectEnv(value: unknown): AgentEnvConfig | null {
   return parsed.success ? parsed.data : null;
 }
 
+function normalizeProjectIconName(value: string | null | undefined): string | null {
+  return value && PROJECT_ICON_NAMES.includes(value as typeof PROJECT_ICON_NAMES[number]) ? value : null;
+}
+
 function extractPortableScopedEnvInputs(
   scope: {
     label: string;
@@ -580,6 +585,7 @@ type ProjectLike = {
   leadAgentId: string | null;
   targetDate: string | null;
   color: string | null;
+  icon: string | null;
   status: string;
   env: Record<string, unknown> | null;
   executionWorkspacePolicy: Record<string, unknown> | null;
@@ -2889,6 +2895,7 @@ function buildManifestFromPackageFiles(
       leadAgentSlug: asString(extension.leadAgentSlug),
       targetDate: asString(extension.targetDate),
       color: asString(extension.color),
+      icon: asString(extension.icon),
       status: asString(extension.status),
       env: normalizePortableProjectEnv(extension.env),
       executionWorkspacePolicy: isPlainRecord(extension.executionWorkspacePolicy)
@@ -3676,6 +3683,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         leadAgentSlug: project.leadAgentId ? (idToSlug.get(project.leadAgentId) ?? null) : null,
         targetDate: project.targetDate ?? null,
         color: project.color ?? null,
+        icon: project.icon ?? null,
         status: project.status,
         executionWorkspacePolicy: exportPortableProjectExecutionWorkspacePolicy(
           slug,
@@ -4855,6 +4863,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             leadAgentId: projectLeadAgentId,
             targetDate: manifestProject.targetDate,
             color: manifestProject.color,
+            icon: normalizeProjectIconName(manifestProject.icon),
             status: manifestProject.status && PROJECT_STATUSES.includes(manifestProject.status as any)
               ? manifestProject.status as typeof PROJECT_STATUSES[number]
               : "backlog",

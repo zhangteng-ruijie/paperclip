@@ -2472,8 +2472,8 @@ export function Inbox() {
                               variant="ghost"
                               size="icon-xs"
                               className="-mr-2 text-muted-foreground"
-                              title={`New issue in ${group.label}`}
-                              aria-label={`New issue in ${group.label}`}
+                              title={`New task in ${group.label}`}
+                              aria-label={`New task in ${group.label}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openCreateIssueForGroup(group);
