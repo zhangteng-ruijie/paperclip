@@ -63,7 +63,7 @@ ARG USER_GID=1000
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
 RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest \
-  && npm install --global --omit=dev @openai/codex@latest opencode-ai \
+  && npm install --global --omit=dev @openai/codex@latest opencode-ai @google/gemini-cli@latest \
   && npm install --global --omit=dev @larksuite/cli \
   && command -v claude >/dev/null \
   && command -v lark-cli >/dev/null \
@@ -88,7 +88,8 @@ ENV NODE_ENV=production \
   PAPERCLIP_CONFIG=/paperclip/instances/default/config.json \
   PAPERCLIP_DEPLOYMENT_MODE=authenticated \
   PAPERCLIP_DEPLOYMENT_EXPOSURE=private \
-  OPENCODE_ALLOW_ALL_MODELS=true
+  OPENCODE_ALLOW_ALL_MODELS=true \
+  GEMINI_SANDBOX=false
 
 VOLUME ["/paperclip"]
 EXPOSE 3100

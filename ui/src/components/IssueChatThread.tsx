@@ -168,6 +168,7 @@ interface IssueChatMessageContext {
   stopRunLabel?: string;
   stoppingRunLabel?: string;
   stopRunVariant?: "stop" | "pause";
+  runFinalizationActions?: readonly IssueChatRunFinalizationAction[];
   onInterruptQueued?: (runId: string) => Promise<void>;
   onCancelQueued?: (commentId: string) => void;
   onDeleteComment?: (commentId: string) => Promise<void> | void;
@@ -204,6 +205,15 @@ const IssueChatCtx = createContext<IssueChatMessageContext>({
   issueStatus: undefined,
   successfulRunHandoff: null,
 });
+
+export type IssueChatRunFinalizationAction = {
+  id: "cancel" | "done";
+  label: string;
+  pendingLabel: string;
+  onSelect: (runId: string) => Promise<void> | void;
+  isPending?: boolean;
+  disabled?: boolean;
+};
 
 export function resolveAssistantMessageFoldedState(args: {
   messageId: string;
@@ -353,6 +363,7 @@ interface IssueChatThreadProps {
   stopRunLabel?: string;
   stoppingRunLabel?: string;
   stopRunVariant?: "stop" | "pause";
+  runFinalizationActions?: readonly IssueChatRunFinalizationAction[];
   imageUploadHandler?: (file: File) => Promise<string>;
   onAttachImage?: (file: File) => Promise<IssueAttachment | void>;
   draftKey?: string;
@@ -1504,6 +1515,7 @@ function IssueChatAssistantMessage({
     stopRunLabel = "Stop run",
     stoppingRunLabel = "Stopping...",
     stopRunVariant = "stop",
+    runFinalizationActions = [],
   } = useContext(IssueChatCtx);
   const { locale } = useLocale();
   const copy = getIssueChatCopy(locale);
@@ -1724,6 +1736,29 @@ function IssueChatAssistantMessage({
                         {isStoppingRun ? stoppingRunLabel : stopRunLabel}
                       </DropdownMenuItem>
                     ) : null}
+                    {canStopRun && runId
+                      ? runFinalizationActions.map((action) => (
+                        <DropdownMenuItem
+                          key={action.id}
+                          disabled={isStoppingRun || action.isPending || action.disabled}
+                          className={cn(
+                            action.id === "cancel"
+                              ? "text-red-700 focus:text-red-800 dark:text-red-300 dark:focus:text-red-200"
+                              : "text-green-700 focus:text-green-800 dark:text-green-300 dark:focus:text-green-200",
+                          )}
+                          onSelect={() => {
+                            void action.onSelect(runId);
+                          }}
+                        >
+                          {action.id === "cancel" ? (
+                            <Square className="mr-2 h-3.5 w-3.5 fill-current" />
+                          ) : (
+                            <Check className="mr-2 h-3.5 w-3.5" />
+                          )}
+                          {action.isPending ? action.pendingLabel : action.label}
+                        </DropdownMenuItem>
+                      ))
+                      : null}
                     {runHref ? (
                       <DropdownMenuItem asChild>
                         <Link to={runHref} target="_blank" rel="noreferrer noopener">
@@ -3766,6 +3801,7 @@ export function IssueChatThread({
   stopRunLabel,
   stoppingRunLabel,
   stopRunVariant,
+  runFinalizationActions,
   imageUploadHandler,
   onAttachImage,
   draftKey,
@@ -4298,6 +4334,7 @@ export function IssueChatThread({
       stopRunLabel,
       stoppingRunLabel,
       stopRunVariant,
+      runFinalizationActions,
       onInterruptQueued: stableOnInterruptQueued,
       onCancelQueued: stableOnCancelQueued,
       onDeleteComment: stableOnDeleteComment,
@@ -4321,6 +4358,7 @@ export function IssueChatThread({
       stopRunLabel,
       stoppingRunLabel,
       stopRunVariant,
+      runFinalizationActions,
       stableOnInterruptQueued,
       stableOnCancelQueued,
       stableOnDeleteComment,
