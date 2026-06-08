@@ -216,3 +216,80 @@ PR #2218 (`feat/external-adapter-phase1`) adds external adapter support. See roo
 - `createServerAdapter()` must include ALL optional fields (especially `detectModel`)
 - Built-in UI adapters can shadow external plugin parsers — remove built-in when fully externalizing
 - Reference external adapters: Hermes (`@henkey/hermes-paperclip-adapter` or `file:`) and Droid (npm)
+
+
+<claude-mem-context>
+# Memory Context
+
+# [paperclip] recent context, 2026-05-31 2:59pm GMT+8
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 50 obs (12,731t read) | 232,350t work | 95% savings
+
+### May 14, 2026
+508 10:01p ✅ Docker Compose environment initiated
+509 10:02p ✅ PostgreSQL 17 Alpine image pull initiated
+510 10:03p 🔵 PostgreSQL image pull timing out during docker compose build
+511 10:06p ✅ Docker Compose services being built and started
+512 " 🔵 PostgreSQL image pull timed out during docker compose
+513 " ⚖️ PostgreSQL image pull manually stopped after timeout
+514 10:29p 🔴 Docker build and start failed with exit code 1
+515 10:30p 🔵 Docker daemon not running - postgres:17-alpine image pull failed
+516 " 🔵 Docker daemon is running and socket is accessible
+517 10:40p ✅ Docker compose build and start re-attempted from docker/ subdirectory
+518 10:50p 🔵 Docker Compose project initiated for primary session
+519 10:51p 🟣 Docker Compose build initiated for paperclip project
+520 11:10p 🔵 Docker Compose Build in Progress for Paperclip Project
+S33 Diagnose and resolve Feishu connector plugin auto-install failure in Paperclip Docker deployment (May 14 at 11:10 PM)
+S32 Docker Compose Build in Progress for Paperclip Project (May 14 at 11:10 PM)
+521 11:11p ✅ Paperclip AI hostname authorization required
+522 11:13p 🔵 TypeScript version downgraded to 5.7.3 during pnpm install
+523 11:14p 🔵 Paperclip Feishu deployment uses authenticated private mode with plugin auto-install
+524 " 🔵 Feishu plugin produces no logs in server container on startup
+525 " 🔵 Paperclip API surface mapped from live server logs
+526 " 🔵 Paperclip /plugins endpoint returns SPA HTML, not plugin manifest
+527 " 🔵 /api/plugins requires Board-level authorization
+528 11:15p 🔵 Paperclip plugin system architecture documented in plugins.ts
+529 " 🔵 Plugin loader logs "no ready plugins" when plugin registry has no ready plugins
+530 " 🔵 Plugin registry database table is empty
+531 " 🔵 PAPERCLIP_PREINSTALL_PLUGIN processed by docker-entrypoint.sh
+532 " 🔵 Docker entrypoint auto-installs plugins via paperclipai CLI
+533 " 🔵 plugin-feishu-connector not present in container /app directory
+534 11:16p 🔵 Paperclip CLI version is 0.3.1-connector-feishu
+535 " 🔵 Plugin auto-install runs without API key or company ID credentials
+S34 Docker container config structure discovered (May 14 at 11:16 PM)
+536 11:23p 🔵 Docker container config structure discovered
+S35 assertInstanceAdmin allows local_implicit source or isInstanceAdmin flag (May 14 at 11:23 PM)
+537 11:27p ✅ Local dev environment configured with Paperclip API credentials
+538 " ✅ Docker stack restarted with Feishu configuration
+539 " 🟣 Feishu connector plugin auto-installed on server startup
+540 " 🔵 Paperclip plugin architecture uses UUID-keyed multi-table schema
+541 11:28p 🔵 Paperclip server API health check confirmed working with API key
+542 " 🔵 Plugin install API requires board access beyond API key alone
+543 " 🔵 Plugin install routes protected by assertInstanceAdmin middleware
+544 " 🔵 assertInstanceAdmin allows local_implicit source or isInstanceAdmin flag
+S36 Paperclip AI hostname whitelist blocking access (May 14 at 11:28 PM)
+### May 17, 2026
+545 9:06p 🔴 Paperclip AI hostname whitelist blocking access
+S37 Incomplete user query observed - "如何增加多个" (May 17 at 9:06 PM)
+546 9:08p 🔵 Incomplete user query observed - "如何增加多个"
+### May 18, 2026
+S43 Paperclip AI hostname security restriction (May 18 at 11:43 AM)
+595 5:50p 🔵 Researching paperclip architecture pattern
+### May 25, 2026
+652 9:08p 🔵 Postgres parameter type error in heartbeat_runs query
+653 9:09p 🔴 Date objects passed to postgres query instead of ISO strings
+654 " 🔴 Fixed Date objects causing postgres ERR_INVALID_ARG_TYPE in heartbeat_runs query
+655 9:10p 🔴 Added regression test for heartbeat run attribution with Date parameter handling
+656 " 🔴 Regression test passed — fix confirmed
+657 " 🔵 Pre-existing typecheck failures in server package
+658 9:11p 🔴 PostgreSQL date parameters must be converted to ISO strings
+659 9:12p 🔴 Fixed PostgreSQL Date parameter serialization in enrichCommentsWithDerivedAgentAttribution
+660 9:35p 🔴 PostgreSQL Date parameter fix deployed to docker-server container
+661 9:37p 🔵 Attachment open error confirmed fixed by deployment
+
+Access 232k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>
