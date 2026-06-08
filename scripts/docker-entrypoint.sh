@@ -56,12 +56,13 @@ if [ -n "$PAPERCLIP_PREINSTALL_PLUGIN" ]; then
     done
 
     # Install plugin with API key if provided
-    PLUGIN_INSTALL_CMD="paperclipai plugin install $PAPERCLIP_PREINSTALL_PLUGIN --local"
+    # Use pnpm exec with tsx to run paperclipai CLI
+    PLUGIN_INSTALL_CMD="cd /app && ./cli/node_modules/.bin/tsx cli/src/index.ts plugin install $PAPERCLIP_PREINSTALL_PLUGIN --local"
     if [ -n "$PAPERCLIP_API_KEY" ]; then
         PLUGIN_INSTALL_CMD="$PLUGIN_INSTALL_CMD --api-key $PAPERCLIP_API_KEY"
     fi
-    if [ -n "$PAPERCLIP_COMPANY_ID" ]; then
-        PLUGIN_INSTALL_CMD="$PLUGIN_INSTALL_CMD --company-id $PAPERCLIP_COMPANY_ID"
+    if [ -n "$PAPERCLIP_API_URL" ]; then
+        PLUGIN_INSTALL_CMD="$PLUGIN_INSTALL_CMD --api-base $PAPERCLIP_API_URL"
     fi
 
     echo "Running: $PLUGIN_INSTALL_CMD"

@@ -27,13 +27,14 @@ services:
       SERVE_UI: "true"
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
-      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
+      PAPERCLIP_PUBLIC_URL: "http://152.136.152.207:3100"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
       # Feishu connector plugin - auto-install at startup
       PAPERCLIP_PREINSTALL_PLUGIN: "/app/packages/plugins/plugin-feishu-connector"
       PAPERCLIP_API_KEY: "${PAPERCLIP_API_KEY:-}"
       PAPERCLIP_COMPANY_ID: "${PAPERCLIP_COMPANY_ID:-}"
-      PAPERCLIP_API_URL: "http://localhost:3100"
+      PAPERCLIP_API_URL: "http://152.136.152.207:3100"
+      PAPERCLIP_ALLOWED_HOSTNAMES: "152.136.152.207,152.136.152.207:3100"
     volumes:
       - paperclip-data:/paperclip
     depends_on:
