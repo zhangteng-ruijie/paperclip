@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BookOpen,
   LogOut,
   type LucideIcon,
   Moon,
@@ -12,6 +13,7 @@ import {
 import type { DeploymentMode } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { authApi } from "@/api/auth";
+import { INSTANCE_SETTINGS_PATH_PREFIX } from "@/lib/instance-settings";
 import { queryKeys } from "@/lib/queryKeys";
 import { useSidebar } from "../context/SidebarContext";
 import { useTheme } from "../context/ThemeContext";
@@ -20,7 +22,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "../lib/utils";
 
-const PROFILE_SETTINGS_PATH = "/instance/settings/profile";
+const PROFILE_SETTINGS_PATH = `${INSTANCE_SETTINGS_PATH_PREFIX}/profile`;
+const DOCS_URL = "https://docs.paperclip.ing/";
 
 interface SidebarAccountMenuProps {
   deploymentMode?: DeploymentMode;
@@ -76,6 +79,8 @@ function getAccountMenuCopy(locale: string | null | undefined) {
       editProfileDescription: "更新你的显示名称和头像。",
       instanceSettings: "实例设置",
       instanceSettingsDescription: "回到你上次打开的设置页面。",
+      documentation: "文档",
+      documentationDescription: "在新标签页打开 Paperclip 文档。",
       switchToLightMode: "切换到浅色模式",
       switchToDarkMode: "切换到深色模式",
       toggleAppearance: "切换应用外观。",
@@ -97,6 +102,8 @@ function getAccountMenuCopy(locale: string | null | undefined) {
     editProfileDescription: "Update your display name and avatar.",
     instanceSettings: "Instance settings",
     instanceSettingsDescription: "Jump back to the last settings page you opened.",
+    documentation: "Documentation",
+    documentationDescription: "Open Paperclip docs in a new tab.",
     switchToLightMode: "Switch to light mode",
     switchToDarkMode: "Switch to dark mode",
     toggleAppearance: "Toggle the app appearance.",
@@ -252,6 +259,14 @@ export function SidebarAccountMenu({
                 icon={Settings}
                 href={instanceSettingsTarget}
                 onClick={closeNavigationChrome}
+              />
+              <MenuAction
+                label={copy.documentation}
+                description={copy.documentationDescription}
+                icon={BookOpen}
+                href={DOCS_URL}
+                external
+                onClick={() => setOpen(false)}
               />
               <MenuAction
                 label={theme === "dark" ? copy.switchToLightMode : copy.switchToDarkMode}

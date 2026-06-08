@@ -109,10 +109,11 @@ export function PluginManager() {
   useEffect(() => {
     setBreadcrumbs([
       { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
-      { label: copy.plugins.breadcrumbSettings, href: "/instance/settings/heartbeats" },
+      { label: copy.plugins.breadcrumbSettings, href: "/company/settings" },
+      { label: copy.instanceSettings, href: "/company/settings/instance/general" },
       { label: copy.plugins.breadcrumbPlugins },
     ]);
-  }, [copy.company, copy.plugins.breadcrumbPlugins, copy.plugins.breadcrumbSettings, selectedCompany?.name, setBreadcrumbs]);
+  }, [copy.company, copy.instanceSettings, copy.plugins.breadcrumbPlugins, copy.plugins.breadcrumbSettings, selectedCompany?.name, setBreadcrumbs]);
 
   const { data: plugins, isLoading, error } = useQuery({
     queryKey: queryKeys.plugins.all,
@@ -314,7 +315,7 @@ export function PluginManager() {
                             </Button>
                           )}
                           <Button variant="outline" size="sm" asChild>
-                            <Link to={`/instance/settings/plugins/${installedPlugin.id}`}>
+                            <Link to={`/company/settings/instance/plugins/${installedPlugin.id}`}>
                               {installedPlugin.status === "ready" ? copy.plugins.openSettings : copy.plugins.review}
                             </Link>
                           </Button>
@@ -366,7 +367,7 @@ export function PluginManager() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link
-                        to={`/instance/settings/plugins/${plugin.id}`}
+                        to={`/company/settings/instance/plugins/${plugin.id}`}
                         className="font-medium hover:underline truncate block"
                         title={plugin.manifestJson.displayName ?? plugin.packageName}
                       >
@@ -470,7 +471,7 @@ export function PluginManager() {
                         </Button>
                       </div>
                       <Button variant="outline" size="sm" className="mt-2 h-8" asChild>
-                        <Link to={`/instance/settings/plugins/${plugin.id}`}>
+                        <Link to={`/company/settings/instance/plugins/${plugin.id}`}>
                           <Settings className="h-4 w-4" />
                           {copy.plugins.configure}
                         </Link>

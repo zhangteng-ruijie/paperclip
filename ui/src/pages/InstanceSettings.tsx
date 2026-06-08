@@ -43,10 +43,11 @@ export function InstanceSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: copy.instanceSettings },
+      { label: locale === "zh-CN" ? "设置" : "Settings", href: "/company/settings" },
+      { label: copy.instanceSettings, href: "/company/settings/instance/general" },
       { label: copy.heartbeats.title },
     ]);
-  }, [copy.heartbeats.title, copy.instanceSettings, setBreadcrumbs]);
+  }, [copy.heartbeats.title, copy.instanceSettings, locale, setBreadcrumbs]);
 
   const heartbeatsQuery = useQuery({
     queryKey: queryKeys.instance.schedulerHeartbeats,

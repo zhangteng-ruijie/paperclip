@@ -39,10 +39,11 @@ export function ProfileSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: copy.common.settings },
+      { label: copy.common.settings, href: "/company/settings" },
+      { label: locale === "zh-CN" ? "实例设置" : "Instance settings", href: "/company/settings/instance/general" },
       { label: copy.profile.breadcrumbsProfile },
     ]);
-  }, [copy.common.settings, copy.profile.breadcrumbsProfile, setBreadcrumbs]);
+  }, [copy.common.settings, copy.profile.breadcrumbsProfile, locale, setBreadcrumbs]);
 
   useEffect(() => {
     const session = sessionQuery.data;

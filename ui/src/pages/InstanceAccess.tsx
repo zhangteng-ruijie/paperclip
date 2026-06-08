@@ -29,10 +29,11 @@ export function InstanceAccess() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: copy.common.settings, href: "/instance/settings/general" },
+      { label: copy.common.settings, href: "/company/settings" },
+      { label: locale === "zh-CN" ? "实例设置" : "Instance settings", href: "/company/settings/instance/general" },
       { label: copy.common.access },
     ]);
-  }, [copy.common.access, copy.common.settings, setBreadcrumbs]);
+  }, [copy.common.access, copy.common.settings, locale, setBreadcrumbs]);
 
   const usersQuery = useQuery({
     queryKey: queryKeys.access.adminUsers(search),

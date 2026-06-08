@@ -54,10 +54,11 @@ export function InstanceGeneralSettings() {
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: t("settings.general.instanceTitle") },
+      { label: locale === "zh-CN" ? "设置" : "Settings", href: "/company/settings" },
+      { label: t("settings.general.instanceTitle"), href: "/company/settings/instance/general" },
       { label: t("settings.general.title") },
     ]);
-  }, [setBreadcrumbs, t]);
+  }, [locale, setBreadcrumbs, t]);
 
   const generalQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings,

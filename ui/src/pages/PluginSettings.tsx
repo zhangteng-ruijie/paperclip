@@ -131,13 +131,15 @@ export function PluginSettings() {
   useEffect(() => {
     setBreadcrumbs([
       { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
-      { label: copy.plugins.breadcrumbSettings, href: "/instance/settings/heartbeats" },
-      { label: copy.plugins.breadcrumbPlugins, href: "/instance/settings/plugins" },
+      { label: copy.plugins.breadcrumbSettings, href: "/company/settings" },
+      { label: copy.instanceSettings, href: "/company/settings/instance/general" },
+      { label: copy.plugins.breadcrumbPlugins, href: "/company/settings/instance/plugins" },
       { label: plugin?.manifestJson?.displayName ?? plugin?.packageName ?? copy.plugins.pluginDetailsFallback },
     ]);
   }, [
     companyPrefix,
     copy.company,
+    copy.instanceSettings,
     copy.plugins.breadcrumbPlugins,
     copy.plugins.breadcrumbSettings,
     copy.plugins.pluginDetailsFallback,
@@ -155,7 +157,7 @@ export function PluginSettings() {
   }
 
   if (!plugin) {
-    return <Navigate to="/instance/settings/plugins" replace />;
+    return <Navigate to="/company/settings/instance/plugins" replace />;
   }
 
   const displayStatus = formatInstanceAdminStatusLabel(plugin.status, locale);
@@ -178,7 +180,7 @@ export function PluginSettings() {
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center gap-4">
-        <Link to="/instance/settings/plugins">
+        <Link to="/company/settings/instance/plugins">
           <Button variant="outline" size="icon" className="h-8 w-8">
             <ArrowLeft className="h-4 w-4" />
           </Button>

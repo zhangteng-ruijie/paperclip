@@ -283,10 +283,11 @@ export function AdapterManager() {
   useEffect(() => {
     setBreadcrumbs([
       { label: selectedCompany?.name ?? copy.company, href: "/dashboard" },
-      { label: copy.adapters.breadcrumbSettings, href: "/instance/settings/general" },
+      { label: copy.adapters.breadcrumbSettings, href: "/company/settings" },
+      { label: copy.instanceSettings, href: "/company/settings/instance/general" },
       { label: copy.adapters.breadcrumbAdapters },
     ]);
-  }, [copy.adapters.breadcrumbAdapters, copy.adapters.breadcrumbSettings, copy.company, selectedCompany?.name, setBreadcrumbs]);
+  }, [copy.adapters.breadcrumbAdapters, copy.adapters.breadcrumbSettings, copy.company, copy.instanceSettings, selectedCompany?.name, setBreadcrumbs]);
 
   const { data: adapters, isLoading } = useQuery({
     queryKey: queryKeys.adapters.all,

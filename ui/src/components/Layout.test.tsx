@@ -45,8 +45,8 @@ vi.mock("@/lib/router", () => ({
   useParams: () => {
     const [firstSegment, secondSegment] = currentPathname.split("/").filter(Boolean);
     return {
-      companyPrefix: firstSegment === "instance" ? undefined : firstSegment ?? "PAP",
-      pluginRoutePath: firstSegment === "instance" ? undefined : secondSegment,
+      companyPrefix: firstSegment ?? "PAP",
+      pluginRoutePath: secondSegment,
     };
   },
 }));
@@ -59,10 +59,6 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 vi.mock("./Sidebar", () => ({
   Sidebar: () => <div>Main company nav</div>,
-}));
-
-vi.mock("./InstanceSidebar", () => ({
-  InstanceSidebar: () => <div>Instance sidebar</div>,
 }));
 
 vi.mock("./CompanySettingsSidebar", () => ({
@@ -203,12 +199,6 @@ vi.mock("../api/instanceSettings", () => ({
 
 vi.mock("../lib/company-selection", () => ({
   shouldSyncCompanySelectionFromRoute: () => false,
-}));
-
-vi.mock("../lib/instance-settings", () => ({
-  DEFAULT_INSTANCE_SETTINGS_PATH: "/instance/settings/general",
-  normalizeRememberedInstanceSettingsPath: (value: string | null | undefined) =>
-    value ?? "/instance/settings/general",
 }));
 
 vi.mock("../lib/main-content-focus", () => ({
@@ -362,7 +352,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
@@ -378,14 +370,16 @@ describe("Layout", () => {
     expect(selector?.textContent).toContain("Members");
     expect(selector?.textContent).toContain("Invites");
     expect(selector?.textContent).toContain("Secrets");
+    expect(selector?.textContent).toContain("Instance general");
+    expect(selector?.textContent).toContain("Instance plugins");
 
     await act(async () => {
       root.unmount();
     });
   });
 
-  it("renders the instance settings sidebar on instance settings routes", async () => {
-    currentPathname = "/instance/settings/general";
+  it("renders the company settings sidebar on instance settings routes", async () => {
+    currentPathname = "/PAP/company/settings/instance/general";
     const root = createRoot(container);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -394,16 +388,17 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
     await flushReact();
     await flushReact();
 
-    expect(container.textContent).toContain("Instance sidebar");
+    expect(container.textContent).toContain("Company settings sidebar");
     expect(container.textContent).not.toContain("Company rail");
-    expect(container.textContent).not.toContain("Company settings sidebar");
     expect(container.textContent).not.toContain("Main company nav");
     expect(container.textContent).not.toContain("Plugin route sidebar");
 
@@ -446,7 +441,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
@@ -498,7 +495,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
@@ -559,7 +558,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });
@@ -631,7 +632,9 @@ describe("Layout", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <Layout />
+          <ThemeProvider>
+            <Layout />
+          </ThemeProvider>
         </QueryClientProvider>,
       );
     });

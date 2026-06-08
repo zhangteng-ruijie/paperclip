@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { Sidebar } from "./Sidebar";
-import { InstanceSidebar } from "./InstanceSidebar";
 import { CompanySettingsSidebar } from "./CompanySettingsSidebar";
 import { CompanySettingsNav } from "./access/CompanySettingsNav";
 import { BreadcrumbBar } from "./BreadcrumbBar";
@@ -91,7 +90,6 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
   const isCompanySettingsRoute = location.pathname.includes("/company/settings");
   const onboardingTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
@@ -325,7 +323,7 @@ export function Layout() {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!location.pathname.startsWith("/instance/settings/")) return;
+    if (!location.pathname.includes("/company/settings/instance") && !location.pathname.startsWith("/instance/")) return;
 
     const nextPath = normalizeRememberedInstanceSettingsPath(
       `${location.pathname}${location.search}${location.hash}`,
@@ -394,9 +392,7 @@ export function Layout() {
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <div className="w-60 shrink-0 overflow-hidden">
-                {isInstanceSettingsRoute ? (
-                  <InstanceSidebar />
-                ) : isCompanySettingsRoute ? (
+                {isCompanySettingsRoute ? (
                   <CompanySettingsSidebar />
                 ) : (
                   companySidebar
@@ -449,9 +445,7 @@ export function Layout() {
           <div className="flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
               <ResizableSidebarPane open={sidebarOpen} resizable className="h-full shrink-0">
-                {isInstanceSettingsRoute ? (
-                  <InstanceSidebar />
-                ) : isCompanySettingsRoute ? (
+                {isCompanySettingsRoute ? (
                   <CompanySettingsSidebar />
                 ) : (
                   companySidebar

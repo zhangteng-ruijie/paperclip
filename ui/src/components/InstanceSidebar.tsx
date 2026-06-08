@@ -3,6 +3,7 @@ import type { PluginRecord } from "@paperclipai/shared";
 import { Clock3, Cpu, FlaskConical, Puzzle, Settings, Shield, SlidersHorizontal, UserRoundPen } from "lucide-react";
 import { pluginsApi } from "@/api/plugins";
 import { useLocale } from "@/context/LocaleContext";
+import { INSTANCE_SETTINGS_PATH_PREFIX } from "@/lib/instance-settings";
 import { SIDEBAR_SCROLL_RESET_STATE } from "@/lib/navigation-scroll";
 import { queryKeys } from "@/lib/queryKeys";
 import { NavLink } from "@/lib/router";
@@ -38,18 +39,18 @@ export function InstanceSidebar() {
 
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide flex flex-col gap-4 px-3 py-2">
         <div className="flex flex-col gap-0.5">
-          <SidebarNavItem to="/instance/settings/profile" label="Profile" icon={UserRoundPen} end />
-          <SidebarNavItem to="/instance/settings/general" label={t("instance.sidebar.general")} icon={SlidersHorizontal} end />
-          <SidebarNavItem to="/instance/settings/access" label="Access" icon={Shield} end />
-          <SidebarNavItem to="/instance/settings/heartbeats" label={t("instance.sidebar.heartbeats")} icon={Clock3} end />
-          <SidebarNavItem to="/instance/settings/experimental" label={t("instance.sidebar.experimental")} icon={FlaskConical} />
-          <SidebarNavItem to="/instance/settings/plugins" label={t("instance.sidebar.plugins")} icon={Puzzle} />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/profile`} label="Profile" icon={UserRoundPen} end />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/general`} label={t("instance.sidebar.general")} icon={SlidersHorizontal} end />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/access`} label="Access" icon={Shield} end />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/heartbeats`} label={t("instance.sidebar.heartbeats")} icon={Clock3} end />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/experimental`} label={t("instance.sidebar.experimental")} icon={FlaskConical} />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/plugins`} label={t("instance.sidebar.plugins")} icon={Puzzle} />
           {sidebarPlugins.length > 0 ? (
             <div className="ml-4 mt-1 flex flex-col gap-0.5 border-l border-border/70 pl-3">
               {sidebarPlugins.map((plugin) => (
                 <NavLink
                   key={plugin.id}
-                  to={`/instance/settings/plugins/${plugin.id}`}
+                  to={`${INSTANCE_SETTINGS_PATH_PREFIX}/plugins/${plugin.id}`}
                   state={SIDEBAR_SCROLL_RESET_STATE}
                   className={({ isActive }) =>
                     [
@@ -65,7 +66,7 @@ export function InstanceSidebar() {
               ))}
             </div>
           ) : null}
-          <SidebarNavItem to="/instance/settings/adapters" label={t("instance.sidebar.adapters")} icon={Cpu} />
+          <SidebarNavItem to={`${INSTANCE_SETTINGS_PATH_PREFIX}/adapters`} label={t("instance.sidebar.adapters")} icon={Cpu} />
         </div>
       </nav>
     </aside>
