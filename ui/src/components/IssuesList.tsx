@@ -3,13 +3,13 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { accessApi } from "../api/access";
 import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
-import { useLocale } from "../context/LocaleContext";
 import { Link } from "@/lib/router";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
+import { useIssueExternalObjectSummaries } from "../hooks/useIssueExternalObjects";
 import {
   shouldBlurPageSearchOnEnter,
   shouldBlurPageSearchOnEscape,
@@ -27,6 +27,7 @@ import {
   applyIssueFilters,
   countActiveIssueFilters,
   defaultIssueFilterState,
+  issueFilterLabel,
   issuePriorityOrder,
   normalizeIssueFilterState,
   resolveIssueFilterWorkspaceId,
@@ -35,14 +36,6 @@ import {
   type IssueFilterState,
 } from "../lib/issue-filters";
 import {
-  formatIssueSubtaskCount,
-  getIssuesCopy,
-  issueGroupFieldLabel,
-  issuePriorityLabel,
-  issueSortFieldLabel,
-  issueStatusLabel,
-} from "../lib/issues-copy";
-import {
   DEFAULT_INBOX_ISSUE_COLUMNS,
   getAvailableInboxIssueColumns,
   normalizeInboxIssueColumns,
@@ -50,6 +43,7 @@ import {
   type InboxIssueColumn,
 } from "../lib/inbox";
 import { cn, formatDurationMs, formatTokens } from "../lib/utils";
+import { collectSubtreeLiveCounts } from "../lib/liveIssueIds";
 import {
   InboxIssueMetaLeading,
   InboxIssueTrailingColumns,
@@ -432,8 +426,6 @@ function IssueSearchInput({
   value: string;
   onDebouncedChange?: (search: string) => void;
 }) {
-  const { locale } = useLocale();
-  const copy = getIssuesCopy(locale);
   const [draftValue, setDraftValue] = useState(value);
   const lastCommittedValueRef = useRef(value);
 
@@ -480,9 +472,9 @@ function IssueSearchInput({
             e.currentTarget.blur();
           }
         }}
-        placeholder={copy.searchIssuesPlaceholder}
+        placeholder="Search tasks..."
         className="pl-7 text-xs sm:text-sm"
-        aria-label={copy.searchIssuesAria}
+        aria-label="Search tasks"
         data-page-search-target="true"
       />
     </div>
@@ -636,7 +628,6 @@ export function IssuesList({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialogActions();
-  const { locale } = useLocale();
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -652,8 +643,9 @@ export function IssuesList({
     retry: false,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const copy = getIssuesCopy(locale);
+  const experimentalSettingsLoaded = experimentalSettings !== undefined;
   const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
+  const externalObjectsEnabled = experimentalSettings?.enableExternalObjects === true;
 
   // Scope the storage key per company so folding/view state is independent across companies.
   const scopedKey = selectedCompanyId ? `${viewStateKey}:${selectedCompanyId}` : viewStateKey;
@@ -702,6 +694,11 @@ export function IssuesList({
       return next;
     });
   }, [scopedKey]);
+
+  useEffect(() => {
+    if (!experimentalSettingsLoaded || externalObjectsEnabled || viewState.externalObjectStatuses.length === 0) return;
+    updateView({ externalObjectStatuses: [] });
+  }, [experimentalSettingsLoaded, externalObjectsEnabled, updateView, viewState.externalObjectStatuses.length]);
 
   // Prune stale IDs from collapsedParents whenever the issue list changes.
   // Deleted or reassigned issues leave orphan IDs in localStorage; this keeps
@@ -932,6 +929,10 @@ export function IssuesList({
     [isolatedWorkspacesEnabled],
   );
   const availableIssueColumnSet = useMemo(() => new Set(availableIssueColumns), [availableIssueColumns]);
+  const subtreeLiveCounts = useMemo(
+    () => collectSubtreeLiveCounts(issues, liveIssueIds ?? new Set<string>()),
+    [issues, liveIssueIds],
+  );
   const visibleTrailingIssueColumns = useMemo(
     () => issueTrailingColumns.filter((column) => visibleIssueColumnSet.has(column) && availableIssueColumnSet.has(column)),
     [availableIssueColumnSet, visibleIssueColumnSet],
@@ -974,32 +975,58 @@ export function IssuesList({
     [boardIssueQueries, searchWithinLoadedIssues, viewState.viewMode],
   );
 
-  const filtered = useMemo(() => {
+  const sourceIssues = useMemo(() => {
     const useRemoteSearch = normalizedIssueSearch.length > 0 && !searchWithinLoadedIssues;
-    const sourceIssues = boardIssues ?? (useRemoteSearch ? searchedIssues : issues);
-    const searchScopedIssues = normalizedIssueSearch.length > 0 && searchWithinLoadedIssues
+    return boardIssues ?? (useRemoteSearch ? searchedIssues : issues);
+  }, [boardIssues, issues, normalizedIssueSearch, searchedIssues, searchWithinLoadedIssues]);
+
+  const searchScopedIssues = useMemo(
+    () => normalizedIssueSearch.length > 0 && searchWithinLoadedIssues
       ? sourceIssues.filter((issue) => issueMatchesLocalSearch(issue, normalizedIssueSearch))
-      : sourceIssues;
+      : sourceIssues,
+    [normalizedIssueSearch, searchWithinLoadedIssues, sourceIssues],
+  );
+  const hasExternalObjectStatusFilters = viewState.externalObjectStatuses.length > 0;
+  const issueIdsForExternalObjectSummaries = useMemo(
+    () => (viewState.viewMode === "list" || hasExternalObjectStatusFilters
+      ? searchScopedIssues.map((issue) => issue.id)
+      : []),
+    [hasExternalObjectStatusFilters, searchScopedIssues, viewState.viewMode],
+  );
+  const {
+    summaries: externalObjectSummaryByIssueId,
+    isLoading: externalObjectSummariesLoading,
+    isReady: externalObjectSummariesReady,
+  } = useIssueExternalObjectSummaries(
+    selectedCompanyId,
+    issueIdsForExternalObjectSummaries,
+  );
+  const issueFilterContext = useMemo(() => ({
+    ...issueFilterWorkspaceContext,
+    externalObjectSummaryByIssueId,
+    externalObjectSummariesReady: externalObjectSummariesReady && !externalObjectSummariesLoading,
+  }), [externalObjectSummariesLoading, externalObjectSummariesReady, externalObjectSummaryByIssueId, issueFilterWorkspaceContext]);
+  const externalObjectFilterLoading = hasExternalObjectStatusFilters
+    && externalObjectSummariesLoading
+    && !externalObjectSummariesReady;
+
+  const filtered = useMemo(() => {
     const filteredByControls = applyIssueFilters(
       searchScopedIssues,
       viewState,
       currentUserId,
       enableRoutineVisibilityFilter,
       liveIssueIds,
-      issueFilterWorkspaceContext,
+      issueFilterContext,
     );
     return sortIssues(filteredByControls, viewState);
   }, [
-    boardIssues,
-    issues,
-    searchedIssues,
-    searchWithinLoadedIssues,
+    searchScopedIssues,
     viewState,
-    normalizedIssueSearch,
     currentUserId,
     enableRoutineVisibilityFilter,
     liveIssueIds,
-    issueFilterWorkspaceContext,
+    issueFilterContext,
   ]);
 
   const progressSummary = useMemo(
@@ -1081,13 +1108,13 @@ export function IssuesList({
       const groups = groupBy(filtered, (i) => i.status);
       return issueStatusOrder
         .filter((s) => groups[s]?.length)
-        .map((s) => ({ key: s, label: issueStatusLabel(s, locale), items: groups[s]! }));
+        .map((s) => ({ key: s, label: issueFilterLabel(s), items: groups[s]! }));
     }
     if (viewState.groupBy === "priority") {
       const groups = groupBy(filtered, (i) => i.priority);
       return issuePriorityOrder
         .filter((p) => groups[p]?.length)
-        .map((p) => ({ key: p, label: issuePriorityLabel(p, locale), items: groups[p]! }));
+        .map((p) => ({ key: p, label: issueFilterLabel(p), items: groups[p]! }));
     }
     if (viewState.groupBy === "workspace") {
       const groups = groupBy(
@@ -1103,7 +1130,7 @@ export function IssuesList({
         })
         .map((key) => ({
           key,
-          label: key === "__no_workspace" ? copy.noWorkspace : (workspaceNameMap.get(key) ?? key.slice(0, 8)),
+          label: key === "__no_workspace" ? "No Workspace" : (workspaceNameMap.get(key) ?? key.slice(0, 8)),
           items: groups[key]!,
         }));
     }
@@ -1134,7 +1161,7 @@ export function IssuesList({
         })
         .map((key) => ({
           key,
-          label: key === "__no_parent" ? copy.noParent : (issueTitleMap.get(key) ?? key.slice(0, 8)),
+          label: key === "__no_parent" ? "No Parent" : (issueTitleMap.get(key) ?? key.slice(0, 8)),
           items: groups[key]!,
         }));
     }
@@ -1147,9 +1174,9 @@ export function IssuesList({
       key,
       label:
         key === "__unassigned"
-          ? copy.unassigned
+          ? "Unassigned"
           : key.startsWith("__user:")
-            ? (formatAssigneeUserLabel(key.slice("__user:".length), currentUserId, companyUserLabelMap) ?? copy.user)
+            ? (formatAssigneeUserLabel(key.slice("__user:".length), currentUserId, companyUserLabelMap) ?? "User")
             : (agentName(key) ?? key.slice(0, 8)),
       items: groups[key]!,
     }));
@@ -1163,7 +1190,6 @@ export function IssuesList({
     workspaceNameMap,
     issueTitleMap,
     companyUserLabelMap,
-    copy,
     projectById,
   ]);
 
@@ -1349,7 +1375,7 @@ export function IssuesList({
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Button size="sm" variant="outline" onClick={() => openCreateIssueDialog()}>
             <Plus className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">{createIssueLabel ? createButtonLabel : copy.newIssue}</span>
+            <span className="hidden sm:inline">{createButtonLabel}</span>
           </Button>
           <IssueSearchInput
             value={issueSearch}
@@ -1366,14 +1392,14 @@ export function IssuesList({
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => updateView({ viewMode: "list" })}
-              title={copy.listView}
+              title="List view"
             >
               <List className="h-3.5 w-3.5" />
             </button>
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "board" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => updateView({ viewMode: "board" })}
-              title={copy.boardView}
+              title="Board view"
             >
               <Columns3 className="h-3.5 w-3.5" />
             </button>
@@ -1474,7 +1500,7 @@ export function IssuesList({
             visibleColumnSet={visibleIssueColumnSet}
             onToggleColumn={toggleIssueColumn}
             onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
-            title={copy.chooseIssueColumns}
+            title="Choose which task columns stay visible"
             iconOnly
           />
 
@@ -1487,6 +1513,7 @@ export function IssuesList({
             projects={projects?.map((project) => ({ id: project.id, name: project.name }))}
             labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
             currentUserId={currentUserId}
+            enableExternalObjectFilters={externalObjectsEnabled}
             enableRoutineVisibilityFilter={enableRoutineVisibilityFilter}
             iconOnly
             workspaces={isolatedWorkspacesEnabled ? workspaceOptions : undefined}
@@ -1496,20 +1523,20 @@ export function IssuesList({
           {viewState.viewMode === "list" && (
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title={copy.sort} aria-label={copy.sort}>
+                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Sort">
                   <ArrowUpDown className="h-3.5 w-3.5" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-48 p-0">
                 <div className="p-2 space-y-0.5">
                   {([
-                    "workflow",
-                    "status",
-                    "priority",
-                    "title",
-                    "created",
-                    "updated",
-                  ] as const).map((field) => (
+                    ["workflow", "Workflow"],
+                    ["status", "Status"],
+                    ["priority", "Priority"],
+                    ["title", "Title"],
+                    ["created", "Created"],
+                    ["updated", "Updated"],
+                  ] as const).map(([field, label]) => (
                     <button
                       key={field}
                       className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
@@ -1523,7 +1550,7 @@ export function IssuesList({
                         }
                       }}
                     >
-                      <span>{issueSortFieldLabel(field, locale)}</span>
+                      <span>{label}</span>
                       {viewState.sortField === field && (
                         <span className="text-xs text-muted-foreground">
                           {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
@@ -1540,21 +1567,21 @@ export function IssuesList({
           {viewState.viewMode === "list" && (
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title={copy.group} aria-label={copy.group}>
+                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" title="Group">
                   <Layers className="h-3.5 w-3.5" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-44 p-0">
                 <div className="p-2 space-y-0.5">
                   {([
-                    "status",
-                    "priority",
-                    "assignee",
-                    "project",
-                    "workspace",
-                    "parent",
-                    "none",
-                  ] as const).map((value) => (
+                    ["status", "Status"],
+                    ["priority", "Priority"],
+                    ["assignee", "Assignee"],
+                    ["project", "Project"],
+                    ["workspace", "Workspace"],
+                    ["parent", "Parent Task"],
+                    ["none", "None"],
+                  ] as const).map(([value, label]) => (
                     <button
                       key={value}
                       className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
@@ -1562,7 +1589,7 @@ export function IssuesList({
                       }`}
                       onClick={() => updateView({ groupBy: value })}
                     >
-                      <span>{issueGroupFieldLabel(value, locale)}</span>
+                      <span>{label}</span>
                       {viewState.groupBy === value && <Check className="h-3.5 w-3.5" />}
                     </button>
                   ))}
@@ -1573,7 +1600,7 @@ export function IssuesList({
         </div>
       </div>
 
-      {isLoading && <PageSkeleton variant="issues-list" />}
+      {(isLoading || externalObjectFilterLoading) && <PageSkeleton variant="issues-list" />}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
       {!searchWithinLoadedIssues && normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
         <p className="text-xs text-muted-foreground">
@@ -1585,11 +1612,11 @@ export function IssuesList({
           Some board columns are showing up to {ISSUE_BOARD_COLUMN_RESULT_LIMIT} tasks. Refine filters or search to reveal the rest.
         </p>
       )}
-      {!isLoading && filtered.length === 0 && viewState.viewMode === "list" && (
+      {!isLoading && !externalObjectFilterLoading && filtered.length === 0 && viewState.viewMode === "list" && (
         <EmptyState
           icon={CircleDot}
-          message={copy.noIssuesMatch}
-          action={createIssueLabel ? createActionLabel : copy.createIssue}
+          message="No tasks match the current filters or search."
+          action={createActionLabel}
           onAction={() => openCreateIssueDialog()}
         />
       )}
@@ -1757,11 +1784,12 @@ export function IssuesList({
                         checklistDependencyChips={checklistDependencyChips}
                         checklistRowId={checklistRowId}
                         titleClassName={doneRowTitleClass}
+                        externalObjectSummary={externalObjectSummaryByIssueId.get(issue.id) ?? null}
                         titleSuffix={(
                           <>
                             {hasChildren && !isExpanded ? (
                               <span className="ml-1.5 text-xs text-muted-foreground">
-                                {formatIssueSubtaskCount(totalDescendants, locale)}
+                                ({totalDescendants} sub-task{totalDescendants !== 1 ? "s" : ""})
                               </span>
                             ) : null}
                             {issueBadge ? (
@@ -1799,8 +1827,8 @@ export function IssuesList({
                               <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
                             </button>
                           ) : (
-                            <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
-                              <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
+                            <span className="inline-flex items-center" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                              <StatusIcon status={issue.status} size="lg" blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
                             </span>
                           )
                         }
@@ -1821,12 +1849,13 @@ export function IssuesList({
                             <InboxIssueMetaLeading
                               issue={issue}
                               isLive={liveIssueIds?.has(issue.id) === true}
+                              subtreeLiveCount={subtreeLiveCounts.get(issue.id) ?? 0}
                               showStatus={visibleIssueColumnSet.has("status") && availableIssueColumnSet.has("status")}
                               showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
                               checklistStepNumber={checklistStepNumber}
                               statusSlot={(
-                                <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
-                                  <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
+                                <span className="inline-flex items-center" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                  <StatusIcon status={issue.status} size="lg" blockerAttention={issue.blockerAttention} onChange={(s) => onUpdateIssue(issue.id, { status: s })} />
                                 </span>
                               )}
                             />
@@ -1870,7 +1899,7 @@ export function IssuesList({
                                         <Identity name={agentName(issue.assigneeAgentId)!} size="sm" className="min-w-0" />
                                       ) : issue.assigneeUserId ? (
                                         <Identity
-                                          name={assigneeUserLabel ?? copy.user}
+                                          name={assigneeUserLabel ?? "User"}
                                           avatarUrl={assigneeUserProfile?.image ?? null}
                                           size="sm"
                                           className="min-w-0"
@@ -1880,7 +1909,7 @@ export function IssuesList({
                                           <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30">
                                             <User className="h-3.5 w-3.5" />
                                           </span>
-                                          {copy.assignee}
+                                          Assignee
                                         </span>
                                       )}
                                     </button>
@@ -1893,7 +1922,7 @@ export function IssuesList({
                                   >
                                     <input
                                       className="mb-1 w-full border-b border-border bg-transparent px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/50"
-                                      placeholder={copy.searchAssignees}
+                                      placeholder="Search assignees..."
                                       value={assigneeSearch}
                                       onChange={(e) => setAssigneeSearch(e.target.value)}
                                       autoFocus
@@ -1910,7 +1939,7 @@ export function IssuesList({
                                           assignIssue(issue.id, null, null);
                                         }}
                                       >
-                                        {copy.noAssignee}
+                                        No assignee
                                       </button>
                                       {currentUserId && (
                                         <button
@@ -1925,7 +1954,7 @@ export function IssuesList({
                                           }}
                                         >
                                           <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                          <span>{copy.me}</span>
+                                          <span>Me</span>
                                         </button>
                                       )}
                                       {(agents ?? [])

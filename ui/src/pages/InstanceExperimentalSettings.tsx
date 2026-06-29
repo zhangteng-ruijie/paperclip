@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock, FlaskConical, Play, Search } from "lucide-react";
+import { AlertTriangle, Clock, FlaskConical, Play, Search } from "lucide-react";
 import type {
+  InstanceExperimentalSettings,
   IssueGraphLivenessAutoRecoveryPreview,
   PatchInstanceExperimentalSettings,
 } from "@paperclipai/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
-import { getInstanceAdminCopy } from "../lib/instance-admin-copy";
 import { queryKeys } from "../lib/queryKeys";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Button } from "@/components/ui/button";
@@ -31,6 +30,9 @@ function issueHref(identifier: string | null, issueId: string) {
 function formatRecoveryState(state: string) {
   return state.replace(/_/g, " ");
 }
+
+// PAP-11233: keep Conference Room code intact, but hide the user-facing opt-in for now.
+const SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING = false;
 
 function RecoveryPreviewDialog({
   preview,
@@ -122,39 +124,59 @@ function RecoveryPreviewDialog({
 
 export function InstanceExperimentalSettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { t, locale } = useLocale();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
-  const adminCopy = getInstanceAdminCopy(locale);
   const [lookbackHoursDraft, setLookbackHoursDraft] = useState("24");
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [pendingPreview, setPendingPreview] = useState<IssueGraphLivenessAutoRecoveryPreview | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: locale === "zh-CN" ? "设置" : "Settings", href: "/company/settings" },
-      { label: t("settings.general.instanceTitle"), href: "/company/settings/instance/general" },
-      { label: t("settings.experimental.title") },
+      { label: "Settings", href: "/company/settings" },
+      { label: "Instance settings", href: "/company/settings/instance/general" },
+      { label: "Experimental" },
     ]);
-  }, [locale, setBreadcrumbs, t]);
+  }, [setBreadcrumbs]);
 
   const experimentalQuery = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
   });
 
-  const toggleMutation = useMutation({
+  const toggleMutation = useMutation<
+    InstanceExperimentalSettings,
+    Error,
+    PatchInstanceExperimentalSettings,
+    { previousSettings?: InstanceExperimentalSettings }
+  >({
     mutationFn: async (patch: PatchInstanceExperimentalSettings) =>
       instanceSettingsApi.updateExperimental(patch),
-    onSuccess: async () => {
+    onMutate: async (patch) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.instance.experimentalSettings });
+      const previousSettings = queryClient.getQueryData<InstanceExperimentalSettings>(
+        queryKeys.instance.experimentalSettings,
+      );
+      if (previousSettings) {
+        queryClient.setQueryData<InstanceExperimentalSettings>(
+          queryKeys.instance.experimentalSettings,
+          { ...previousSettings, ...patch },
+        );
+      }
+      return { previousSettings };
+    },
+    onSuccess: async (updatedSettings) => {
       setActionError(null);
+      queryClient.setQueryData(queryKeys.instance.experimentalSettings, updatedSettings);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.instance.experimentalSettings }),
         queryClient.invalidateQueries({ queryKey: queryKeys.health }),
       ]);
     },
-    onError: (error) => {
-      setActionError(error instanceof Error ? error.message : t("common.failedUpdateExperimentalSettings"));
+    onError: (error, _patch, context) => {
+      if (context?.previousSettings) {
+        queryClient.setQueryData(queryKeys.instance.experimentalSettings, context.previousSettings);
+      }
+      setActionError(error instanceof Error ? error.message : "Failed to update experimental settings.");
     },
   });
 
@@ -195,7 +217,7 @@ export function InstanceExperimentalSettings() {
   }, [experimentalQuery.data?.issueGraphLivenessAutoRecoveryLookbackHours]);
 
   if (experimentalQuery.isLoading) {
-    return <div className="text-sm text-muted-foreground">{t("common.loadingExperimentalSettings")}</div>;
+    return <div className="text-sm text-muted-foreground">Loading experimental settings...</div>;
   }
 
   if (experimentalQuery.error) {
@@ -203,18 +225,26 @@ export function InstanceExperimentalSettings() {
       <div className="text-sm text-destructive">
         {experimentalQuery.error instanceof Error
           ? experimentalQuery.error.message
-          : t("common.failedLoadExperimentalSettings")}
+          : "Failed to load experimental settings."}
       </div>
     );
   }
 
   const enableEnvironments = experimentalQuery.data?.enableEnvironments === true;
   const enableIsolatedWorkspaces = experimentalQuery.data?.enableIsolatedWorkspaces === true;
+  // Default ON: treat anything but an explicit `false` as enabled so
+  // the toggle reflects the streamlined sidebar being the default experience.
   const enableStreamlinedLeftNavigation =
-    experimentalQuery.data?.enableStreamlinedLeftNavigation === true;
+    experimentalQuery.data?.enableStreamlinedLeftNavigation !== false;
+  const enableConferenceRoomChat = experimentalQuery.data?.enableConferenceRoomChat === true;
   const enableIssuePlanDecompositions =
     experimentalQuery.data?.enableIssuePlanDecompositions === true;
+  const enableExperimentalFileViewer =
+    experimentalQuery.data?.enableExperimentalFileViewer === true;
+  const enableTaskWatchdogs = experimentalQuery.data?.enableTaskWatchdogs === true;
   const enableCloudSync = experimentalQuery.data?.enableCloudSync === true;
+  const enableExternalObjects = experimentalQuery.data?.enableExternalObjects === true;
+  const enableServerInfoDebugView = experimentalQuery.data?.enableServerInfoDebugView === true;
   const autoRestartDevServerWhenIdle = experimentalQuery.data?.autoRestartDevServerWhenIdle === true;
   const enableIssueGraphLivenessAutoRecovery =
     experimentalQuery.data?.enableIssueGraphLivenessAutoRecovery === true;
@@ -259,11 +289,27 @@ export function InstanceExperimentalSettings() {
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <FlaskConical className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">{t("settings.experimental.title")}</h1>
+          <h1 className="text-lg font-semibold">Experimental</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          {t("settings.experimental.description")}
+          Opt into features that are still being evaluated before they become default behavior.
         </p>
+      </div>
+
+      <div
+        role="alert"
+        className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          <div className="space-y-1 text-sm">
+            <p className="font-medium text-foreground">Experimental features may break at any time.</p>
+            <p className="text-muted-foreground">
+              These features are opt-in and come with no compatibility guarantees. They may change, break, or be
+              removed without notice. Avoid relying on them for critical or production workflows.
+            </p>
+          </div>
+        </div>
       </div>
 
       {actionError && (
@@ -293,16 +339,56 @@ export function InstanceExperimentalSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">{t("settings.experimental.enableIsolatedWorkspacesTitle")}</h2>
+            <h2 className="text-sm font-semibold">Experimental File Viewer</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              {t("settings.experimental.enableIsolatedWorkspacesDescription")}
+              Show task detail controls for browsing and previewing workspace files relative to a task.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableExperimentalFileViewer}
+            onCheckedChange={() =>
+              toggleMutation.mutate({
+                enableExperimentalFileViewer: !enableExperimentalFileViewer,
+              })
+            }
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle experimental file viewer setting"
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Enable External Objects</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Detect external URLs in issues and show resolved status for pull requests, tickets, and other referenced
+              work objects.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableExternalObjects}
+            onCheckedChange={() => toggleMutation.mutate({ enableExternalObjects: !enableExternalObjects })}
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle external objects experimental setting"
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Enable Isolated Workspaces</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Show execution workspace controls in project configuration and allow isolated workspace behavior for new
+              and existing task runs.
             </p>
           </div>
           <ToggleSwitch
             checked={enableIsolatedWorkspaces}
             onCheckedChange={() => toggleMutation.mutate({ enableIsolatedWorkspaces: !enableIsolatedWorkspaces })}
             disabled={toggleMutation.isPending}
-            aria-label={adminCopy.experimental.toggleIsolatedWorkspacesAria}
+            aria-label="Toggle isolated workspaces experimental setting"
           />
         </div>
       </section>
@@ -329,6 +415,31 @@ export function InstanceExperimentalSettings() {
         </div>
       </section>
 
+      {SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING ? (
+        <section className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <h2 className="text-sm font-semibold">Conference Room Chat</h2>
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Adds a Conference Room — one chat where you and your whole team work together — plus the live activity
+                feed and the redesigned onboarding. Also restyles task threads as chat bubbles. Turn off anytime to
+                restore the classic UI.
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={enableConferenceRoomChat}
+              onCheckedChange={() =>
+                toggleMutation.mutate({
+                  enableConferenceRoomChat: !enableConferenceRoomChat,
+                })
+              }
+              disabled={toggleMutation.isPending}
+              aria-label="Toggle conference room chat experimental setting"
+            />
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
@@ -354,6 +465,28 @@ export function InstanceExperimentalSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Task Watchdogs</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Show task detail controls for configuring watchdog agents that verify stopped task subtrees and restore
+              live paths when work should continue.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableTaskWatchdogs}
+            onCheckedChange={(checked) =>
+              toggleMutation.mutate({
+                enableTaskWatchdogs: checked,
+              })
+            }
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle task watchdogs experimental setting"
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">Cloud Sync</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
               Show local Paperclip Cloud upstream connection, preview, push, retry, and activation review surfaces.
@@ -372,16 +505,38 @@ export function InstanceExperimentalSettings() {
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <h2 className="text-sm font-semibold">{t("settings.experimental.autoRestartTitle")}</h2>
+            <h2 className="text-sm font-semibold">Server Info Debug View</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              {t("settings.experimental.autoRestartDescription")}
+              Show a "Server" section in the account drawer with the current server restart time and running commit.
+            </p>
+          </div>
+          <ToggleSwitch
+            checked={enableServerInfoDebugView}
+            onCheckedChange={() =>
+              toggleMutation.mutate({
+                enableServerInfoDebugView: !enableServerInfoDebugView,
+              })
+            }
+            disabled={toggleMutation.isPending}
+            aria-label="Toggle server info debug view experimental setting"
+          />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold">Auto-Restart Dev Server When Idle</h2>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              In `pnpm dev:once`, wait for all queued and running local agent runs to finish, then restart the server
+              automatically when backend changes or migrations make the current boot stale.
             </p>
           </div>
           <ToggleSwitch
             checked={autoRestartDevServerWhenIdle}
             onCheckedChange={() => toggleMutation.mutate({ autoRestartDevServerWhenIdle: !autoRestartDevServerWhenIdle })}
             disabled={toggleMutation.isPending}
-            aria-label={adminCopy.experimental.toggleAutoRestartAria}
+            aria-label="Toggle guarded dev-server auto-restart"
           />
         </div>
       </section>

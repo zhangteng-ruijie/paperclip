@@ -2817,13 +2817,19 @@ function buildManifestFromPackageFiles(
       const trackingRef = asString(primarySource?.trackingRef);
       const sourceHostname = asString(primarySource?.hostname) || "github.com";
       const [owner, repoName] = (repo ?? "").split("/");
+      const canonicalKey = readSkillKey(frontmatter);
+      const normalizedSourceKind = owner === "paperclipai"
+        && repoName === "paperclip"
+        && canonicalKey?.startsWith("paperclipai/paperclip/")
+        ? "paperclip_bundled"
+        : "github";
       sourceType = "github";
       sourceLocator = asString(primarySource?.url)
         ?? (repo ? `https://${sourceHostname}/${repo}${repoPath ? `/tree/${trackingRef ?? commit ?? "main"}/${repoPath}` : ""}` : null);
       sourceRef = commit;
       normalizedMetadata = owner && repoName
         ? {
-            sourceKind: "github",
+            sourceKind: normalizedSourceKind,
             ...(sourceHostname !== "github.com" ? { hostname: sourceHostname } : {}),
             owner,
             repo: repoName,
@@ -3101,7 +3107,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     const normalizedAdapterConfig = await secrets.normalizeAdapterConfigForPersistence(
       companyId,
       nextAdapterConfig,
-      { strictMode: strictSecretsMode },
+      { strictMode: strictSecretsMode, adapterType: effectiveAdapterType },
     );
     await assertImportAdapterConfigConstraints(effectiveAdapterType, normalizedAdapterConfig);
     return {

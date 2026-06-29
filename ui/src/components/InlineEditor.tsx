@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "../lib/utils";
-import { useLocale } from "../context/LocaleContext";
-import { getEditorCopy } from "../lib/editor-copy";
-import { MarkdownBody } from "./MarkdownBody";
+import { MarkdownBody, type MarkdownExternalReferenceMap } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
 import { FoldCurtain } from "./FoldCurtain";
@@ -21,6 +19,11 @@ interface InlineEditorProps {
   nullable?: boolean;
   /** When true, long display-mode markdown is clipped with a fade curtain that expands on click. */
   foldable?: boolean;
+  /**
+   * Optional host-resolved external object metadata. Forwarded to the read-mode
+   * `MarkdownBody` so resolved URLs render with the inline status icon prefix.
+   */
+  externalReferences?: MarkdownExternalReferenceMap;
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
@@ -50,17 +53,15 @@ export function InlineEditor({
   onSave,
   as: Tag = "span",
   className,
-  placeholder,
+  placeholder = "Click to edit...",
   multiline = false,
   nullable = false,
   imageUploadHandler,
   onDropFile,
   mentions,
   foldable = false,
+  externalReferences,
 }: InlineEditorProps) {
-  const { locale } = useLocale();
-  const copy = getEditorCopy(locale);
-  const resolvedPlaceholder = placeholder ?? copy.inlineEditor.clickToEdit;
   const [editing, setEditing] = useState(false);
   const [multilineEditing, setMultilineEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -293,12 +294,18 @@ export function InlineEditor({
         >
           {foldable ? (
             <FoldCurtain>
-              <MarkdownBody className={cn("paperclip-edit-in-place-content", className)}>
+              <MarkdownBody
+                className={cn("paperclip-edit-in-place-content", className)}
+                externalReferences={externalReferences}
+              >
                 {previewValue}
               </MarkdownBody>
             </FoldCurtain>
           ) : (
-            <MarkdownBody className={cn("paperclip-edit-in-place-content", className)}>
+            <MarkdownBody
+              className={cn("paperclip-edit-in-place-content", className)}
+              externalReferences={externalReferences}
+            >
               {previewValue}
             </MarkdownBody>
           )}
@@ -355,12 +362,12 @@ export function InlineEditor({
             )}
           >
             {autosaveState === "saving"
-              ? copy.inlineEditor.autosaving
+              ? "Autosaving..."
               : autosaveState === "saved"
-                ? copy.inlineEditor.saved
+                ? "Saved"
                 : autosaveState === "error"
-                  ? copy.inlineEditor.couldNotSave
-                  : ""}
+                  ? "Could not save"
+                  : "Idle"}
           </span>
         </div>
       </div>
@@ -405,7 +412,7 @@ export function InlineEditor({
       )}
       onClick={() => setEditing(true)}
     >
-      {value || resolvedPlaceholder}
+      {value || placeholder}
     </DisplayTag>
   );
 }

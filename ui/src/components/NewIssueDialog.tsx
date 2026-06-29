@@ -4,7 +4,6 @@ import type { IssueWorkMode } from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
-import { useLocale } from "../context/LocaleContext";
 import { useAdapterCapabilities } from "../adapters/use-adapter-capabilities";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
@@ -17,10 +16,16 @@ import { assetsApi } from "../api/assets";
 import { buildCompanyUserInlineOptions, buildMarkdownMentionOptions, isAgentTaskTarget } from "../lib/company-members";
 import { queryKeys } from "../lib/queryKeys";
 import { orderReusableExecutionWorkspaces } from "../lib/reusable-execution-workspaces";
+import {
+  defaultExecutionWorkspaceModeForProject,
+  defaultProjectWorkspaceIdForProject,
+  issueExecutionWorkspaceModeForExistingWorkspace,
+} from "../lib/project-workspace-defaults";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
+import { isIssueWorkMode, nextWorkMode, workModeMetaFor, workModeMetaList } from "../lib/work-mode-meta";
 import { useToastActions } from "../context/ToastContext";
 import {
   assigneeValueFromSelection,
@@ -44,9 +49,8 @@ import {
   MoreHorizontal,
   ChevronRight,
   ChevronDown,
+  Check,
   CircleDot,
-  ClipboardList,
-  Hammer,
   Minus,
   ArrowUp,
   ArrowDown,
@@ -62,26 +66,17 @@ import {
   Eye,
   ShieldAlert,
   ShieldCheck,
+  ScanEye,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "../lib/utils";
-import {
-  formatIssueComposerOptionsTitle,
-  formatIssueComposerOpenIssueLabel,
-  formatIssueComposerUploadWarningBody,
-  formatIssueComposerUploadWarningTitle,
-  getIssueComposerCopy,
-  issueComposerExecutionWorkspaceModes,
-  issueComposerPriorityOptions,
-  issueComposerStatusOptions,
-  issueComposerThinkingEffortOptions,
-} from "../lib/issue-composer-copy";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
 import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
-import { formatStatusLabel } from "./StatusBadge";
 import { getTrustPreset } from "../lib/trust-policy-ui";
+import { ReusableExecutionWorkspaceSelect } from "./ReusableExecutionWorkspaceSelect";
 
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
@@ -96,6 +91,8 @@ interface IssueDraft {
   assigneeValue: string;
   reviewerValue: string;
   approverValue: string;
+  watchdogAgentId?: string;
+  watchdogInstructions?: string;
   assigneeId?: string;
   projectId: string;
   projectWorkspaceId?: string;
@@ -150,19 +147,6 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "max", label: "Max" },
   ],
 } as const;
-
-function isIssueWorkMode(value: unknown): value is IssueWorkMode {
-  return value === "standard" || value === "planning";
-}
-
-const ISSUE_WORK_MODE_OPTIONS: ReadonlyArray<{
-  value: IssueWorkMode;
-  label: string;
-  icon: typeof Hammer;
-}> = [
-  { value: "standard", label: "Standard", icon: Hammer },
-  { value: "planning", label: "Planning", icon: ClipboardList },
-];
 
 function loadDraft(): IssueDraft | null {
   try {
@@ -235,25 +219,39 @@ function formatFileSize(file: File) {
   return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function defaultProjectWorkspaceIdForProject(project: { workspaces?: Array<{ id: string; isPrimary: boolean }>; executionWorkspacePolicy?: { defaultProjectWorkspaceId?: string | null } | null } | null | undefined) {
-  if (!project) return "";
-  return project.executionWorkspacePolicy?.defaultProjectWorkspaceId
-    ?? project.workspaces?.find((workspace) => workspace.isPrimary)?.id
-    ?? project.workspaces?.[0]?.id
-    ?? "";
+function buildStatusOptions(): ReadonlyArray<{ value: string; label: string; color: string; description?: string }> {
+  const palette = issueStatusText;
+  return [
+    {
+      value: "backlog",
+      label: "Backlog",
+      color: palette.backlog ?? issueStatusTextDefault,
+      description: "Parked — assignee will not be woken",
+    },
+    {
+      value: "todo",
+      label: "Todo",
+      color: palette.todo ?? issueStatusTextDefault,
+      description: "Executable — assignee will be woken",
+    },
+    { value: "in_progress", label: "In Progress", color: palette.in_progress ?? issueStatusTextDefault },
+    { value: "in_review", label: "In Review", color: palette.in_review ?? issueStatusTextDefault },
+    { value: "done", label: "Done", color: palette.done ?? issueStatusTextDefault },
+  ];
 }
 
-function defaultExecutionWorkspaceModeForProject(project: { executionWorkspacePolicy?: { enabled?: boolean; defaultMode?: string | null } | null } | null | undefined) {
-  const defaultMode = project?.executionWorkspacePolicy?.enabled ? project.executionWorkspacePolicy.defaultMode : null;
-  if (
-    defaultMode === "isolated_workspace" ||
-    defaultMode === "operator_branch" ||
-    defaultMode === "adapter_default"
-  ) {
-    return defaultMode === "adapter_default" ? "agent_default" : defaultMode;
-  }
-  return "shared_workspace";
-}
+const priorities = [
+  { value: "critical", label: "Critical", icon: AlertTriangle, color: priorityColor.critical ?? priorityColorDefault },
+  { value: "high", label: "High", icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault },
+  { value: "medium", label: "Medium", icon: Minus, color: priorityColor.medium ?? priorityColorDefault },
+  { value: "low", label: "Low", icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault },
+];
+
+const EXECUTION_WORKSPACE_MODES = [
+  { value: "shared_workspace", label: "Project default" },
+  { value: "isolated_workspace", label: "New isolated workspace" },
+  { value: "reuse_existing", label: "Reuse existing workspace" },
+] as const;
 
 function defaultExecutionWorkspaceModeForIssueDefaults(
   defaults: {
@@ -278,7 +276,6 @@ const IssueTitleTextarea = memo(function IssueTitleTextarea({
   descriptionEditorRef,
   assigneeSelectorRef,
   projectSelectorRef,
-  placeholder,
   onChange,
 }: {
   value: string;
@@ -288,7 +285,6 @@ const IssueTitleTextarea = memo(function IssueTitleTextarea({
   descriptionEditorRef: RefObject<MarkdownEditorRef | null>;
   assigneeSelectorRef: RefObject<HTMLButtonElement | null>;
   projectSelectorRef: RefObject<HTMLButtonElement | null>;
-  placeholder: string;
   onChange: (value: string) => void;
 }) {
   const [draftValue, setDraftValue] = useState(value);
@@ -300,7 +296,7 @@ const IssueTitleTextarea = memo(function IssueTitleTextarea({
   return (
     <textarea
       className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50"
-      placeholder={placeholder}
+      placeholder="Task title"
       rows={1}
       value={draftValue}
       onChange={(e) => {
@@ -342,7 +338,6 @@ const IssueTitleTextarea = memo(function IssueTitleTextarea({
 const IssueDescriptionEditor = memo(function IssueDescriptionEditor({
   value,
   expanded,
-  placeholder,
   mentions,
   descriptionEditorRef,
   imageUploadHandler,
@@ -350,7 +345,6 @@ const IssueDescriptionEditor = memo(function IssueDescriptionEditor({
 }: {
   value: string;
   expanded: boolean;
-  placeholder: string;
   mentions: MentionOption[];
   descriptionEditorRef: RefObject<MarkdownEditorRef | null>;
   imageUploadHandler: (file: File) => Promise<string>;
@@ -370,7 +364,7 @@ const IssueDescriptionEditor = memo(function IssueDescriptionEditor({
         setDraftValue(nextValue);
         onChange(nextValue);
       }}
-      placeholder={placeholder}
+      placeholder="Add description..."
       bordered={false}
       mentions={mentions}
       contentClassName={cn("text-sm text-muted-foreground pb-12", expanded ? "min-h-[220px]" : "min-h-[120px]")}
@@ -379,19 +373,11 @@ const IssueDescriptionEditor = memo(function IssueDescriptionEditor({
   );
 });
 
-function issueExecutionWorkspaceModeForExistingWorkspace(mode: string | null | undefined) {
-  if (mode === "isolated_workspace" || mode === "operator_branch" || mode === "shared_workspace") {
-    return mode;
-  }
-  if (mode === "adapter_managed" || mode === "cloud_sandbox") {
-    return "agent_default";
-  }
-  return "shared_workspace";
-}
-
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const { companies, selectedCompanyId, selectedCompany } = useCompany();
+  const workModeOptions = useMemo(() => workModeMetaList(), []);
+  const statuses = useMemo(() => buildStatusOptions(), []);
   const queryClient = useQueryClient();
   const { pushToast } = useToastActions();
   const [title, setTitle] = useState("");
@@ -407,6 +393,10 @@ export function NewIssueDialog() {
   const [approverValue, setApproverValue] = useState("");
   const [showReviewerRow, setShowReviewerRow] = useState(false);
   const [showApproverRow, setShowApproverRow] = useState(false);
+  const [watchdogAgentId, setWatchdogAgentId] = useState("");
+  const [watchdogInstructions, setWatchdogInstructions] = useState("");
+  const [showWatchdogRow, setShowWatchdogRow] = useState(false);
+  const [watchdogEditorOpen, setWatchdogEditorOpen] = useState(false);
   const [participantMenuOpen, setParticipantMenuOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
@@ -444,8 +434,6 @@ export function NewIssueDialog() {
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-  const { locale } = useLocale();
-  const copy = getIssueComposerCopy(locale);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
@@ -458,7 +446,11 @@ export function NewIssueDialog() {
     queryFn: () => projectsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
-  const { data: reusableExecutionWorkspaces } = useQuery({
+  const {
+    data: reusableExecutionWorkspaces,
+    isLoading: reusableExecutionWorkspacesLoading,
+    isError: reusableExecutionWorkspacesError,
+  } = useQuery({
     queryKey: queryKeys.executionWorkspaces.summaryList(effectiveCompanyId!, {
       projectId,
       projectWorkspaceId: projectWorkspaceId || undefined,
@@ -506,41 +498,6 @@ export function NewIssueDialog() {
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
-  const statusLabels = issueComposerStatusOptions(locale);
-  const statusDescriptions = locale === "zh-CN"
-    ? { backlog: "暂存 - 不会唤醒负责人", todo: "可执行 - 会唤醒负责人" }
-    : { backlog: "Parked - assignee will not be woken", todo: "Executable - assignee will be woken" };
-  const statuses: ReadonlyArray<{ value: string; label: string; color: string; description?: string }> = [
-    { value: "backlog", label: statusLabels[0].label, color: issueStatusText.backlog ?? issueStatusTextDefault, description: statusDescriptions.backlog },
-    { value: "todo", label: statusLabels[1].label, color: issueStatusText.todo ?? issueStatusTextDefault, description: statusDescriptions.todo },
-    { value: "in_progress", label: statusLabels[2].label, color: issueStatusText.in_progress ?? issueStatusTextDefault },
-    { value: "in_review", label: statusLabels[3].label, color: issueStatusText.in_review ?? issueStatusTextDefault },
-    { value: "done", label: statusLabels[4].label, color: issueStatusText.done ?? issueStatusTextDefault },
-  ];
-  const priorityLabels = issueComposerPriorityOptions(locale);
-  const priorities = [
-    {
-      value: "critical",
-      label: priorityLabels[0].label,
-      icon: AlertTriangle,
-      color: priorityColor.critical ?? priorityColorDefault,
-    },
-    { value: "high", label: priorityLabels[1].label, icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault },
-    {
-      value: "medium",
-      label: priorityLabels[2].label,
-      icon: Minus,
-      color: priorityColor.medium ?? priorityColorDefault,
-    },
-    { value: "low", label: priorityLabels[3].label, icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault },
-  ] as const;
-  const executionWorkspaceModes = issueComposerExecutionWorkspaceModes(locale);
-  const thinkingEffortOptions =
-    assigneeAdapterType === "codex_local"
-      ? issueComposerThinkingEffortOptions("codex_local", locale)
-      : assigneeAdapterType === "opencode_local"
-        ? issueComposerThinkingEffortOptions("opencode_local", locale)
-        : issueComposerThinkingEffortOptions("claude_local", locale);
   const getAdapterCapabilities = useAdapterCapabilities();
   const assigneeAdapterCapabilities = assigneeAdapterType
     ? getAdapterCapabilities(assigneeAdapterType)
@@ -617,11 +574,11 @@ export function NewIssueDialog() {
         const prefix = (companies.find((company) => company.id === companyId)?.issuePrefix ?? "").trim();
         const issueRef = issue.identifier ?? issue.id;
         pushToast({
-          title: formatIssueComposerUploadWarningTitle(issueRef, locale),
-          body: formatIssueComposerUploadWarningBody(failures.length, locale),
+          title: `Created ${issueRef} with upload warnings`,
+          body: `${failures.length} staged ${failures.length === 1 ? "file" : "files"} could not be added.`,
           tone: "warn",
           action: prefix
-            ? { label: formatIssueComposerOpenIssueLabel(issueRef, locale), href: `/${prefix}/issues/${issueRef}` }
+            ? { label: `Open ${issueRef}`, href: `/${prefix}/issues/${issueRef}` }
             : undefined,
         });
       }
@@ -633,7 +590,7 @@ export function NewIssueDialog() {
 
   const uploadDescriptionImage = useMutation({
     mutationFn: async (file: File) => {
-      if (!effectiveCompanyId) throw new Error(copy.noCompanySelected);
+      if (!effectiveCompanyId) throw new Error("No company selected");
       return assetsApi.uploadImage(effectiveCompanyId, file, "issues/drafts");
     },
   });
@@ -674,6 +631,8 @@ export function NewIssueDialog() {
       assigneeValue,
       reviewerValue,
       approverValue,
+      watchdogAgentId,
+      watchdogInstructions,
       projectId,
       projectWorkspaceId,
       assigneeModelLane,
@@ -692,6 +651,8 @@ export function NewIssueDialog() {
     assigneeValue,
     reviewerValue,
     approverValue,
+    watchdogAgentId,
+    watchdogInstructions,
     projectId,
     projectWorkspaceId,
     assigneeModelOverride,
@@ -728,6 +689,8 @@ export function NewIssueDialog() {
     assigneeValue,
     reviewerValue,
     approverValue,
+    watchdogAgentId,
+    watchdogInstructions,
     projectId,
     projectWorkspaceId,
     assigneeModelLane,
@@ -793,6 +756,9 @@ export function NewIssueDialog() {
       setApproverValue("");
       setShowReviewerRow(false);
       setShowApproverRow(false);
+      setWatchdogAgentId("");
+      setWatchdogInstructions("");
+      setShowWatchdogRow(false);
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -821,6 +787,9 @@ export function NewIssueDialog() {
       setApproverValue(draft.approverValue ?? "");
       setShowReviewerRow(!!(draft.reviewerValue));
       setShowApproverRow(!!(draft.approverValue));
+      setWatchdogAgentId(draft.watchdogAgentId ?? "");
+      setWatchdogInstructions(draft.watchdogInstructions ?? "");
+      setShowWatchdogRow(!!(draft.watchdogAgentId));
       setProjectId(restoredProjectId);
       setProjectWorkspaceId(
         hasExplicitProjectWorkspaceId
@@ -863,6 +832,9 @@ export function NewIssueDialog() {
       setApproverValue("");
       setShowReviewerRow(false);
       setShowApproverRow(false);
+      setWatchdogAgentId("");
+      setWatchdogInstructions("");
+      setShowWatchdogRow(false);
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -889,10 +861,10 @@ export function NewIssueDialog() {
 
     const validThinkingValues =
       assigneeAdapterType === "codex_local"
-        ? issueComposerThinkingEffortOptions("codex_local", locale)
+        ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
         : assigneeAdapterType === "opencode_local"
-          ? issueComposerThinkingEffortOptions("opencode_local", locale)
-          : issueComposerThinkingEffortOptions("claude_local", locale);
+          ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
+          : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
     if (!validThinkingValues.some((option) => option.value === assigneeThinkingEffort)) {
       setAssigneeThinkingEffort("");
     }
@@ -902,7 +874,6 @@ export function NewIssueDialog() {
     assigneeThinkingEffort,
     assigneeSupportsCheapLane,
     assigneeModelLane,
-    locale,
   ]);
 
   // Cleanup timer on unmount
@@ -921,6 +892,9 @@ export function NewIssueDialog() {
     setApproverValue("");
     setShowReviewerRow(false);
     setShowApproverRow(false);
+    setWatchdogAgentId("");
+    setWatchdogInstructions("");
+    setShowWatchdogRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
     setAssigneeOptionsOpen(false);
@@ -949,6 +923,9 @@ export function NewIssueDialog() {
     setApproverValue("");
     setShowReviewerRow(false);
     setShowApproverRow(false);
+    setWatchdogAgentId("");
+    setWatchdogInstructions("");
+    setShowWatchdogRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
     setAssigneeModelLane("primary");
@@ -987,7 +964,7 @@ export function NewIssueDialog() {
       experimentalSettings?.enableIsolatedWorkspaces === true
         ? selectedProject?.executionWorkspacePolicy ?? null
         : null;
-    const selectedReusableExecutionWorkspace = deduplicatedReusableWorkspaces.find(
+    const selectedReusableExecutionWorkspace = selectableReusableWorkspaces.find(
       (workspace) => workspace.id === selectedExecutionWorkspaceId,
     );
     const requestedExecutionWorkspaceMode =
@@ -1022,10 +999,18 @@ export function NewIssueDialog() {
         : {}),
       ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
       ...(executionPolicy ? { executionPolicy } : {}),
+      ...(taskWatchdogsEnabled && watchdogAgentId
+        ? { watchdog: { agentId: watchdogAgentId, instructions: watchdogInstructions.trim() || null } }
+        : {}),
     });
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.code === "Period") {
+      e.preventDefault();
+      setWorkMode((current) => nextWorkMode(current));
+      return;
+    }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       handleSubmit();
@@ -1108,10 +1093,9 @@ export function NewIssueDialog() {
       ? currentProject?.executionWorkspacePolicy ?? null
       : null;
   const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
-  const deduplicatedReusableWorkspaces = useMemo(() => {
-    return orderReusableExecutionWorkspaces(reusableExecutionWorkspaces ?? []);
-  }, [reusableExecutionWorkspaces]);
-  const selectedReusableExecutionWorkspace = deduplicatedReusableWorkspaces.find(
+  const taskWatchdogsEnabled = experimentalSettings?.enableTaskWatchdogs === true;
+  const selectableReusableWorkspaces = reusableExecutionWorkspaces ?? [];
+  const selectedReusableExecutionWorkspace = selectableReusableWorkspaces.find(
     (workspace) => workspace.id === selectedExecutionWorkspaceId,
   );
   const isUsingParentExecutionWorkspace = isSubIssueMode && parentExecutionWorkspaceId
@@ -1121,7 +1105,20 @@ export function NewIssueDialog() {
     && currentProjectSupportsExecutionWorkspace
     && Boolean(parentExecutionWorkspaceId)
     && !isUsingParentExecutionWorkspace;
-  const assigneeOptionsTitle = formatIssueComposerOptionsTitle(assigneeAdapterType, locale);
+  const assigneeOptionsTitle =
+    assigneeAdapterType === "claude_local"
+      ? "Claude options"
+      : assigneeAdapterType === "codex_local"
+        ? "Codex options"
+        : assigneeAdapterType === "opencode_local"
+          ? "OpenCode options"
+        : "Agent options";
+  const thinkingEffortOptions =
+    assigneeAdapterType === "codex_local"
+      ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
+      : assigneeAdapterType === "opencode_local"
+        ? ISSUE_THINKING_EFFORT_OPTIONS.opencode_local
+      : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const recentAssigneeOptionIds = useMemo(
     () => recentAssigneeIds.map((id) => assigneeValueFromSelection({ assigneeAgentId: id })),
@@ -1143,6 +1140,19 @@ export function NewIssueDialog() {
     ],
     [agents, companyMembers?.users, currentUserId, recentAssigneeIds],
   );
+  const watchdogAgentOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      sortAgentsByRecency((agents ?? []).filter(isAgentTaskTarget), recentAssigneeIds).map((agent) => ({
+        id: agent.id,
+        label: agent.name,
+        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
+      })),
+    [agents, recentAssigneeIds],
+  );
+  const selectedWatchdogAgent = useMemo(
+    () => (watchdogAgentId ? (agents ?? []).find((agent) => agent.id === watchdogAgentId) ?? null : null),
+    [agents, watchdogAgentId],
+  );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -1156,7 +1166,7 @@ export function NewIssueDialog() {
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
   const canDiscardDraft = hasDraft || hasSavedDraft;
   const createIssueErrorMessage =
-    createIssue.error instanceof Error ? createIssue.error.message : copy.failedToCreateIssue;
+    createIssue.error instanceof Error ? createIssue.error.message : "Failed to create task. Try again.";
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
 
@@ -1204,7 +1214,7 @@ export function NewIssueDialog() {
     },
     [assigneeAdapterModels],
   );
-  const currentWorkMode = ISSUE_WORK_MODE_OPTIONS[workMode === "planning" ? 1 : 0]!;
+  const currentWorkMode = workModeMetaFor(workMode);
   const CurrentWorkModeIcon = currentWorkMode.icon;
 
   return (
@@ -1305,7 +1315,7 @@ export function NewIssueDialog() {
               </PopoverContent>
             </Popover>
             <span className="text-muted-foreground/60">&rsaquo;</span>
-            <span>{isSubIssueMode ? copy.header.newSubIssue : copy.header.newIssue}</span>
+            <span>{isSubIssueMode ? "New sub-task" : "New task"}</span>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -1340,25 +1350,24 @@ export function NewIssueDialog() {
               descriptionEditorRef={descriptionEditorRef}
               assigneeSelectorRef={assigneeSelectorRef}
               projectSelectorRef={projectSelectorRef}
-              placeholder={copy.header.titlePlaceholder}
               onChange={handleTitleChange}
             />
           </div>
 
-        <div className="px-4 pb-2 shrink-0">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
-              <span className="min-w-[3rem] shrink-0 text-center">{copy.context.assigneeLabel}</span>
+          <div className="px-4 pb-2">
+            <div className="overflow-x-auto overscroll-x-contain">
+              <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
+              <span className="w-6 shrink-0 text-center">For</span>
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={assigneeValue}
                 options={assigneeOptions}
-                placeholder={copy.context.assigneePlaceholder}
                 recentOptionIds={recentAssigneeOptionIds}
+                placeholder="Assignee"
                 disablePortal
-                noneLabel={copy.context.noAssignee}
-                searchPlaceholder={copy.context.searchAssignees}
-                emptyMessage={copy.context.noAssigneesFound}
+                noneLabel="No assignee"
+                searchPlaceholder="Search assignees..."
+                emptyMessage="No assignees found."
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1388,7 +1397,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     )
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.assigneePlaceholder}</span>
+                    <span className="text-muted-foreground">Assignee</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1407,17 +1416,17 @@ export function NewIssueDialog() {
                   );
                 }}
               />
-              <span>{copy.context.projectLabel}</span>
+              <span>in</span>
               <InlineEntitySelector
                 ref={projectSelectorRef}
                 value={projectId}
                 options={projectOptions}
-                placeholder={copy.context.projectPlaceholder}
                 recentOptionIds={recentProjectIds}
+                placeholder="Project"
                 disablePortal
-                noneLabel={copy.context.noProject}
-                searchPlaceholder={copy.context.searchProjects}
-                emptyMessage={copy.context.noProjectsFound}
+                noneLabel="No project"
+                searchPlaceholder="Search projects..."
+                emptyMessage="No projects found."
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1432,7 +1441,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.projectPlaceholder}</span>
+                    <span className="text-muted-foreground">Project</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1456,7 +1465,7 @@ export function NewIssueDialog() {
                   <button
                     type="button"
                     className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent/50 transition-colors"
-                      title={copy.context.addReviewerOrApprover}
+                    title={taskWatchdogsEnabled ? "Add reviewer, approver, or watchdog" : "Add reviewer or approver"}
                   >
                     <MoreHorizontal className="h-4 w-4" />
                   </button>
@@ -1474,7 +1483,7 @@ export function NewIssueDialog() {
                     }}
                   >
                     <Eye className="h-3 w-3" />
-                    {copy.context.reviewer}
+                    Reviewer
                   </button>
                   <button
                     className={cn(
@@ -1488,8 +1497,31 @@ export function NewIssueDialog() {
                     }}
                   >
                     <ShieldCheck className="h-3 w-3" />
-                    {copy.context.approver}
+                    Approver
                   </button>
+                  {taskWatchdogsEnabled && (
+                    <button
+                      className={cn(
+                        "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+                        showWatchdogRow && "bg-accent",
+                      )}
+                      onClick={() => {
+                        if (showWatchdogRow) {
+                          setShowWatchdogRow(false);
+                          setWatchdogAgentId("");
+                          setWatchdogInstructions("");
+                          setWatchdogEditorOpen(false);
+                        } else {
+                          setShowWatchdogRow(true);
+                          setWatchdogEditorOpen(true);
+                        }
+                        setParticipantMenuOpen(false);
+                      }}
+                    >
+                      <ScanEye className="h-3 w-3" />
+                      Watchdog
+                    </button>
+                  )}
                 </PopoverContent>
               </Popover>
               </div>
@@ -1502,12 +1534,12 @@ export function NewIssueDialog() {
                 <InlineEntitySelector
                 value={reviewerValue}
                 options={assigneeOptions}
-                placeholder={copy.context.reviewer}
                 recentOptionIds={recentAssigneeOptionIds}
+                placeholder="Reviewer"
                 disablePortal
-                noneLabel={copy.context.noReviewer}
-                searchPlaceholder={copy.context.searchReviewers}
-                emptyMessage={copy.context.noReviewersFound}
+                noneLabel="No reviewer"
+                searchPlaceholder="Search reviewers..."
+                emptyMessage="No reviewers found."
                 onChange={setReviewerValue}
                 renderTriggerValue={(option) =>
                   option ? (
@@ -1521,7 +1553,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.reviewer}</span>
+                    <span className="text-muted-foreground">Reviewer</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1547,12 +1579,12 @@ export function NewIssueDialog() {
                 <InlineEntitySelector
                 value={approverValue}
                 options={assigneeOptions}
-                placeholder={copy.context.approver}
                 recentOptionIds={recentAssigneeOptionIds}
+                placeholder="Approver"
                 disablePortal
-                noneLabel={copy.context.noApprover}
-                searchPlaceholder={copy.context.searchApprovers}
-                emptyMessage={copy.context.noApproversFound}
+                noneLabel="No approver"
+                searchPlaceholder="Search approvers..."
+                emptyMessage="No approvers found."
                 onChange={setApproverValue}
                 renderTriggerValue={(option) =>
                   option ? (
@@ -1566,7 +1598,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">{copy.context.approver}</span>
+                    <span className="text-muted-foreground">Approver</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1584,6 +1616,96 @@ export function NewIssueDialog() {
                 />
               </div>
             )}
+
+            {/* Watchdog row */}
+            {taskWatchdogsEnabled && showWatchdogRow && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                <span className="w-6 shrink-0 flex items-center justify-center"><ScanEye className="h-3.5 w-3.5" /></span>
+                <Popover open={watchdogEditorOpen} onOpenChange={setWatchdogEditorOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors min-w-0"
+                      title="Configure watchdog"
+                    >
+                      {selectedWatchdogAgent ? (
+                        <>
+                          <AgentIcon icon={selectedWatchdogAgent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate text-foreground">{selectedWatchdogAgent.name}</span>
+                          {watchdogInstructions.trim() ? (
+                            <span className="truncate text-muted-foreground">· {watchdogInstructions.trim()}</span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">Set watchdog</span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-3 space-y-3" align="start">
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-medium text-foreground">Watchdog agent</div>
+                      <InlineEntitySelector
+                        value={watchdogAgentId}
+                        options={watchdogAgentOptions}
+                        placeholder="Select agent"
+                        noneLabel="No watchdog agent"
+                        searchPlaceholder="Search agents..."
+                        emptyMessage="No agents found."
+                        onChange={setWatchdogAgentId}
+                        renderTriggerValue={(option) =>
+                          option ? (
+                            <>
+                              {selectedWatchdogAgent ? (
+                                <AgentIcon icon={selectedWatchdogAgent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              ) : null}
+                              <span className="truncate">{option.label}</span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">Select agent</span>
+                          )
+                        }
+                        renderOption={(option) => {
+                          const agent = (agents ?? []).find((a) => a.id === option.id);
+                          return (
+                            <>
+                              {agent ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                              <span className="truncate">{option.label}</span>
+                            </>
+                          );
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-medium text-foreground">Instructions <span className="font-normal text-muted-foreground">(optional)</span></div>
+                      <Textarea
+                        value={watchdogInstructions}
+                        onChange={(event) => setWatchdogInstructions(event.target.value)}
+                        placeholder="What should the watchdog watch for and how should it keep work moving?"
+                        rows={4}
+                        className="text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                        onClick={() => {
+                          setWatchdogAgentId("");
+                          setWatchdogInstructions("");
+                          setShowWatchdogRow(false);
+                          setWatchdogEditorOpen(false);
+                        }}
+                      >
+                        Remove
+                      </button>
+                      <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setWatchdogEditorOpen(false)}>
+                        Done
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            )}
           </div>
 
           {isSubIssueMode ? (
@@ -1591,7 +1713,7 @@ export function NewIssueDialog() {
             <div className="max-w-full rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <ListTree className="h-3.5 w-3.5 shrink-0" />
-                <span className="shrink-0">{copy.context.subIssueOf}</span>
+                <span className="shrink-0">Sub-task of</span>
                 <span className="font-medium text-foreground">{parentIssueLabel}</span>
               </div>
               {newIssueDefaults.parentTitle ? (
@@ -1606,9 +1728,9 @@ export function NewIssueDialog() {
           {currentProject && currentProjectSupportsExecutionWorkspace && (
             <div className="px-4 py-3 space-y-2">
             <div className="space-y-1.5">
-              <div className="text-xs font-medium">{copy.executionWorkspace.title}</div>
+              <div className="text-xs font-medium">Execution workspace</div>
               <div className="text-[11px] text-muted-foreground">
-                {copy.executionWorkspace.description}
+                Control whether this task runs in the shared workspace, a new isolated workspace, or an existing one.
               </div>
               <select
                 className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
@@ -1620,39 +1742,30 @@ export function NewIssueDialog() {
                   }
                 }}
               >
-                {executionWorkspaceModes.map((option) => (
+                {EXECUTION_WORKSPACE_MODES.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
               </select>
               {executionWorkspaceMode === "reuse_existing" && (
-                <select
-                  className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
+                <ReusableExecutionWorkspaceSelect
                   value={selectedExecutionWorkspaceId}
-                  onChange={(e) => setSelectedExecutionWorkspaceId(e.target.value)}
-                >
-                  <option value="">{copy.executionWorkspace.chooseExistingWorkspace}</option>
-                  {deduplicatedReusableWorkspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.name} · {formatStatusLabel(workspace.status, locale)} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
+                  workspaces={selectableReusableWorkspaces}
+                  onValueChange={(workspaceId) => setSelectedExecutionWorkspaceId(workspaceId)}
+                  loading={reusableExecutionWorkspacesLoading}
+                  error={reusableExecutionWorkspacesError}
+                  disablePortal
+                />
               )}
               {executionWorkspaceMode === "reuse_existing" && selectedReusableExecutionWorkspace && (
                 <div className="text-[11px] text-muted-foreground">
-                  {copy.executionWorkspace.reuseSummary(
-                    selectedReusableExecutionWorkspace.name,
-                    selectedReusableExecutionWorkspace.branchName
-                      ?? selectedReusableExecutionWorkspace.cwd
-                      ?? copy.executionWorkspace.existingWorkspaceFallback,
-                  )}
+                  Reusing {selectedReusableExecutionWorkspace.name} from {selectedReusableExecutionWorkspace.branchName ?? selectedReusableExecutionWorkspace.cwd ?? "existing execution workspace"}.
                 </div>
               )}
               {showParentWorkspaceWarning ? (
                 <div className="rounded-md border border-amber-300/60 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-100">
-                  {copy.executionWorkspace.parentWorkspaceWarning(parentExecutionWorkspaceLabel)}
+                  Warning: this sub-task will no longer use the parent task workspace{parentExecutionWorkspaceLabel ? ` (${parentExecutionWorkspaceLabel})` : ""}.
                 </div>
               ) : null}
             </div>
@@ -1671,11 +1784,11 @@ export function NewIssueDialog() {
             {assigneeOptionsOpen && (
               <div className="mt-2 rounded-md border border-border p-3 bg-muted/20 space-y-3">
                 <div className="space-y-1.5">
-                  <div className="text-xs text-muted-foreground">{copy.assigneeOptions.model}</div>
+                  <div className="text-xs text-muted-foreground">Model lane</div>
                   <div
                     className="flex w-full overflow-hidden rounded-md border border-border"
                     role="radiogroup"
-                    aria-label={copy.assigneeOptions.model}
+                    aria-label="Model lane"
                   >
                     {(["primary", ...(assigneeSupportsCheapLane ? (["cheap"] as const) : ([] as const)), "custom"] as const).map((lane) => (
                       <button
@@ -1690,10 +1803,10 @@ export function NewIssueDialog() {
                         onClick={() => setAssigneeModelLane(lane)}
                       >
                         {lane === "primary"
-                          ? copy.assigneeOptions.defaultModel
+                          ? "Primary"
                           : lane === "cheap"
                             ? "Cheap"
-                            : copy.assigneeOptions.model}
+                            : "Custom"}
                       </button>
                     ))}
                   </div>
@@ -1708,30 +1821,30 @@ export function NewIssueDialog() {
                     </p>
                   )}
                   {assigneeModelLane === "primary" && (
-                    <p className="text-[11px] text-muted-foreground">{copy.assigneeOptions.defaultModel}</p>
+                    <p className="text-[11px] text-muted-foreground">Runs on the agent's primary model.</p>
                   )}
                   {assigneeModelLane === "custom" && (
-                    <p className="text-[11px] text-muted-foreground">{copy.assigneeOptions.searchModels}</p>
+                    <p className="text-[11px] text-muted-foreground">Override the model and effort for this task only.</p>
                   )}
                 </div>
                 {assigneeModelLane === "custom" && (
                   <div className="space-y-1.5">
-                    <div className="text-xs text-muted-foreground">{copy.assigneeOptions.model}</div>
+                    <div className="text-xs text-muted-foreground">Model</div>
                     <InlineEntitySelector
                       value={assigneeModelOverride}
                       options={modelOverrideOptions}
-                      placeholder={copy.assigneeOptions.defaultModel}
+                      placeholder="Default model"
                       disablePortal
-                      noneLabel={copy.assigneeOptions.defaultModel}
-                      searchPlaceholder={copy.assigneeOptions.searchModels}
-                      emptyMessage={copy.assigneeOptions.noModelsFound}
+                      noneLabel="Default model"
+                      searchPlaceholder="Search models..."
+                      emptyMessage="No models found."
                       onChange={setAssigneeModelOverride}
                     />
                   </div>
                 )}
                 {assigneeModelLane === "custom" && (
                   <div className="space-y-1.5">
-                    <div className="text-xs text-muted-foreground">{copy.assigneeOptions.thinkingEffort}</div>
+                    <div className="text-xs text-muted-foreground">Thinking effort</div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {thinkingEffortOptions.map((option) => (
                         <button
@@ -1750,7 +1863,7 @@ export function NewIssueDialog() {
                 )}
                 {assigneeAdapterType === "claude_local" && assigneeModelLane === "custom" && (
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
-                    <div className="text-xs text-muted-foreground">{copy.assigneeOptions.enableChrome}</div>
+                    <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
                     <ToggleSwitch
                       checked={assigneeChrome}
                       onCheckedChange={() => setAssigneeChrome((value) => !value)}
@@ -1779,7 +1892,6 @@ export function NewIssueDialog() {
               <IssueDescriptionEditor
                 value={description}
                 expanded={expanded}
-                placeholder={copy.descriptionPlaceholder}
                 mentions={mentionOptions}
                 descriptionEditorRef={descriptionEditorRef}
                 imageUploadHandler={uploadDescriptionImageHandler}
@@ -1790,7 +1902,7 @@ export function NewIssueDialog() {
               <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
               {stagedDocuments.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">{copy.attachments.documents}</div>
+                  <div className="text-xs font-medium text-muted-foreground">Documents</div>
                   <div className="space-y-2">
                     {stagedDocuments.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
@@ -1814,7 +1926,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title={copy.attachments.removeDocument}
+                          title="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1826,7 +1938,7 @@ export function NewIssueDialog() {
 
               {stagedAttachments.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">{copy.attachments.attachments}</div>
+                  <div className="text-xs font-medium text-muted-foreground">Attachments</div>
                   <div className="space-y-2">
                     {stagedAttachments.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
@@ -1845,7 +1957,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title={copy.attachments.removeAttachment}
+                          title="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1907,7 +2019,7 @@ export function NewIssueDialog() {
                 ) : (
                   <>
                     <Minus className="h-3 w-3 text-muted-foreground" />
-                    {copy.toolbar.priority}
+                    Priority
                   </>
                 )}
               </button>
@@ -1949,7 +2061,7 @@ export function NewIssueDialog() {
             disabled={createIssue.isPending}
           >
             <Paperclip className="h-3 w-3" />
-            {copy.toolbar.upload}
+            Upload
           </button>
 
           {/* Work mode chip */}
@@ -1958,19 +2070,18 @@ export function NewIssueDialog() {
               <button
                 type="button"
                 data-issue-work-mode-chip={workMode}
+                aria-keyshortcuts="Meta+Period Control+Period"
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
-                  workMode === "planning"
-                    ? "border-amber-500/60 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25"
-                    : "border-border text-muted-foreground hover:bg-accent/50",
+                  currentWorkMode.classes.chip,
                 )}
               >
                 <CurrentWorkModeIcon className="h-3 w-3" />
-                {currentWorkMode.label}
+                {currentWorkMode.shortLabel}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-36 p-1" align="start">
-              {ISSUE_WORK_MODE_OPTIONS.map((option) => {
+              {workModeOptions.map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -1979,7 +2090,7 @@ export function NewIssueDialog() {
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
                       option.value === workMode && "bg-accent",
-                      option.value === "planning" && "text-amber-700 dark:text-amber-300",
+                      option.classes.menuItem,
                     )}
                     onClick={() => {
                       setWorkMode(option.value);
@@ -1988,6 +2099,7 @@ export function NewIssueDialog() {
                   >
                     <Icon className="h-3 w-3" />
                     {option.label}
+                    {option.value === workMode ? <Check className="ml-auto h-3 w-3" aria-hidden /> : null}
                   </button>
                 );
               })}
@@ -2032,11 +2144,11 @@ export function NewIssueDialog() {
               </div>
               <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
-                {copy.toolbar.startDate}
+                Start date
               </button>
               <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground">
                 <Calendar className="h-3 w-3" />
-                {copy.toolbar.dueDate}
+                Due date
               </button>
             </PopoverContent>
           </Popover>
@@ -2075,14 +2187,14 @@ export function NewIssueDialog() {
             onClick={discardDraft}
             disabled={createIssue.isPending || !canDiscardDraft}
           >
-            {copy.toolbar.discardDraft}
+            Discard Draft
           </Button>
           <div className="flex items-center gap-3">
             <div className="min-h-5 text-right">
               {createIssue.isPending ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  {copy.footer.creatingIssue}
+                  Creating issue...
                 </span>
               ) : createIssue.isError ? (
                 <span className="text-xs text-destructive">{createIssueErrorMessage}</span>
@@ -2097,7 +2209,7 @@ export function NewIssueDialog() {
             >
               <span className="inline-flex items-center justify-center gap-1.5">
                 {createIssue.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                <span>{createIssue.isPending ? copy.footer.creating : isSubIssueMode ? copy.footer.createSubIssue : copy.footer.createIssue}</span>
+                <span>{createIssue.isPending ? "Creating..." : isSubIssueMode ? "Create Sub-Task" : "Create Task"}</span>
               </span>
             </Button>
           </div>

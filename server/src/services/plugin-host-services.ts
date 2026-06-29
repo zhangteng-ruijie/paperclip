@@ -417,6 +417,14 @@ function sanitiseMeta(meta: Record<string, unknown> | null | undefined): Record<
 interface BufferedLogEntry {
   db: Db;
   pluginId: string;
+  /**
+   * Owning tenant for `plugin_logs.company_id` — populated when the caller
+   * attributes the log/metric to a specific company so the row participates
+   * in the `ON DELETE CASCADE` from `companies`. `null` means instance-scope
+   * (cron jobs / public webhooks without a tenant); those rows survive
+   * company deletes but are still attributable.
+   */
+  companyId: string | null;
   level: string;
   message: string;
   meta: Record<string, unknown> | null;
@@ -449,6 +457,7 @@ export async function flushPluginLogBuffer(): Promise<void> {
   for (const [dbInstance, group] of byDb) {
     const values = group.map((e) => ({
       pluginId: e.pluginId,
+      companyId: e.companyId,
       level: e.level,
       message: e.message,
       meta: e.meta,
@@ -1275,6 +1284,7 @@ export function buildHostServices(
         _logBuffer.push({
           db,
           pluginId,
+          companyId: params.companyId ?? null,
           level: "metric",
           message: safeName,
           meta: sanitiseMeta({ value: params.value, tags: params.tags ?? null }),
@@ -1323,6 +1333,7 @@ export function buildHostServices(
         _logBuffer.push({
           db,
           pluginId,
+          companyId: params.companyId ?? null,
           level: level ?? "info",
           message: safeMessage,
           meta: safeMeta,

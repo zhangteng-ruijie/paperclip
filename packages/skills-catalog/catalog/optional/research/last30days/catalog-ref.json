@@ -17,8 +17,7 @@
     "scripts/last30days.py",
     "scripts/lib/**",
     "scripts/setup-keychain.sh",
-    "scripts/store.py",
-    "scripts/watchlist.py"
+    "scripts/store.py"
   ],
   "defaultInstall": false,
   "recommendedForRoles": [

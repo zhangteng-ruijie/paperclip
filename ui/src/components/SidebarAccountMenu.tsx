@@ -3,33 +3,31 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
   LogOut,
+  Megaphone,
   type LucideIcon,
-  Moon,
-  Settings,
   UserRound,
-  Sun,
   UserRoundPen,
 } from "lucide-react";
 import type { DeploymentMode } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { authApi } from "@/api/auth";
-import { INSTANCE_SETTINGS_PATH_PREFIX } from "@/lib/instance-settings";
 import { queryKeys } from "@/lib/queryKeys";
 import { useSidebar } from "../context/SidebarContext";
-import { useTheme } from "../context/ThemeContext";
-import { useLocale } from "../context/LocaleContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { cn } from "../lib/utils";
+import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
+import { ThemeToggle } from "./ThemeToggle";
+import { SidebarServerInfo } from "./SidebarServerInfo";
 
-const PROFILE_SETTINGS_PATH = `${INSTANCE_SETTINGS_PATH_PREFIX}/profile`;
+const PROFILE_SETTINGS_PATH = "/company/settings/instance/profile";
 const DOCS_URL = "https://docs.paperclip.ing/";
+const FEEDBACK_URL = "https://paperclip.ing/feedback";
 
 interface SidebarAccountMenuProps {
   deploymentMode?: DeploymentMode;
-  instanceSettingsTarget: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  instanceSettingsTarget?: string;
   version?: string | null;
 }
 
@@ -62,55 +60,6 @@ function deriveUserSlug(name: string | null | undefined, email: string | null | 
     if (slug) return slug;
   }
   return "me";
-}
-
-function getAccountMenuCopy(locale: string | null | undefined) {
-  if (locale === "zh-CN") {
-    return {
-      openMenu: "打开账号菜单",
-      board: "看板",
-      signedIn: "已登录",
-      localWorkspaceBoard: "本地工作区看板",
-      account: "账号",
-      local: "本地",
-      viewProfile: "查看个人资料",
-      viewProfileDescription: "打开你的活动、任务和用量记录。",
-      editProfile: "编辑个人资料",
-      editProfileDescription: "更新你的显示名称和头像。",
-      instanceSettings: "实例设置",
-      instanceSettingsDescription: "回到你上次打开的设置页面。",
-      documentation: "文档",
-      documentationDescription: "在新标签页打开 Paperclip 文档。",
-      switchToLightMode: "切换到浅色模式",
-      switchToDarkMode: "切换到深色模式",
-      toggleAppearance: "切换应用外观。",
-      signingOut: "正在退出...",
-      signOut: "退出登录",
-      signOutDescription: "结束当前浏览器会话。",
-    };
-  }
-  return {
-    openMenu: "Open account menu",
-    board: "Board",
-    signedIn: "Signed in",
-    localWorkspaceBoard: "Local workspace board",
-    account: "Account",
-    local: "Local",
-    viewProfile: "View profile",
-    viewProfileDescription: "Open your activity, task, and usage ledger.",
-    editProfile: "Edit profile",
-    editProfileDescription: "Update your display name and avatar.",
-    instanceSettings: "Instance settings",
-    instanceSettingsDescription: "Jump back to the last settings page you opened.",
-    documentation: "Documentation",
-    documentationDescription: "Open Paperclip docs in a new tab.",
-    switchToLightMode: "Switch to light mode",
-    switchToDarkMode: "Switch to dark mode",
-    toggleAppearance: "Toggle the app appearance.",
-    signingOut: "Signing out...",
-    signOut: "Sign out",
-    signOutDescription: "End this browser session.",
-  };
 }
 
 function MenuAction({ label, description, icon: Icon, onClick, href, external = false }: MenuActionProps) {
@@ -154,17 +103,14 @@ function MenuAction({ label, description, icon: Icon, onClick, href, external = 
 
 export function SidebarAccountMenu({
   deploymentMode,
-  instanceSettingsTarget,
   open: controlledOpen,
   onOpenChange,
   version,
 }: SidebarAccountMenuProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const queryClient = useQueryClient();
-  const { isMobile, setSidebarOpen } = useSidebar();
-  const { theme, toggleTheme } = useTheme();
-  const { locale } = useLocale();
-  const copy = getAccountMenuCopy(locale);
+  const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
+  const rail = collapsed && !peeking;
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const { data: session } = useQuery({
@@ -181,10 +127,10 @@ export function SidebarAccountMenu({
     },
   });
 
-  const displayName = session?.user.name?.trim() || copy.board;
+  const displayName = session?.user.name?.trim() || "Board";
   const secondaryLabel =
-    session?.user.email?.trim() || (deploymentMode === "authenticated" ? copy.signedIn : copy.localWorkspaceBoard);
-  const accountBadge = deploymentMode === "authenticated" ? copy.account : copy.local;
+    session?.user.email?.trim() || (deploymentMode === "authenticated" ? "Signed in" : "Local workspace board");
+  const accountBadge = deploymentMode === "authenticated" ? "Account" : "Local";
   const initials = deriveInitials(displayName);
   const profileHref = `/u/${deriveUserSlug(session?.user.name, session?.user.email, session?.user.id)}`;
 
@@ -200,13 +146,13 @@ export function SidebarAccountMenu({
           <button
             type="button"
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
-            aria-label={copy.openMenu}
+            aria-label="Open account menu"
           >
             <Avatar size="sm">
               {session?.user.image ? <AvatarImage src={session.user.image} alt={displayName} /> : null}
               <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
-            <span className="min-w-0 flex-1 truncate">{displayName}</span>
+            <span className={cn("min-w-0 flex-1 truncate", rail && SIDEBAR_RAIL_HIDDEN_LABEL)}>{displayName}</span>
           </button>
         </PopoverTrigger>
         <PopoverContent
@@ -240,43 +186,36 @@ export function SidebarAccountMenu({
 
             <div className="mt-4 space-y-1">
               <MenuAction
-                label={copy.viewProfile}
-                description={copy.viewProfileDescription}
+                label="View profile"
+                description="Open your activity, task, and usage ledger."
                 icon={UserRound}
                 href={profileHref}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label={copy.editProfile}
-                description={copy.editProfileDescription}
+                label="Edit profile"
+                description="Update your display name and avatar."
                 icon={UserRoundPen}
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label={copy.instanceSettings}
-                description={copy.instanceSettingsDescription}
-                icon={Settings}
-                href={instanceSettingsTarget}
-                onClick={closeNavigationChrome}
-              />
-              <MenuAction
-                label={copy.documentation}
-                description={copy.documentationDescription}
+                label="Documentation"
+                description="Open Paperclip docs in a new tab."
                 icon={BookOpen}
                 href={DOCS_URL}
                 external
                 onClick={() => setOpen(false)}
               />
               <MenuAction
-                label={theme === "dark" ? copy.switchToLightMode : copy.switchToDarkMode}
-                description={copy.toggleAppearance}
-                icon={theme === "dark" ? Sun : Moon}
-                onClick={() => {
-                  toggleTheme();
-                  setOpen(false);
-                }}
+                label="Feedback"
+                description="Share feedback or report an issue."
+                icon={Megaphone}
+                href={FEEDBACK_URL}
+                external
+                onClick={() => setOpen(false)}
               />
+              <ThemeToggle variant="menu-action" onAfterToggle={() => setOpen(false)} />
               {deploymentMode === "authenticated" ? (
                 <button
                   type="button"
@@ -292,14 +231,15 @@ export function SidebarAccountMenu({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground">
-                      {signOutMutation.isPending ? copy.signingOut : copy.signOut}
+                      {signOutMutation.isPending ? "Signing out..." : "Sign out"}
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      {copy.signOutDescription}
+                      End this browser session.
                     </span>
                   </span>
                 </button>
               ) : null}
+              <SidebarServerInfo />
             </div>
           </div>
         </PopoverContent>

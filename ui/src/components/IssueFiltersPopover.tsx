@@ -5,25 +5,22 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Bot, Filter, HardDrive, Search, User, X } from "lucide-react";
-import { useLocale } from "../context/LocaleContext";
 import { PriorityIcon } from "./PriorityIcon";
 import { StatusIcon } from "./StatusIcon";
 import {
   defaultIssueFilterState,
+  externalObjectFilterLabel,
+  externalObjectFilterOrder,
   issueFilterArraysEqual,
+  issueFilterLabel,
   issuePriorityOrder,
   issueQuickFilterPresets,
   issueStatusOrder,
   toggleIssueFilterValue,
   type IssueFilterState,
 } from "../lib/issue-filters";
-import {
-  formatIssueFilterCount,
-  getIssuesCopy,
-  issuePriorityLabel,
-  issueQuickFilterLabel,
-  issueStatusLabel,
-} from "../lib/issues-copy";
+import { externalObjectIconForCategory } from "../lib/external-objects";
+import { externalObjectStatusIcon } from "../lib/status-colors";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 
 type AgentOption = {
@@ -62,6 +59,7 @@ export function IssueFiltersPopover({
   projects,
   labels,
   currentUserId,
+  enableExternalObjectFilters = true,
   enableRoutineVisibilityFilter = false,
   buttonVariant = "ghost",
   iconOnly = false,
@@ -75,14 +73,13 @@ export function IssueFiltersPopover({
   projects?: ProjectOption[];
   labels?: LabelOption[];
   currentUserId?: string | null;
+  enableExternalObjectFilters?: boolean;
   enableRoutineVisibilityFilter?: boolean;
   buttonVariant?: "ghost" | "outline";
   iconOnly?: boolean;
   workspaces?: WorkspaceOption[];
   creators?: CreatorOption[];
 }) {
-  const { locale } = useLocale();
-  const copy = getIssuesCopy(locale);
   const [creatorSearch, setCreatorSearch] = useState("");
   const creatorOptions = creators ?? [];
   const creatorOptionById = useMemo(
@@ -117,19 +114,9 @@ export function IssueFiltersPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button
-          variant={buttonVariant}
-          size={iconOnly ? "icon" : "sm"}
-          className={`text-xs ${iconOnly ? "relative h-8 w-8 shrink-0" : ""} ${activeFilterCount > 0 ? "text-blue-600 dark:text-blue-400" : ""}`}
-          title={iconOnly ? (activeFilterCount > 0 ? formatIssueFilterCount(activeFilterCount, locale) : copy.filter) : undefined}
-          aria-label={iconOnly ? (activeFilterCount > 0 ? formatIssueFilterCount(activeFilterCount, locale) : copy.filter) : undefined}
-        >
+        <Button variant={buttonVariant} size={iconOnly ? "icon" : "sm"} className={`text-xs ${iconOnly ? "relative h-8 w-8 shrink-0" : ""} ${activeFilterCount > 0 ? "text-blue-600 dark:text-blue-400" : ""}`} title={iconOnly ? (activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter") : undefined}>
           <Filter className={iconOnly ? "h-3.5 w-3.5" : "h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1"} />
-          {!iconOnly ? (
-            <span className="hidden sm:inline">
-              {activeFilterCount > 0 ? formatIssueFilterCount(activeFilterCount, locale) : copy.filter}
-            </span>
-          ) : null}
+          {!iconOnly && <span className="hidden sm:inline">{activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter"}</span>}
           {!iconOnly && activeFilterCount > 0 ? <span className="ml-0.5 text-[10px] font-medium sm:hidden">{activeFilterCount}</span> : null}
           {iconOnly && activeFilterCount > 0 ? <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white">{activeFilterCount}</span> : null}
           {!iconOnly && activeFilterCount > 0 ? (
@@ -149,26 +136,26 @@ export function IssueFiltersPopover({
       >
         <div className="space-y-3 p-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">{copy.filters}</span>
+            <span className="text-sm font-medium">Filters</span>
             {activeFilterCount > 0 ? (
               <button
                 type="button"
                 className="text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => onChange(defaultIssueFilterState)}
               >
-                {copy.clear}
+                Clear
               </button>
             ) : null}
           </div>
 
           <div className="space-y-1.5">
-            <span className="text-xs text-muted-foreground">{copy.quickFilters}</span>
+            <span className="text-xs text-muted-foreground">Quick filters</span>
             <div className="flex flex-wrap gap-1.5">
               {issueQuickFilterPresets.map((preset) => {
                 const isActive = issueFilterArraysEqual(state.statuses, preset.statuses);
                 return (
                   <button
-                    key={preset.key}
+                    key={preset.label}
                     type="button"
                     className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
                       isActive
@@ -177,7 +164,7 @@ export function IssueFiltersPopover({
                     }`}
                     onClick={() => onChange({ statuses: isActive ? [] : [...preset.statuses] })}
                   >
-                    {issueQuickFilterLabel(preset.key, locale)}
+                    {preset.label}
                   </button>
                 );
               })}
@@ -189,7 +176,7 @@ export function IssueFiltersPopover({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="min-w-0 space-y-3">
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">{copy.status}</span>
+                <span className="text-xs text-muted-foreground">Status</span>
                 <div className="space-y-0.5">
                   {issueStatusOrder.map((status) => (
                     <label key={status} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
@@ -198,14 +185,14 @@ export function IssueFiltersPopover({
                         onCheckedChange={() => onChange({ statuses: toggleIssueFilterValue(state.statuses, status) })}
                       />
                       <StatusIcon status={status} />
-                      <span className="text-sm">{issueStatusLabel(status, locale)}</span>
+                      <span className="text-sm">{issueFilterLabel(status)}</span>
                     </label>
                   ))}
                 </div>
               </div>
 
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">{copy.priority}</span>
+                <span className="text-xs text-muted-foreground">Priority</span>
                 <div className="space-y-0.5">
                   {issuePriorityOrder.map((priority) => (
                     <label key={priority} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
@@ -214,7 +201,7 @@ export function IssueFiltersPopover({
                         onCheckedChange={() => onChange({ priorities: toggleIssueFilterValue(state.priorities, priority) })}
                       />
                       <PriorityIcon priority={priority} />
-                      <span className="text-sm">{issuePriorityLabel(priority, locale)}</span>
+                      <span className="text-sm">{issueFilterLabel(priority)}</span>
                     </label>
                   ))}
                 </div>
@@ -223,14 +210,14 @@ export function IssueFiltersPopover({
 
             <div className="min-w-0 space-y-3">
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">{copy.assignee}</span>
+                <span className="text-xs text-muted-foreground">Assignee</span>
                 <div className="max-h-32 space-y-0.5 overflow-y-auto">
                   <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
                     <Checkbox
                       checked={state.assignees.includes("__unassigned")}
                       onCheckedChange={() => onChange({ assignees: toggleIssueFilterValue(state.assignees, "__unassigned") })}
                     />
-                    <span className="text-sm">{copy.noAssignee}</span>
+                    <span className="text-sm">No assignee</span>
                   </label>
                   {currentUserId ? (
                     <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
@@ -239,7 +226,7 @@ export function IssueFiltersPopover({
                         onCheckedChange={() => onChange({ assignees: toggleIssueFilterValue(state.assignees, "__me") })}
                       />
                       <User className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-sm">{copy.me}</span>
+                      <span className="text-sm">Me</span>
                     </label>
                   ) : null}
                   {(agents ?? []).map((agent) => (
@@ -310,7 +297,7 @@ export function IssueFiltersPopover({
 
               {projects && projects.length > 0 ? (
                 <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground">{copy.project}</span>
+                  <span className="text-xs text-muted-foreground">Project</span>
                   <div className="max-h-32 space-y-0.5 overflow-y-auto">
                     {projects.map((project) => (
                       <label key={project.id} className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
@@ -363,14 +350,47 @@ export function IssueFiltersPopover({
                 </div>
               ) : null}
 
+              {enableExternalObjectFilters ? (
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">External object status</span>
+                  <div className="space-y-0.5">
+                    {externalObjectFilterOrder.map((value) => {
+                      const iconCategory = value === "failed" ? "failed"
+                        : value === "waiting" ? "waiting"
+                        : value === "running" ? "running"
+                        : value === "auth_required" ? "auth_required"
+                        : value === "unreachable" ? "unreachable"
+                        : value === "stale" ? "unknown"
+                        : "closed";
+                      const Icon = externalObjectIconForCategory(iconCategory);
+                      const tone = externalObjectStatusIcon[iconCategory] ?? "";
+                      const textTone = tone.split(" ").filter((c) => c.startsWith("text-")).join(" ");
+                      return (
+                        <label
+                          key={value}
+                          className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50"
+                        >
+                          <Checkbox
+                            checked={state.externalObjectStatuses.includes(value)}
+                            onCheckedChange={() => onChange({ externalObjectStatuses: toggleIssueFilterValue(state.externalObjectStatuses, value) })}
+                          />
+                          <Icon className={`h-3.5 w-3.5 shrink-0 ${textTone}`} aria-hidden="true" />
+                          <span className="text-sm">{externalObjectFilterLabel(value)}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">{copy.visibility}</span>
+                <span className="text-xs text-muted-foreground">Visibility</span>
                 <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
                   <Checkbox
                     checked={state.liveOnly}
                     onCheckedChange={(checked) => onChange({ liveOnly: checked === true })}
                   />
-                  <span className="text-sm">{locale === "zh-CN" ? "仅实时运行" : "Live runs only"}</span>
+                  <span className="text-sm">Live runs only</span>
                 </label>
                 {enableRoutineVisibilityFilter ? (
                   <label className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 hover:bg-accent/50">
@@ -378,7 +398,7 @@ export function IssueFiltersPopover({
                       checked={state.hideRoutineExecutions}
                       onCheckedChange={(checked) => onChange({ hideRoutineExecutions: checked === true })}
                     />
-                    <span className="text-sm">{locale === "zh-CN" ? "隐藏例行任务运行" : "Hide routine runs"}</span>
+                    <span className="text-sm">Hide routine runs</span>
                   </label>
                 ) : null}
               </div>

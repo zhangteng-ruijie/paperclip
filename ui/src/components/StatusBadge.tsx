@@ -1,59 +1,35 @@
+import type { CSSProperties } from "react";
 import { cn } from "../lib/utils";
 import {
   statusBadge,
   statusBadgeDefault,
-  agentStatusColor,
-  agentStatusColorDefault,
-  agentStatusBadge,
-  agentStatusCapsule,
   agentStatusMotion,
+  agentStatusVar,
+  agentStatusVarDefault,
+  taskStatusVar,
+  taskStatusVarDefault,
 } from "../lib/status-colors";
-import { useLocale } from "../context/LocaleContext";
+import { StatusGlyph } from "./StatusGlyph";
 
-const zhStatusLabels: Record<string, string> = {
-  todo: "待办",
-  in_progress: "进行中",
-  in_review: "待审核",
-  done: "已完成",
-  completed: "已完成",
-  blocked: "阻塞",
-  backlog: "待规划",
-  idle: "空闲",
-  starting: "启动中",
-  running: "运行中",
-  stopped: "已停止",
-  queued: "排队中",
-  paused: "已暂停",
-  pending_approval: "待审批",
-  failed: "失败",
-  error: "错误",
-  warning: "警告",
-  succeeded: "成功",
-  timed_out: "超时",
-  cancelled: "已取消",
-  terminated: "已终止",
-  planned: "规划中",
-  active: "进行中",
-  achieved: "已达成",
-  archived: "已归档",
-  cleanup_failed: "清理失败",
-  healthy: "正常",
-  unhealthy: "异常",
-  shared: "共享",
-  ephemeral: "临时",
-  budget: "预算",
-};
-
-export function formatStatusLabel(status: string, locale: string | null | undefined) {
-  return locale === "zh-CN"
-    ? (zhStatusLabels[status] ?? status.replaceAll("_", " "))
-    : status.replaceAll("_", " ");
+/** Inline `--sc` local var pointing a status helper at a base-hue CSS var. */
+function scStyle(cssVar: string): CSSProperties {
+  return { "--sc": `var(${cssVar})` } as CSSProperties;
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const { locale } = useLocale();
-  const label = formatStatusLabel(status, locale);
+/** "in_review" → "In review" (sentence case). */
+function sentenceCaseStatus(status: string): string {
+  const s = status.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
+export function formatStatusLabel(status: string, _locale?: string): string {
+  return sentenceCaseStatus(status);
+}
+
+/**
+ * Generic status badge for runs / goals / approvals (not task status).
+ */
+export function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={cn(
@@ -61,44 +37,66 @@ export function StatusBadge({ status }: { status: string }) {
         statusBadge[status] ?? statusBadgeDefault
       )}
     >
-      {label}
+      {status.replace(/_/g, " ")}
     </span>
   );
 }
 
 /**
- * Agent status chip — brand `.task-chip` (1px border, light/dark variants).
- * Distinct from the shared {@link StatusBadge} so the agents section can carry
- * the brand state colours without affecting run/issue/goal badges. `active`
+ * Agent status chip — bordered chip recoloured from the editable
+ * `--status-agent-*` base hue via the `.status-chip` color-mix helper. `active`
  * renders as "idle" (alias for dead code).
  */
 export function AgentStatusBadge({ status }: { status: string }) {
-  const { locale } = useLocale();
-  const color = agentStatusColor[status] ?? agentStatusColorDefault;
-  const label = formatStatusLabel(status === "active" ? "idle" : status, locale);
+  const cssVar = agentStatusVar[status] ?? agentStatusVarDefault;
+  const label = status === "active" ? "idle" : status;
   return (
     <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium leading-none whitespace-nowrap shrink-0",
-        agentStatusBadge[color]
-      )}
+      className="status-chip inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium leading-none whitespace-nowrap shrink-0"
+      style={scStyle(cssVar)}
     >
-      {label}
+      {label.replace(/_/g, " ")}
     </span>
   );
 }
 
 /**
- * Agent status indicator — brand heartbeat capsule (vertical 8×16, r4). Running
- * agents pulse, broken (error) agents blink; both honor `prefers-reduced-motion`.
+ * Agent status indicator — heartbeat capsule (vertical 8x16, r4) filled from the
+ * editable `--status-agent-*` base hue. Running agents pulse, broken (error)
+ * agents blink; both honor `prefers-reduced-motion`.
  */
 export function AgentStatusCapsule({ status }: { status: string }) {
-  const color = agentStatusColor[status] ?? agentStatusColorDefault;
+  const cssVar = agentStatusVar[status] ?? agentStatusVarDefault;
   const motion = agentStatusMotion[status] ?? "";
   return (
     <span
       aria-hidden
-      className={cn("inline-block h-4 w-2 rounded-[4px] shrink-0", agentStatusCapsule[color], motion)}
+      className={cn("status-fill inline-block h-4 w-2 rounded-[4px] shrink-0", motion)}
+      style={scStyle(cssVar)}
     />
+  );
+}
+
+/**
+ * Issue/task status chip — bordered chip recoloured from the editable
+ * `--status-task-*` base hue via `.status-chip`, carrying the unified
+ * {@link StatusGlyph} (one distinct, color-blind-safe shape per status), a
+ * sentence-cased label and regular weight. `cancelled` is struck through.
+ * Distinct from the generic {@link StatusBadge} so run/goal/approval badges are
+ * unaffected.
+ */
+export function IssueStatusBadge({ status }: { status: string }) {
+  const cssVar = taskStatusVar[status] ?? taskStatusVarDefault;
+  return (
+    <span
+      className={cn(
+        "status-chip inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-normal leading-none whitespace-nowrap shrink-0",
+        status === "cancelled" && "line-through"
+      )}
+      style={scStyle(cssVar)}
+    >
+      <StatusGlyph status={status} size="sm" />
+      {sentenceCaseStatus(status)}
+    </span>
   );
 }

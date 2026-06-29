@@ -24,12 +24,7 @@ export type {
   FeedbackTraceBundle,
 } from "./feedback.js";
 export type {
-  PaperclipCurrencyCode,
-  PaperclipCurrencyPreference,
-  PaperclipUiLocale,
-  PaperclipUiLocalePreference,
-} from "./locale.js";
-export type {
+  InstanceExecutionMode,
   InstanceExperimentalSettings,
   InstanceGeneralSettings,
   InstanceSettings,
@@ -46,6 +41,20 @@ export {
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MAX_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
 } from "./instance.js";
+export {
+  PAPERCLIP_UI_LOCALES,
+  PAPERCLIP_UI_LOCALE_PREFERENCES,
+  PAPERCLIP_CURRENCY_CODES,
+  PAPERCLIP_CURRENCY_PREFERENCES,
+  DEFAULT_PAPERCLIP_UI_LOCALE_PREFERENCE,
+  DEFAULT_PAPERCLIP_TIME_ZONE_PREFERENCE,
+  DEFAULT_PAPERCLIP_CURRENCY_PREFERENCE,
+  resolvePaperclipCurrencyCode,
+  type PaperclipUiLocale,
+  type PaperclipUiLocalePreference,
+  type PaperclipCurrencyCode,
+  type PaperclipCurrencyPreference,
+} from "./locale.js";
 export {
   TRUST_PRESETS,
   DEFAULT_TRUST_PRESET,
@@ -65,11 +74,24 @@ export type {
   CompanySkillTrustLevel,
   CompanySkillCompatibility,
   CompanySkillSourceBadge,
+  CompanySkillSharingScope,
+  CompanySkillListSort,
   CompanySkillFileInventoryEntry,
+  CompanySkillVersionFileInventoryEntry,
   CompanySkill,
   CompanySkillListItem,
   CompanySkillUsageAgent,
   CompanySkillDetail,
+  CompanySkillListQuery,
+  CompanySkillCategoryCount,
+  CompanySkillVersion,
+  CompanySkillVersionCreateRequest,
+  CompanySkillStarResult,
+  CompanySkillComment,
+  CompanySkillCommentCreateRequest,
+  CompanySkillCommentUpdateRequest,
+  CompanySkillForkRequest,
+  CompanySkillUpdateRequest,
   CompanySkillUpdateStatus,
   CompanySkillAuditSeverity,
   CompanySkillAuditVerdict,
@@ -125,6 +147,7 @@ export type {
   AgentSkillSyncMode,
   AgentSkillState,
   AgentSkillOrigin,
+  AgentDesiredSkillEntry,
   AgentSkillEntry,
   AgentSkillSnapshot,
   AgentSkillSyncRequest,
@@ -197,6 +220,10 @@ export type {
   ExecutionWorkspaceCloseLinkedIssue,
   ExecutionWorkspaceCloseReadiness,
   ExecutionWorkspaceCloseReadinessState,
+  WorkspaceOverviewItem,
+  WorkspaceOverviewLinkedIssue,
+  WorkspaceOverviewPrimaryService,
+  WorkspaceOverviewResponse,
   ProjectWorkspaceRuntimeConfig,
   WorkspaceCommandDefinition,
   WorkspaceCommandKind,
@@ -223,6 +250,21 @@ export type {
   WorkspaceOperationStatus,
 } from "./workspace-operation.js";
 export type {
+  WorkspaceFileContent,
+  WorkspaceFileContentEncoding,
+  WorkspaceFileListDirectoryItem,
+  WorkspaceFileListFileItem,
+  WorkspaceFileListItem,
+  WorkspaceFileListMode,
+  WorkspaceFileListResponse,
+  WorkspaceFilePreviewKind,
+  WorkspaceFileRef,
+  WorkspaceFileResourceKind,
+  WorkspaceFileSelector,
+  WorkspaceFileWorkspaceKind,
+  ResolvedWorkspaceResource,
+} from "./workspace-file-resource.js";
+export type {
   IssueWorkProduct,
   IssueWorkProductType,
   IssueWorkProductProvider,
@@ -241,6 +283,14 @@ export type {
   CompanyArtifactSource,
   CompanyArtifactsResponse,
 } from "./artifact.js";
+
+export type {
+  ExternalObject,
+  ExternalObjectMention,
+  ExternalObjectMentionGroup,
+  ExternalObjectSummary,
+  ExternalObjectSummaryItem,
+} from "./external-object.js";
 export type {
   Issue,
   IssueWorkMode,
@@ -333,6 +383,9 @@ export type {
   IssueAncestorGoal,
   IssueAttachment,
   IssueLabel,
+  IssueWatchdog,
+  IssueWatchdogStatus,
+  IssueWatchdogSummary,
 } from "./issue.js";
 export type {
   IssueTreeControlPreview,
@@ -394,6 +447,7 @@ export type {
   Routine,
   RoutineEnvConfig,
   RoutineManagedByPlugin,
+  RoutineDescriptionDocument,
   RoutineVariable,
   RoutineVariableDefaultValue,
   RoutineRevisionSnapshotRoutineV1,
@@ -416,6 +470,7 @@ export type {
   AgentWakeupSkipped,
   HeartbeatRun,
   HeartbeatRunEvent,
+  HeartbeatRunStatusPhase,
   AgentRuntimeState,
   AgentTaskSession,
   AgentWakeupRequest,
@@ -525,6 +580,8 @@ export type {
   PluginApiRouteCompanyResolution,
   PluginApiRouteDeclaration,
   PluginAuthSsoProviderDeclaration,
+  PluginObjectReferenceRefreshPolicy,
+  PluginObjectReferenceProviderDeclaration,
   PaperclipPluginManifestV1,
   PluginRecord,
   PluginDatabaseNamespaceRecord,

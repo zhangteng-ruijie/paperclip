@@ -1,6 +1,6 @@
 {
   "name": "@paperclipai/db",
-  "version": "0.3.1-connector-feishu",
+  "version": "0.3.1",
   "license": "MIT",
   "homepage": "https://github.com/paperclipai/paperclip",
   "bugs": {
@@ -47,14 +47,12 @@
     "@paperclipai/shared": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "embedded-postgres": "^18.1.0-beta.16",
-    "kysely": "0.28.17",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@embedded-postgres/darwin-arm64": "18.1.0-beta.15",
-    "@types/node": "^24.6.0",
+    "@types/node": "^22.19.21",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.19.2",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.3",
     "vitest": "^4.1.8"
   }

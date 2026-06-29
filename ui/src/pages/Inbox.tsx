@@ -22,16 +22,16 @@ import {
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useGeneralSettings } from "../context/GeneralSettingsContext";
-import { useLocale } from "../context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
 import { useDialogActions } from "../context/DialogContext";
+import { useIssueExternalObjectSummaries } from "../hooks/useIssueExternalObjects";
 import {
   applyIssueFilters,
   countActiveIssueFilters,
   type IssueFilterState,
 } from "../lib/issue-filters";
-import { collectLiveIssueIds } from "../lib/liveIssueIds";
+import { collectLiveIssueIds, collectSubtreeLiveCounts } from "../lib/liveIssueIds";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildCompanyUserLabelMap, buildCompanyUserProfileMap } from "../lib/company-members";
 import {
@@ -46,24 +46,6 @@ import {
   hasBlockingShortcutDialog,
   isKeyboardShortcutTextInputTarget,
   resolveInboxUndoArchiveKeyAction,
-} from "../lib/keyboardShortcuts";
-import {
-  approvalStatusLabel,
-  formatAdapterLabel,
-  formatApprovalRequesterLabel,
-  formatBudgetAlert,
-  formatFailedRunTitle,
-  formatJoinRequestMeta,
-  formatJoinRequestTitle,
-  formatMarkAllReadDescription,
-  formatRetryButton,
-  formatUpdatedAtLabel,
-  formatAgentErrorSummaryTail,
-  getInboxCopy,
-  inboxEmptyMessage,
-} from "../lib/inbox-copy";
-import { formatIssueSubtaskCount } from "../lib/issues-copy";
-import {
   shouldBlurPageSearchOnEnter,
   shouldBlurPageSearchOnEscape,
 } from "../lib/keyboardShortcuts";
@@ -121,9 +103,6 @@ import {
   Search,
   ListTree,
 } from "lucide-react";
-
-const INBOX_HEARTBEAT_RUN_LIMIT = 200;
-const INBOX_ISSUE_LIST_LIMIT = 500;
 import { Input } from "@/components/ui/input";
 import { PageTabBar } from "../components/PageTabBar";
 import type { Approval, HeartbeatRun, Issue, JoinRequest } from "@paperclipai/shared";
@@ -176,6 +155,10 @@ import {
 } from "../lib/inbox";
 import { useDismissedInboxAlerts, useInboxDismissals, useReadInboxItems } from "../hooks/useInboxBadge";
 
+const INBOX_HEARTBEAT_RUN_LIMIT = 200;
+const INBOX_ISSUE_LIST_LIMIT = 500;
+const INBOX_HOT_PATH_STALE_MS = 30_000;
+
 export { InboxIssueMetaLeading, InboxIssueTrailingColumns } from "../components/IssueColumns";
 export { IssueGroupHeader as InboxGroupHeader } from "../components/IssueGroupHeader";
 type SectionKey =
@@ -199,6 +182,10 @@ function firstNonEmptyLine(value: string | null | undefined): string | null {
 
 function runFailureMessage(run: HeartbeatRun): string {
   return firstNonEmptyLine(run.error) ?? firstNonEmptyLine(run.stderrExcerpt) ?? "Run exited with an error.";
+}
+
+function approvalStatusLabel(status: Approval["status"]): string {
+  return status.replaceAll("_", " ");
 }
 
 function readIssueIdFromRun(run: HeartbeatRun): string | null {
@@ -279,8 +266,6 @@ export function FailedRunInboxRow({
   selected?: boolean;
   className?: string;
 }) {
-  const { locale } = useLocale();
-  const copy = getInboxCopy(locale);
   const issueId = readIssueIdFromRun(run);
   const issue = issueId ? issueById.get(issueId) ?? null : null;
   const displayError = runFailureMessage(run);
@@ -303,7 +288,7 @@ export function FailedRunInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label={copy.markAsRead}
+                aria-label="Mark as read"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -317,7 +302,7 @@ export function FailedRunInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label={copy.archive}
+                aria-label="Dismiss from inbox"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -348,7 +333,7 @@ export function FailedRunInboxRow({
                   {issue.title}
                 </>
               ) : (
-                 <>{formatFailedRunTitle(linkedAgentName, locale)}</>
+                <>Failed run{linkedAgentName ? ` — ${linkedAgentName}` : ""}</>
               )}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -369,14 +354,14 @@ export function FailedRunInboxRow({
             disabled={isRetrying}
           >
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            {formatRetryButton(isRetrying, locale)}
+            {isRetrying ? "Retrying…" : "Retry"}
           </Button>
           {!showUnreadSlot && (
             <button
               type="button"
               onClick={onDismiss}
               className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-               aria-label={copy.dismiss}
+              aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
             </button>
@@ -393,14 +378,14 @@ export function FailedRunInboxRow({
           disabled={isRetrying}
         >
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-          {formatRetryButton(isRetrying, locale)}
+          {isRetrying ? "Retrying…" : "Retry"}
         </Button>
         {!showUnreadSlot && (
           <button
             type="button"
             onClick={onDismiss}
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label={copy.dismiss}
+            aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
           </button>
@@ -435,8 +420,6 @@ function ApprovalInboxRow({
   selected?: boolean;
   className?: string;
 }) {
-  const { locale } = useLocale();
-  const copy = getInboxCopy(locale);
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
   const showResolutionButtons =
@@ -461,7 +444,7 @@ function ApprovalInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label={copy.markAsRead}
+                aria-label="Mark as read"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -475,7 +458,7 @@ function ApprovalInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label={copy.archive}
+                aria-label="Dismiss from inbox"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -501,9 +484,9 @@ function ApprovalInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="capitalize">{approvalStatusLabel(approval.status, locale)}</span>
-              {requesterName ? <span>{formatApprovalRequesterLabel(requesterName, locale)}</span> : null}
-              <span>{formatUpdatedAtLabel(timeAgo(approval.updatedAt), locale)}</span>
+              <span className="capitalize">{approvalStatusLabel(approval.status)}</span>
+              {requesterName ? <span>requested by {requesterName}</span> : null}
+              <span>updated {timeAgo(approval.updatedAt)}</span>
             </span>
           </span>
         </Link>
@@ -515,7 +498,7 @@ function ApprovalInboxRow({
               onClick={onApprove}
               disabled={isPending}
             >
-              {copy.approve}
+              Approve
             </Button>
             <Button
               variant="destructive"
@@ -524,7 +507,7 @@ function ApprovalInboxRow({
               onClick={onReject}
               disabled={isPending}
             >
-              {copy.reject}
+              Reject
             </Button>
           </div>
         ) : null}
@@ -537,7 +520,7 @@ function ApprovalInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            {copy.approve}
+            Approve
           </Button>
           <Button
             variant="destructive"
@@ -546,7 +529,7 @@ function ApprovalInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            {copy.reject}
+            Reject
           </Button>
         </div>
       ) : null}
@@ -577,11 +560,7 @@ function JoinRequestInboxRow({
   selected?: boolean;
   className?: string;
 }) {
-  const { locale } = useLocale();
-  const copy = getInboxCopy(locale);
-  const label = joinRequest.requestType === "human" && locale !== "zh-CN"
-    ? formatJoinRequestInboxLabel(joinRequest)
-    : formatJoinRequestTitle(joinRequest.requestType, joinRequest.agentName, locale);
+  const label = formatJoinRequestInboxLabel(joinRequest);
   const showUnreadSlot = unreadState !== null;
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
 
@@ -601,7 +580,7 @@ function JoinRequestInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   "hover:bg-blue-500/20",
                 )}
-                aria-label={copy.markAsRead}
+                aria-label="Mark as read"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -615,7 +594,7 @@ function JoinRequestInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label={copy.archive}
+                aria-label="Dismiss from inbox"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -635,8 +614,8 @@ function JoinRequestInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span>{formatJoinRequestMeta(timeAgo(joinRequest.createdAt), joinRequest.requestIp, locale)}</span>
-              {joinRequest.adapterType && <span>{formatAdapterLabel(joinRequest.adapterType, locale)}</span>}
+              <span>requested {timeAgo(joinRequest.createdAt)} from IP {joinRequest.requestIp}</span>
+              {joinRequest.adapterType && <span>adapter: {joinRequest.adapterType}</span>}
             </span>
           </span>
         </div>
@@ -647,7 +626,7 @@ function JoinRequestInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            {copy.approve}
+            Approve
           </Button>
           <Button
             variant="destructive"
@@ -656,7 +635,7 @@ function JoinRequestInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            {copy.reject}
+            Reject
           </Button>
         </div>
       </div>
@@ -667,7 +646,7 @@ function JoinRequestInboxRow({
           onClick={onApprove}
           disabled={isPending}
         >
-          {copy.approve}
+          Approve
         </Button>
         <Button
           variant="destructive"
@@ -676,7 +655,7 @@ function JoinRequestInboxRow({
           onClick={onReject}
           disabled={isPending}
         >
-          {copy.reject}
+          Reject
         </Button>
       </div>
     </div>
@@ -686,8 +665,6 @@ function JoinRequestInboxRow({
 export function Inbox() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const copy = getInboxCopy(locale);
   const { openNewIssue } = useDialogActions();
   const { isMobile } = useSidebar();
   const navigate = useNavigate();
@@ -728,11 +705,11 @@ export function Inbox() {
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        copy.inbox,
+        "Inbox",
         `${location.pathname}${location.search}${location.hash}`,
         "inbox",
       ),
-    [location.pathname, location.search, location.hash, copy.inbox],
+    [location.pathname, location.search, location.hash],
   );
 
   const { data: session } = useQuery({
@@ -757,6 +734,7 @@ export function Inbox() {
     enabled: !!selectedCompanyId,
   });
   const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
+  const externalObjectsEnabled = experimentalSettings?.enableExternalObjects === true;
   const { data: executionWorkspaces = [] } = useQuery({
     queryKey: selectedCompanyId
       ? queryKeys.executionWorkspaces.summaryList(selectedCompanyId)
@@ -766,8 +744,8 @@ export function Inbox() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: copy.inbox }]);
-  }, [setBreadcrumbs, copy.inbox]);
+    setBreadcrumbs([{ label: "Inbox" }]);
+  }, [setBreadcrumbs]);
 
   useEffect(() => {
     saveLastInboxTab(tab);
@@ -827,6 +805,8 @@ export function Inbox() {
         limit: INBOX_ISSUE_LIST_LIMIT,
       }),
     enabled: !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+    staleTime: INBOX_HOT_PATH_STALE_MS,
   });
   const {
     data: mineIssuesRaw = [],
@@ -842,6 +822,8 @@ export function Inbox() {
         limit: INBOX_ISSUE_LIST_LIMIT,
       }),
     enabled: !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+    staleTime: INBOX_HOT_PATH_STALE_MS,
   });
   const {
     data: touchedIssuesRaw = [],
@@ -856,12 +838,16 @@ export function Inbox() {
         limit: INBOX_ISSUE_LIST_LIMIT,
       }),
     enabled: !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+    staleTime: INBOX_HOT_PATH_STALE_MS,
   });
 
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
     queryKey: [...queryKeys.heartbeats(selectedCompanyId!), "limit", INBOX_HEARTBEAT_RUN_LIMIT],
-    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, INBOX_HEARTBEAT_RUN_LIMIT),
+    queryFn: () => heartbeatsApi.list(selectedCompanyId!, undefined, INBOX_HEARTBEAT_RUN_LIMIT, { summary: true }),
     enabled: !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+    staleTime: INBOX_HOT_PATH_STALE_MS,
   });
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedCompanyId!),
@@ -888,13 +874,49 @@ export function Inbox() {
 
   const mineIssues = useMemo(() => getRecentTouchedIssues(mineIssuesRaw), [mineIssuesRaw]);
   const touchedIssues = useMemo(() => getRecentTouchedIssues(touchedIssuesRaw), [touchedIssuesRaw]);
+  const shouldUseIssueSearchSupplement =
+    !!selectedCompanyId
+    && normalizedSearchQuery.length > 0;
+  const { data: remoteIssueSearchResults = [] } = useQuery({
+    queryKey: [
+      ...queryKeys.issues.search(selectedCompanyId!, normalizedSearchQuery, undefined, 25),
+      "inbox-supplement",
+    ],
+    queryFn: () =>
+      issuesApi.list(selectedCompanyId!, {
+        q: normalizedSearchQuery,
+        limit: 25,
+        includeRoutineExecutions: true,
+      }),
+    enabled: shouldUseIssueSearchSupplement,
+    placeholderData: (previousData) => previousData,
+  });
+  const inboxIssueIdsForExternalObjectSummaries = useMemo(() => {
+    const issueIds = new Set<string>();
+    for (const issue of mineIssues) issueIds.add(issue.id);
+    for (const issue of touchedIssues) issueIds.add(issue.id);
+    for (const issue of remoteIssueSearchResults) issueIds.add(issue.id);
+    return [...issueIds];
+  }, [mineIssues, remoteIssueSearchResults, touchedIssues]);
+  const {
+    summaries: externalObjectSummaryByIssueId,
+    isLoading: externalObjectSummariesLoading,
+    isReady: externalObjectSummariesReady,
+  } = useIssueExternalObjectSummaries(
+    selectedCompanyId,
+    inboxIssueIdsForExternalObjectSummaries,
+  );
+  const issueFilterContext = useMemo(() => ({
+    externalObjectSummaryByIssueId,
+    externalObjectSummariesReady: externalObjectSummariesReady && !externalObjectSummariesLoading,
+  }), [externalObjectSummariesLoading, externalObjectSummariesReady, externalObjectSummaryByIssueId]);
   const visibleMineIssues = useMemo(
-    () => applyIssueFilters(mineIssues, issueFilters, currentUserId, true, liveIssueIds),
-    [mineIssues, issueFilters, currentUserId, liveIssueIds],
+    () => applyIssueFilters(mineIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
+    [mineIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
   );
   const visibleTouchedIssues = useMemo(
-    () => applyIssueFilters(touchedIssues, issueFilters, currentUserId, true, liveIssueIds),
-    [touchedIssues, issueFilters, currentUserId, liveIssueIds],
+    () => applyIssueFilters(touchedIssues, issueFilters, currentUserId, true, liveIssueIds, issueFilterContext),
+    [touchedIssues, issueFilters, currentUserId, liveIssueIds, issueFilterContext],
   );
   const unreadTouchedIssues = useMemo(
     () => visibleTouchedIssues.filter((issue) => issue.isUnreadForMe),
@@ -1185,23 +1207,6 @@ export function Inbox() {
       visibleTouchedIssues,
     ],
   );
-  const shouldUseIssueSearchSupplement =
-    !!selectedCompanyId
-    && normalizedSearchQuery.length > 0;
-  const { data: remoteIssueSearchResults = [] } = useQuery({
-    queryKey: [
-      ...queryKeys.issues.search(selectedCompanyId!, normalizedSearchQuery, undefined, 25),
-      "inbox-supplement",
-    ],
-    queryFn: () =>
-      issuesApi.list(selectedCompanyId!, {
-        q: normalizedSearchQuery,
-        limit: 25,
-        includeRoutineExecutions: true,
-      }),
-    enabled: shouldUseIssueSearchSupplement,
-    placeholderData: (previousData) => previousData,
-  });
   const issueSearchSupplementResults = useMemo(
     () =>
       getInboxSearchSupplementIssues({
@@ -1213,11 +1218,13 @@ export function Inbox() {
         currentUserId,
         enableRoutineVisibilityFilter: true,
         liveIssueIds,
+        issueFilterContext,
       }),
     [
       archivedSearchIssues,
       currentUserId,
       filteredWorkItems,
+      issueFilterContext,
       issueFilters,
       liveIssueIds,
       normalizedSearchQuery,
@@ -1318,6 +1325,26 @@ export function Inbox() {
   const flatNavItems = useMemo((): NavEntry[] => {
     return buildInboxKeyboardNavEntries(groupedSections, collapsedGroupKeys, collapsedInboxParents);
   }, [collapsedGroupKeys, collapsedInboxParents, groupedSections]);
+  // Roll live descendant runs up to their ancestors across the loaded inbox tree
+  // so a parent that is not itself live can still surface "n live below".
+  const subtreeLiveCounts = useMemo(() => {
+    const nodes: { id: string; parentId: string | null }[] = [];
+    const seen = new Set<string>();
+    const pushIssue = (issue: Issue) => {
+      if (seen.has(issue.id)) return;
+      seen.add(issue.id);
+      nodes.push({ id: issue.id, parentId: issue.parentId });
+    };
+    for (const group of groupedSections) {
+      for (const item of group.displayItems) {
+        if (item.kind === "issue") pushIssue(item.issue);
+      }
+      for (const children of group.childrenByIssueId.values()) {
+        for (const child of children) pushIssue(child);
+      }
+    }
+    return collectSubtreeLiveCounts(nodes, liveIssueIds);
+  }, [groupedSections, liveIssueIds]);
   const topFlatIndex = useMemo(() => {
     const map = new Map<string, number>();
     flatNavItems.forEach((entry, index) => {
@@ -1372,6 +1399,15 @@ export function Inbox() {
       issueFilters: { ...previous.issueFilters, ...patch },
     }));
   }, [updateFilterPreferences]);
+  useEffect(() => {
+    if (!experimentalSettingsLoaded || externalObjectsEnabled || issueFilters.externalObjectStatuses.length === 0) return;
+    updateIssueFilters({ externalObjectStatuses: [] });
+  }, [
+    experimentalSettingsLoaded,
+    externalObjectsEnabled,
+    issueFilters.externalObjectStatuses.length,
+    updateIssueFilters,
+  ]);
   const updateAllCategoryFilter = useCallback((value: InboxCategoryFilter) => {
     updateFilterPreferences((previous) => ({ ...previous, allCategoryFilter: value }));
   }, [updateFilterPreferences]);
@@ -1391,7 +1427,7 @@ export function Inbox() {
       navigate(`/approvals/${id}?resolved=approved`);
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : copy.failedApprove);
+      setActionError(err instanceof Error ? err.message : "Failed to approve");
     },
   });
 
@@ -1402,7 +1438,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : copy.failedReject);
+      setActionError(err instanceof Error ? err.message : "Failed to reject");
     },
   });
 
@@ -1417,7 +1453,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : copy.failedApproveJoinRequest);
+      setActionError(err instanceof Error ? err.message : "Failed to approve join request");
     },
   });
 
@@ -1430,7 +1466,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : copy.failedRejectJoinRequest);
+      setActionError(err instanceof Error ? err.message : "Failed to reject join request");
     },
   });
 
@@ -1452,7 +1488,7 @@ export function Inbox() {
         payload,
       });
       if (!("id" in result)) {
-        throw new Error(result.message ?? copy.retrySkipped);
+        throw new Error(result.message ?? "Retry was skipped.");
       }
       return { newRun: result, originalRun: run };
     },
@@ -1520,7 +1556,7 @@ export function Inbox() {
       return { previousData };
     },
     onError: (err, id, context) => {
-      setActionError(err instanceof Error ? err.message : copy.failedArchiveIssue);
+      setActionError(err instanceof Error ? err.message : "Failed to archive task");
       setArchivingIssueIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -1891,7 +1927,7 @@ export function Inbox() {
   }, [selectedIndex]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={InboxIcon} message={copy.selectCompany} />;
+    return <EmptyState icon={InboxIcon} message="Select a company to view inbox." />;
   }
 
   const hasRunFailures = failedRuns.length > 0;
@@ -1949,7 +1985,7 @@ export function Inbox() {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder={copy.searchInbox}
+            placeholder="Search inbox…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -1974,254 +2010,253 @@ export function Inbox() {
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
-            <PageTabBar
-              items={[
-                {
-                  value: "mine",
-                  label: copy.mine,
-                },
-                {
-                  value: "recent",
-                  label: copy.recent,
-                },
-                { value: "unread", label: copy.unread },
-                { value: "blocked", label: copy.blocked },
-                { value: "all", label: copy.all },
-              ]}
+        <Tabs value={tab} onValueChange={(value) => navigate(`/inbox/${value}`)}>
+          <PageTabBar
+            items={[
+              {
+                value: "mine",
+                label: "Mine",
+              },
+              {
+                value: "recent",
+                label: "Recent",
+              },
+              { value: "unread", label: "Unread" },
+              { value: "blocked", label: "Blocked" },
+              { value: "all", label: "All" },
+            ]}
+          />
+        </Tabs>
+
+        <div className="flex items-center gap-2">
+          <div className="relative hidden sm:block">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search inbox…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (shouldBlurPageSearchOnEnter({
+                  key: e.key,
+                  isComposing: e.nativeEvent.isComposing,
+                })) {
+                  e.currentTarget.blur();
+                  return;
+                }
+
+                if (shouldBlurPageSearchOnEscape({
+                  key: e.key,
+                  isComposing: e.nativeEvent.isComposing,
+                  currentValue: e.currentTarget.value,
+                })) {
+                  e.currentTarget.blur();
+                }
+              }}
+              className="h-8 w-[220px] pl-8 text-xs"
+              data-page-search-target="true"
             />
-          </Tabs>
-
-          <div className="flex items-center gap-2">
-            <div className="relative hidden sm:block">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder={copy.searchInbox}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (shouldBlurPageSearchOnEnter({
-                    key: e.key,
-                    isComposing: e.nativeEvent.isComposing,
-                  })) {
-                    e.currentTarget.blur();
-                    return;
-                  }
-
-                  if (shouldBlurPageSearchOnEscape({
-                    key: e.key,
-                    isComposing: e.nativeEvent.isComposing,
-                    currentValue: e.currentTarget.value,
-                  })) {
-                    e.currentTarget.blur();
-                  }
-                }}
-                className="h-8 w-[220px] pl-8 text-xs"
-                data-page-search-target="true"
-              />
-            </div>
-            {tab === "blocked" ? (
-              <>
-                <IssueFiltersPopover
-                  state={issueFilters}
-                  onChange={updateIssueFilters}
-                  activeFilterCount={activeIssueFilterCount}
-                  agents={agents}
-                  creators={creatorOptions}
-                  projects={projects?.map((project) => ({ id: project.id, name: project.name }))}
-                  labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
-                  currentUserId={currentUserId}
-                  enableRoutineVisibilityFilter
-                  buttonVariant="outline"
-                  iconOnly
-                  workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
-                />
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className={cn("h-8 w-8 shrink-0", blockedGroupBy !== "none" && "bg-accent")}
-                      title={copy.group}
-                      aria-label={copy.group}
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-44 p-0">
-                    <div className="space-y-0.5 p-2">
-                      {BLOCKED_GROUP_OPTIONS.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
-                            blockedGroupBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
-                          )}
-                          onClick={() => setBlockedGroupBy(value)}
-                        >
-                          <span>{label}</span>
-                          {blockedGroupBy === value ? <Check className="h-3.5 w-3.5" /> : null}
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                <IssueColumnPicker
-                  availableColumns={availableIssueColumns}
-                  visibleColumnSet={visibleIssueColumnSet}
-                  onToggleColumn={toggleIssueColumn}
-                  onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
-                  title={copy.chooseInboxColumns}
-                  iconOnly
-                />
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      title="Sort"
-                      aria-label="Sort"
-                    >
-                      <ArrowUpDown className="h-3.5 w-3.5" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-48 p-0">
-                    <div className="space-y-0.5 p-2">
-                      {BLOCKED_SORT_OPTIONS.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
-                            blockedSortBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
-                          )}
-                          onClick={() => setBlockedSortBy(value)}
-                        >
-                          <span>{label}</span>
-                          {blockedSortBy === value ? <Check className="h-3.5 w-3.5" /> : null}
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </>
-            ) : showGeneralIssueToolbarControls ? (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className={cn("hidden h-8 w-8 shrink-0 sm:inline-flex", nestingEnabled && "bg-accent")}
-                  onClick={toggleNesting}
-                  title={nestingEnabled ? copy.disableNesting : copy.enableNesting}
-                >
-                  <ListTree className="h-3.5 w-3.5" />
-                </Button>
-                <IssueFiltersPopover
-                  state={issueFilters}
-                  onChange={updateIssueFilters}
-                  activeFilterCount={activeIssueFilterCount}
-                  agents={agents}
-                  creators={creatorOptions}
-                  projects={projects?.map((project) => ({ id: project.id, name: project.name }))}
-                  labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
-                  currentUserId={currentUserId}
-                  enableRoutineVisibilityFilter
-                  buttonVariant="outline"
-                  iconOnly
-                  workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
-                />
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className={cn("h-8 w-8 shrink-0", groupBy !== "none" && "bg-accent")}
-                      title={copy.group}
-                      aria-label={copy.group}
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-40 p-2">
-                    <div className="space-y-0.5">
-                      {([
-                        ["none", copy.groupByNone],
-                        ["type", copy.groupByType],
-                        ["assignee", "Assignee"],
-                        ["project", "Project"],
-                        ...(isolatedWorkspacesEnabled ? ([["workspace", "Workspace"]] as const) : []),
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
-                            groupBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
-                          )}
-                          onClick={() => updateGroupBy(value)}
-                        >
-                          <span>{label}</span>
-                          {groupBy === value ? <Check className="h-3.5 w-3.5" /> : null}
-                        </button>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                <IssueColumnPicker
-                  availableColumns={availableIssueColumns}
-                  visibleColumnSet={visibleIssueColumnSet}
-                  onToggleColumn={toggleIssueColumn}
-                  onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
-                  title={copy.chooseInboxColumns}
-                  iconOnly
-                />
-                {canMarkAllRead && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 shrink-0"
-                      onClick={() => setShowMarkAllReadConfirm(true)}
-                      disabled={markAllReadMutation.isPending}
-                    >
-                      {markAllReadMutation.isPending ? copy.marking : copy.markAllAsRead}
-                    </Button>
-                    <Dialog open={showMarkAllReadConfirm} onOpenChange={setShowMarkAllReadConfirm}>
-                      <DialogContent className="sm:max-w-md">
-                        <DialogHeader>
-                          <DialogTitle>{copy.markAllAsReadTitle}</DialogTitle>
-                          <DialogDescription>
-                            {formatMarkAllReadDescription(unreadIssueIds.length, locale)}
-                          </DialogDescription>
-                        </DialogHeader>
-                        <DialogFooter>
-                          <Button variant="outline" onClick={() => setShowMarkAllReadConfirm(false)}>
-                            {copy.cancel}
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setShowMarkAllReadConfirm(false);
-                              markAllReadMutation.mutate(unreadIssueIds);
-                            }}
-                          >
-                            {copy.markAllAsRead}
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  </>
-                )}
-              </>
-            ) : null}
           </div>
+          {tab === "blocked" ? (
+            <>
+              <IssueFiltersPopover
+                state={issueFilters}
+                onChange={updateIssueFilters}
+                activeFilterCount={activeIssueFilterCount}
+                agents={agents}
+                creators={creatorOptions}
+                projects={projects?.map((project) => ({ id: project.id, name: project.name }))}
+                labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
+                currentUserId={currentUserId}
+                enableExternalObjectFilters={externalObjectsEnabled}
+                enableRoutineVisibilityFilter
+                buttonVariant="outline"
+                iconOnly
+                workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
+              />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={cn("h-8 w-8 shrink-0", blockedGroupBy !== "none" && "bg-accent")}
+                    title="Group"
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-44 p-0">
+                  <div className="space-y-0.5 p-2">
+                    {BLOCKED_GROUP_OPTIONS.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
+                          blockedGroupBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
+                        )}
+                        onClick={() => setBlockedGroupBy(value)}
+                      >
+                        <span>{label}</span>
+                        {blockedGroupBy === value ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <IssueColumnPicker
+                availableColumns={availableIssueColumns}
+                visibleColumnSet={visibleIssueColumnSet}
+                onToggleColumn={toggleIssueColumn}
+                onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
+                title="Choose which inbox columns stay visible"
+                iconOnly
+              />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    title="Sort"
+                  >
+                    <ArrowUpDown className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-48 p-0">
+                  <div className="space-y-0.5 p-2">
+                    {BLOCKED_SORT_OPTIONS.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
+                          blockedSortBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
+                        )}
+                        onClick={() => setBlockedSortBy(value)}
+                      >
+                        <span>{label}</span>
+                        {blockedSortBy === value ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </>
+          ) : showGeneralIssueToolbarControls ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn("hidden h-8 w-8 shrink-0 sm:inline-flex", nestingEnabled && "bg-accent")}
+                onClick={toggleNesting}
+                title={nestingEnabled ? "Disable parent-child nesting" : "Enable parent-child nesting"}
+              >
+                <ListTree className="h-3.5 w-3.5" />
+              </Button>
+              <IssueFiltersPopover
+                state={issueFilters}
+                onChange={updateIssueFilters}
+                activeFilterCount={activeIssueFilterCount}
+                agents={agents}
+                creators={creatorOptions}
+                projects={projects?.map((project) => ({ id: project.id, name: project.name }))}
+                labels={labels?.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
+                currentUserId={currentUserId}
+                enableExternalObjectFilters={externalObjectsEnabled}
+                enableRoutineVisibilityFilter
+                buttonVariant="outline"
+                iconOnly
+                workspaces={isolatedWorkspacesEnabled ? executionWorkspaces.filter((w) => w.mode === "isolated_workspace").map((w) => ({ id: w.id, name: w.name })) : undefined}
+              />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={cn("h-8 w-8 shrink-0", groupBy !== "none" && "bg-accent")}
+                    title="Group"
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-40 p-2">
+                  <div className="space-y-0.5">
+                    {([
+                      ["none", "None"],
+                      ["type", "Type"],
+                      ["assignee", "Assignee"],
+                      ["project", "Project"],
+                      ...(isolatedWorkspacesEnabled ? ([["workspace", "Workspace"]] as const) : []),
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm",
+                          groupBy === value ? "bg-accent/50 text-foreground" : "text-muted-foreground hover:bg-accent/50",
+                        )}
+                        onClick={() => updateGroupBy(value)}
+                      >
+                        <span>{label}</span>
+                        {groupBy === value ? <Check className="h-3.5 w-3.5" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <IssueColumnPicker
+                availableColumns={availableIssueColumns}
+                visibleColumnSet={visibleIssueColumnSet}
+                onToggleColumn={toggleIssueColumn}
+                onResetColumns={() => setIssueColumns(DEFAULT_INBOX_ISSUE_COLUMNS)}
+                title="Choose which inbox columns stay visible"
+                iconOnly
+              />
+              {canMarkAllRead && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 shrink-0"
+                    onClick={() => setShowMarkAllReadConfirm(true)}
+                    disabled={markAllReadMutation.isPending}
+                  >
+                    {markAllReadMutation.isPending ? "Marking…" : "Mark all as read"}
+                  </Button>
+                  <Dialog open={showMarkAllReadConfirm} onOpenChange={setShowMarkAllReadConfirm}>
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Mark all as read?</DialogTitle>
+                        <DialogDescription>
+                          This will mark {unreadIssueIds.length} unread {unreadIssueIds.length === 1 ? "item" : "items"} as read.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowMarkAllReadConfirm(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setShowMarkAllReadConfirm(false);
+                            markAllReadMutation.mutate(unreadIssueIds);
+                          }}
+                        >
+                          Mark all as read
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              )}
+            </>
+          ) : null}
+        </div>
         </div>
       </div>
 
@@ -2232,15 +2267,15 @@ export function Inbox() {
             onValueChange={(value) => updateAllCategoryFilter(value as InboxCategoryFilter)}
           >
             <SelectTrigger className="h-8 w-[170px] text-xs">
-              <SelectValue placeholder={copy.category} />
+              <SelectValue placeholder="Category" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="everything">{copy.allCategories}</SelectItem>
-              <SelectItem value="issues_i_touched">{copy.myRecentIssues}</SelectItem>
-              <SelectItem value="join_requests">{copy.joinRequests}</SelectItem>
-              <SelectItem value="approvals">{copy.approvals}</SelectItem>
-              <SelectItem value="failed_runs">{copy.failedRuns}</SelectItem>
-              <SelectItem value="alerts">{copy.alerts}</SelectItem>
+              <SelectItem value="everything">All categories</SelectItem>
+              <SelectItem value="issues_i_touched">My recent tasks</SelectItem>
+              <SelectItem value="join_requests">Join requests</SelectItem>
+              <SelectItem value="approvals">Approvals</SelectItem>
+              <SelectItem value="failed_runs">Failed runs</SelectItem>
+              <SelectItem value="alerts">Alerts</SelectItem>
             </SelectContent>
           </Select>
 
@@ -2250,13 +2285,13 @@ export function Inbox() {
               onValueChange={(value) => updateAllApprovalFilter(value as InboxApprovalFilter)}
             >
               <SelectTrigger className="h-8 w-[170px] text-xs">
-                 <SelectValue placeholder={copy.approvalStatus} />
+                <SelectValue placeholder="Approval status" />
               </SelectTrigger>
               <SelectContent>
-                 <SelectItem value="all">{copy.allApprovalStatuses}</SelectItem>
-                 <SelectItem value="actionable">{copy.needsAction}</SelectItem>
-                 <SelectItem value="resolved">{copy.resolved}</SelectItem>
-               </SelectContent>
+                <SelectItem value="all">All approval statuses</SelectItem>
+                <SelectItem value="actionable">Needs action</SelectItem>
+                <SelectItem value="resolved">Resolved</SelectItem>
+              </SelectContent>
             </Select>
           )}
         </div>
@@ -2291,7 +2326,17 @@ export function Inbox() {
       {tab !== "blocked" && allLoaded && visibleSections.length === 0 && (
         <EmptyState
           icon={searchQuery.trim() ? Search : InboxIcon}
-          message={inboxEmptyMessage(tab, Boolean(searchQuery.trim()), locale)}
+          message={
+            searchQuery.trim()
+              ? "No inbox items match your search."
+              : tab === "mine"
+              ? "Inbox zero."
+              : tab === "unread"
+              ? "No new inbox items."
+              : tab === "recent"
+                ? "No recent inbox items."
+                : "No inbox items match these filters."
+          }
         />
       )}
 
@@ -2332,6 +2377,7 @@ export function Inbox() {
                       key={`issue:${issue.id}`}
                       issue={issue}
                       issueLinkState={issueLinkState}
+                      externalObjectSummary={externalObjectSummaryByIssueId.get(issue.id) ?? null}
                       selected={selected}
                       className={
                         isArchiving
@@ -2362,6 +2408,7 @@ export function Inbox() {
                           <InboxIssueMetaLeading
                             issue={issue}
                             isLive={liveIssueIds.has(issue.id)}
+                            subtreeLiveCount={subtreeLiveCounts.get(issue.id) ?? 0}
                             showStatus={visibleIssueColumnSet.has("status") && availableIssueColumnSet.has("status")}
                             showIdentifier={visibleIssueColumnSet.has("id") && availableIssueColumnSet.has("id")}
                           />
@@ -2369,10 +2416,10 @@ export function Inbox() {
                       }
                       titleSuffix={hasChildren && !isExpanded && depth === 0 ? (
                         <span className="ml-1.5 text-xs text-muted-foreground">
-                          {formatIssueSubtaskCount(childCount, locale)}
+                          ({childCount} sub-task{childCount !== 1 ? "s" : ""})
                         </span>
                       ) : undefined}
-                      mobileMeta={issueActivityText(issue, locale).toLowerCase()}
+                      mobileMeta={issueActivityText(issue).toLowerCase()}
                       mobileLeading={
                         depth === 0 && hasChildren && collapseParentId ? (
                           <button
@@ -2514,7 +2561,7 @@ export function Inbox() {
                         <div key={`today-divider-${group.key}-${index}`} className="my-2 flex items-center gap-3 px-4">
                           <div className="flex-1 border-t border-zinc-600" />
                           <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-                            {copy.earlier}
+                            Earlier
                           </span>
                         </div>,
                       );
@@ -2547,7 +2594,6 @@ export function Inbox() {
                       elements.push(wrapItem(approvalKey, isSelected, canArchiveFromTab ? (
                         <SwipeToArchive
                           key={approvalKey}
-                          archiveLabel={copy.archive}
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(approvalKey)}
@@ -2586,7 +2632,6 @@ export function Inbox() {
                       elements.push(wrapItem(runKey, isSelected, canArchiveFromTab ? (
                         <SwipeToArchive
                           key={runKey}
-                          archiveLabel={copy.archive}
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(runKey)}
@@ -2622,7 +2667,6 @@ export function Inbox() {
                       elements.push(wrapItem(joinKey, isSelected, canArchiveFromTab ? (
                         <SwipeToArchive
                           key={joinKey}
-                          archiveLabel={copy.archive}
                           selected={isSelected}
                           disabled={isArchiving}
                           onArchive={() => handleArchiveNonIssue(joinKey)}
@@ -2678,7 +2722,6 @@ export function Inbox() {
                             {canArchiveIssue ? (
                               <SwipeToArchive
                                 key={`issue:${child.id}`}
-                                archiveLabel={copy.archive}
                                 selected={isChildSelected}
                                 disabled={isChildArchiving || archiveIssueMutation.isPending}
                                 onArchive={() => archiveIssueMutation.mutate(child.id)}
@@ -2707,7 +2750,6 @@ export function Inbox() {
                     elements.push(wrapItem(`issue:${issue.id}`, isSelected, canArchiveIssue ? (
                       <SwipeToArchive
                         key={`issue:${issue.id}`}
-                        archiveLabel={copy.archive}
                         selected={isSelected}
                         disabled={archivingIssueIds.has(issue.id) || archiveIssueMutation.isPending}
                         onArchive={() => archiveIssueMutation.mutate(issue.id)}
@@ -2734,7 +2776,7 @@ export function Inbox() {
           {showSeparatorBefore("alerts") && <Separator />}
           <div>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              {copy.alerts}
+              Alerts
             </h3>
             <div className="divide-y divide-border border border-border">
               {showAggregateAgentError && (
@@ -2746,14 +2788,14 @@ export function Inbox() {
                     <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
                     <span className="text-sm">
                       <span className="font-medium">{dashboard!.agents.error}</span>{" "}
-                      {formatAgentErrorSummaryTail(dashboard!.agents.error, locale)}
+                      {dashboard!.agents.error === 1 ? "agent has" : "agents have"} errors
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismissAlert("alert:agent-errors")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label={copy.dismiss}
+                    aria-label="Dismiss"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -2767,14 +2809,16 @@ export function Inbox() {
                   >
                     <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
                     <span className="text-sm">
-                      {formatBudgetAlert(dashboard!.costs.monthUtilizationPercent, locale)}
+                      Budget at{" "}
+                      <span className="font-medium">{dashboard!.costs.monthUtilizationPercent}%</span>{" "}
+                      utilization this month
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismissAlert("alert:budget")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label={copy.dismiss}
+                    aria-label="Dismiss"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>

@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
-import { ArrowUpDown, Check, ChevronDown, ChevronRight, Layers, MoreHorizontal, Plus, Repeat } from "lucide-react";
+import { ArrowUpDown, Check, ChevronDown, ChevronRight, Layers, Plus, Repeat } from "lucide-react";
 import { routinesApi } from "../api/routines";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
@@ -10,7 +10,6 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { accessApi } from "../api/access";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { useToastActions } from "../context/ToastContext";
 import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { queryKeys } from "../lib/queryKeys";
@@ -18,20 +17,6 @@ import { groupBy } from "../lib/groupBy";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { collectLiveIssueIds } from "../lib/liveIssueIds";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import {
-  formatRoutineAssigneeGroupLabel,
-  formatRoutineCount,
-  formatRoutineMoreActionsLabel,
-  formatRoutineProjectGroupLabel,
-  formatRoutineRowStatus,
-  formatRoutineRunStatus,
-  formatRoutineToggleAriaLabel,
-  formatRoutineToggleState,
-  getRoutinesCopy,
-  routinePolicyDescription,
-  routinePolicyLabel,
-} from "../lib/routines-copy";
-import { formatDateTime } from "../lib/utils";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
@@ -40,6 +25,7 @@ import { PageTabBar } from "../components/PageTabBar";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "../components/InlineEntitySelector";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
+import { RoutineListRow, nextRoutineStatus } from "../components/RoutineList";
 import {
   RoutineRunVariablesDialog,
   type RoutineRunDialogSubmitData,
@@ -49,13 +35,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
@@ -65,26 +44,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { RoutineListItem, RoutineVariable } from "@paperclipai/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
+const concurrencyPolicyDescriptions: Record<string, string> = {
+  coalesce_if_active: "If a run is already active, keep just one follow-up run queued.",
+  always_enqueue: "Queue every trigger occurrence, even if the routine is already running.",
+  skip_if_active: "Drop new trigger occurrences while a run is still active.",
+};
+const catchUpPolicyDescriptions: Record<string, string> = {
+  skip_missed: "Ignore windows that were missed while the scheduler or routine was paused.",
+  enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
+};
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
   if (!element) return;
   element.style.height = "auto";
   element.style.height = `${element.scrollHeight}px`;
-}
-
-function formatLastRunTimestamp(value: Date | string | null | undefined, neverLabel = "Never") {
-  if (!value) return neverLabel;
-  return formatDateTime(value);
-}
-
-function nextRoutineStatus(currentStatus: string, enabled: boolean) {
-  if (currentStatus === "archived" && enabled) return "active";
-  return enabled ? "active" : "paused";
 }
 
 type RoutinesTab = "routines" | "runs";
@@ -153,12 +130,12 @@ function buildRoutineMutationPayload(input: {
     assigneeAgentId: input.assigneeAgentId || null,
   };
 }
+
 export function buildRoutineGroups(
   routines: RoutineListItem[],
   groupByValue: RoutineGroupBy,
   projectById: Map<string, { name: string }>,
   agentById: Map<string, { name: string }>,
-  locale?: string | null,
 ): RoutineGroup[] {
   if (groupByValue === "none") {
     return [{ key: "__all", label: null, items: routines }];
@@ -168,13 +145,13 @@ export function buildRoutineGroups(
     const groups = groupBy(routines, (routine) => routine.projectId ?? "__no_project");
     return Object.keys(groups)
       .sort((left, right) => {
-        const leftLabel = formatRoutineProjectGroupLabel(left, projectById, locale);
-        const rightLabel = formatRoutineProjectGroupLabel(right, projectById, locale);
+        const leftLabel = left === "__no_project" ? "No project" : (projectById.get(left)?.name ?? "Unknown project");
+        const rightLabel = right === "__no_project" ? "No project" : (projectById.get(right)?.name ?? "Unknown project");
         return leftLabel.localeCompare(rightLabel);
       })
       .map((key) => ({
         key,
-        label: formatRoutineProjectGroupLabel(key, projectById, locale),
+        label: key === "__no_project" ? "No project" : (projectById.get(key)?.name ?? "Unknown project"),
         items: groups[key]!,
       }));
   }
@@ -182,13 +159,13 @@ export function buildRoutineGroups(
   const groups = groupBy(routines, (routine) => routine.assigneeAgentId ?? "__unassigned");
   return Object.keys(groups)
     .sort((left, right) => {
-      const leftLabel = formatRoutineAssigneeGroupLabel(left, agentById, locale);
-      const rightLabel = formatRoutineAssigneeGroupLabel(right, agentById, locale);
+      const leftLabel = left === "__unassigned" ? "Unassigned" : (agentById.get(left)?.name ?? "Unknown agent");
+      const rightLabel = right === "__unassigned" ? "Unassigned" : (agentById.get(right)?.name ?? "Unknown agent");
       return leftLabel.localeCompare(rightLabel);
     })
     .map((key) => ({
       key,
-      label: formatRoutineAssigneeGroupLabel(key, agentById, locale),
+      label: key === "__unassigned" ? "Unassigned" : (agentById.get(key)?.name ?? "Unknown agent"),
       items: groups[key]!,
     }));
 }
@@ -218,119 +195,6 @@ export function sortRoutines(
   });
 }
 
-function RoutineListRow({
-  routine,
-  projectById,
-  agentById,
-  runningRoutineId,
-  statusMutationRoutineId,
-  href,
-  onRunNow,
-  onToggleEnabled,
-  onToggleArchived,
-}: {
-  routine: RoutineListItem;
-  projectById: Map<string, { name: string; color?: string | null }>;
-  agentById: Map<string, { name: string; icon?: string | null }>;
-  runningRoutineId: string | null;
-  statusMutationRoutineId: string | null;
-  href: string;
-  onRunNow: (routine: RoutineListItem) => void;
-  onToggleEnabled: (routine: RoutineListItem, enabled: boolean) => void;
-  onToggleArchived: (routine: RoutineListItem) => void;
-}) {
-  const { locale } = useLocale();
-  const copy = getRoutinesCopy(locale);
-  const enabled = routine.status === "active";
-  const isArchived = routine.status === "archived";
-  const isStatusPending = statusMutationRoutineId === routine.id;
-  const project = routine.projectId ? projectById.get(routine.projectId) ?? null : null;
-  const agent = routine.assigneeAgentId ? agentById.get(routine.assigneeAgentId) ?? null : null;
-  const isDraft = !isArchived && !routine.assigneeAgentId;
-
-  return (
-    <Link
-      to={href}
-      className="group flex flex-col gap-3 border-b border-border px-3 py-3 transition-colors hover:bg-accent/50 last:border-b-0 sm:flex-row sm:items-center no-underline text-inherit"
-    >
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium">{routine.title}</span>
-          {(isArchived || routine.status === "paused" || isDraft) ? (
-            <span className="text-xs text-muted-foreground">
-              {formatRoutineRowStatus(isArchived, locale)}
-            </span>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: project?.color ?? "#64748b" }}
-            />
-            <span>{routine.projectId ? (project?.name ?? copy.unknownProject) : copy.noProject}</span>
-          </span>
-          <span className="flex items-center gap-2">
-            {agent?.icon ? <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0" /> : null}
-            <span>{routine.assigneeAgentId ? (agent?.name ?? copy.unknownAgent) : copy.noAssignee}</span>
-          </span>
-          <span>
-            {formatLastRunTimestamp(routine.lastRun?.triggeredAt, copy.never)}
-            {routine.lastRun ? ` · ${formatRoutineRunStatus(routine.lastRun.status, locale)}` : ""}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>
-        <div className="flex items-center gap-3">
-          <ToggleSwitch
-            size="lg"
-            checked={enabled}
-            onCheckedChange={() => onToggleEnabled(routine, enabled)}
-            disabled={isStatusPending || isArchived}
-            aria-label={formatRoutineToggleAriaLabel(routine.title, enabled, locale)}
-          />
-          <span className="w-12 text-xs text-muted-foreground">
-            {formatRoutineToggleState(isArchived, enabled, locale)}
-          </span>
-        </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={formatRoutineMoreActionsLabel(routine.title, locale)}>
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem asChild>
-              <Link to={href}>{copy.edit}</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={runningRoutineId === routine.id || isArchived}
-              onClick={() => onRunNow(routine)}
-            >
-              {runningRoutineId === routine.id ? copy.running : copy.runNow}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => onToggleEnabled(routine, enabled)}
-              disabled={isStatusPending || isArchived}
-            >
-              {enabled ? copy.pause : copy.enable}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => onToggleArchived(routine)}
-              disabled={isStatusPending}
-            >
-              {routine.status === "archived" ? copy.restore : copy.archive}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </Link>
-  );
-}
-
 function buildRoutinesTabHref(tab: RoutinesTab) {
   return tab === "runs" ? "/routines?tab=runs" : "/routines";
 }
@@ -338,12 +202,10 @@ function buildRoutinesTabHref(tab: RoutinesTab) {
 export function Routines() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { locale } = useLocale();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { pushToast } = useToastActions();
-  const copy = getRoutinesCopy(locale);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -379,8 +241,8 @@ export function Routines() {
   const [routineViewState, setRoutineViewState] = useState<RoutineViewState>(() => getRoutineViewState(routineViewStateKey));
 
   useEffect(() => {
-    setBreadcrumbs([{ label: copy.routines }]);
-  }, [setBreadcrumbs, copy.routines]);
+    setBreadcrumbs([{ label: "Routines" }]);
+  }, [setBreadcrumbs]);
 
   useEffect(() => {
     setRoutineViewState(getRoutineViewState(routineViewStateKey));
@@ -448,8 +310,10 @@ export function Routines() {
       setAdvancedOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.routines.list(selectedCompanyId!) });
       pushToast({
-        title: copy.routineCreated,
-        body: copy.firstTriggerHint,
+        title: "Routine created",
+        body: routine.assigneeAgentId
+          ? "Add the first trigger to turn it into a live workflow."
+          : "Draft saved. Add a default agent before enabling automation.",
         tone: "success",
       });
       navigate(`/routines/${routine.id}?tab=triggers`);
@@ -479,8 +343,8 @@ export function Routines() {
     },
     onError: (mutationError) => {
       pushToast({
-        title: copy.routineUpdateFailed,
-        body: mutationError instanceof Error ? mutationError.message : copy.routineUpdateFailedBody,
+        title: "Failed to update routine",
+        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not update the routine.",
         tone: "error",
       });
     },
@@ -514,8 +378,8 @@ export function Routines() {
     },
     onError: (mutationError) => {
       pushToast({
-        title: copy.routineRunFailed,
-        body: mutationError instanceof Error ? mutationError.message : copy.routineRunFailedBody,
+        title: "Routine run failed",
+        body: mutationError instanceof Error ? mutationError.message : "Paperclip could not start the routine run.",
         tone: "error",
       });
     },
@@ -562,17 +426,17 @@ export function Routines() {
     [routineViewState.sortDir, routineViewState.sortField, visibleRoutines],
   );
   const routineGroups = useMemo(
-    () => buildRoutineGroups(sortedRoutines, routineViewState.groupBy, projectById, agentById, locale),
-    [agentById, locale, projectById, routineViewState.groupBy, sortedRoutines],
+    () => buildRoutineGroups(sortedRoutines, routineViewState.groupBy, projectById, agentById),
+    [agentById, projectById, routineViewState.groupBy, sortedRoutines],
   );
   const recentRunsIssueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        copy.recentRuns,
+        "Recent Runs",
         buildRoutinesTabHref("runs"),
         "issues",
       ),
-    [copy.recentRuns],
+    [],
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
@@ -619,7 +483,7 @@ export function Routines() {
   }
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Repeat} message={copy.selectCompany} />;
+    return <EmptyState icon={Repeat} message="Select a company to view routines." />;
   }
 
   if (isLoading) {
@@ -630,17 +494,16 @@ export function Routines() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            {copy.routines}
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">Beta</span>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Routines
           </h1>
           <p className="text-sm text-muted-foreground">
-            {copy.description}
+            Recurring work definitions that materialize into auditable execution tasks.
           </p>
         </div>
         <Button onClick={() => setComposerOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          {copy.createRoutine}
+          Create routine
         </Button>
       </div>
 
@@ -650,14 +513,14 @@ export function Routines() {
           value={activeTab}
           onValueChange={handleTabChange}
           items={[
-            { value: "routines", label: copy.routines },
-            { value: "runs", label: copy.recentRuns },
+            { value: "routines", label: "Routines" },
+            { value: "runs", label: "Recent Runs" },
           ]}
         />
         <TabsContent value="routines" className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              {formatRoutineCount(visibleRoutines.length, locale)}
+              {visibleRoutines.length} routine{visibleRoutines.length === 1 ? "" : "s"}
             </p>
             <div className="flex items-center gap-1">
               <Popover>
@@ -711,9 +574,9 @@ export function Routines() {
                 <PopoverContent align="end" className="w-44 p-0">
                   <div className="p-2 space-y-0.5">
                     {([
-                      ["project", copy.project],
-                      ["assignee", copy.agent],
-                      ["none", copy.none],
+                      ["project", "Project"],
+                      ["assignee", "Agent"],
+                      ["none", "None"],
                     ] as const).map(([value, label]) => (
                       <button
                         key={value}
@@ -763,9 +626,9 @@ export function Routines() {
         >
           <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
             <div>
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">{copy.newRoutine}</p>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">New routine</p>
               <p className="text-sm text-muted-foreground">
-                {copy.setupHint}
+                Define the recurring work first. Default project and agent are optional for draft routines.
               </p>
             </div>
             <Button
@@ -777,7 +640,7 @@ export function Routines() {
               }}
               disabled={createRoutine.isPending}
             >
-              {copy.cancel}
+              Cancel
             </Button>
           </div>
 
@@ -786,7 +649,7 @@ export function Routines() {
               <textarea
                 ref={titleInputRef}
                 className="w-full resize-none overflow-hidden bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground/50"
-                placeholder={copy.routineTitle}
+                placeholder="Routine title"
                 rows={1}
                 value={draft.title}
                 onChange={(event) => {
@@ -819,16 +682,16 @@ export function Routines() {
             <div className="px-5 pb-3">
               <div className="overflow-x-auto overscroll-x-contain">
                 <div className="inline-flex min-w-full flex-wrap items-center gap-2 text-sm text-muted-foreground sm:min-w-max sm:flex-nowrap">
-                  <span>{copy.for}</span>
+                  <span>For</span>
                   <InlineEntitySelector
                     ref={assigneeSelectorRef}
                     value={draft.assigneeAgentId}
                     options={assigneeOptions}
-                    placeholder={copy.assignee}
-                    noneLabel={copy.noAssignee}
-                    searchPlaceholder={copy.searchAssignees}
-                    emptyMessage={copy.noAssigneesFound}
                     recentOptionIds={recentAssigneeIds}
+                    placeholder="Assignee"
+                    noneLabel="No assignee"
+                    searchPlaceholder="Search assignees..."
+                    emptyMessage="No assignees found."
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setDraft((current) => ({ ...current, assigneeAgentId }));
@@ -850,9 +713,9 @@ export function Routines() {
                         ) : (
                           <span className="truncate">{option.label}</span>
                         )
-                        ) : (
-                          <span className="text-muted-foreground">{copy.assignee}</span>
-                        )
+                      ) : (
+                        <span className="text-muted-foreground">Assignee</span>
+                      )
                     }
                     renderOption={(option) => {
                       if (!option.id) return <span className="truncate">{option.label}</span>;
@@ -865,16 +728,16 @@ export function Routines() {
                       );
                     }}
                   />
-                  <span>{copy.in}</span>
+                  <span>in</span>
                   <InlineEntitySelector
                     ref={projectSelectorRef}
                     value={draft.projectId}
                     options={projectOptions}
-                    placeholder={copy.projectPlaceholder}
-                    noneLabel={copy.noProject}
-                    searchPlaceholder={copy.searchProjects}
-                    emptyMessage={copy.noProjectsFound}
                     recentOptionIds={recentProjectIds}
+                    placeholder="Project"
+                    noneLabel="No project"
+                    searchPlaceholder="Search projects..."
+                    emptyMessage="No projects found."
                     onChange={(projectId) => {
                       if (projectId) trackRecentProject(projectId);
                       setDraft((current) => ({ ...current, projectId }));
@@ -890,8 +753,8 @@ export function Routines() {
                           <span className="truncate">{option.label}</span>
                         </>
                       ) : (
-                          <span className="text-muted-foreground">{copy.projectPlaceholder}</span>
-                        )
+                        <span className="text-muted-foreground">Project</span>
+                      )
                     }
                     renderOption={(option) => {
                       if (!option.id) return <span className="truncate">{option.label}</span>;
@@ -916,7 +779,7 @@ export function Routines() {
                 ref={descriptionEditorRef}
                 value={draft.description}
                 onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                placeholder={copy.addInstructions}
+                placeholder="Add instructions..."
                 bordered={false}
                 contentClassName="min-h-[160px] text-sm text-muted-foreground"
                 mentions={mentionOptions}
@@ -932,15 +795,15 @@ export function Routines() {
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between text-left">
                   <div>
-                    <p className="text-sm font-medium">{copy.advancedDeliverySettings}</p>
-                    <p className="text-sm text-muted-foreground">{copy.advancedDeliveryHint}</p>
+                    <p className="text-sm font-medium">Advanced delivery settings</p>
+                    <p className="text-sm text-muted-foreground">Keep policy controls secondary to the work definition.</p>
                   </div>
                   {advancedOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                 </CollapsibleTrigger>
                 <CollapsibleContent className="pt-3">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{copy.concurrency}</p>
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Concurrency</p>
                       <Select
                         value={draft.concurrencyPolicy}
                         onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
@@ -950,14 +813,14 @@ export function Routines() {
                         </SelectTrigger>
                         <SelectContent>
                           {concurrencyPolicies.map((value) => (
-                            <SelectItem key={value} value={value}>{routinePolicyLabel(value, locale)}</SelectItem>
+                            <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-muted-foreground">{routinePolicyDescription(draft.concurrencyPolicy, locale)}</p>
+                      <p className="text-xs text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
                     </div>
                     <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{copy.catchUp}</p>
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Catch-up</p>
                       <Select
                         value={draft.catchUpPolicy}
                         onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
@@ -967,11 +830,11 @@ export function Routines() {
                         </SelectTrigger>
                         <SelectContent>
                           {catchUpPolicies.map((value) => (
-                            <SelectItem key={value} value={value}>{routinePolicyLabel(value, locale)}</SelectItem>
+                            <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-muted-foreground">{routinePolicyDescription(draft.catchUpPolicy, locale)}</p>
+                      <p className="text-xs text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
                     </div>
                   </div>
                 </CollapsibleContent>
@@ -981,7 +844,7 @@ export function Routines() {
 
           <div className="shrink-0 flex flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
-              {copy.creationHint}
+              After creation, Paperclip takes you straight to trigger setup. Draft routines stay paused until you add a default agent.
             </div>
             <div className="flex flex-col gap-2 sm:items-end">
               <Button
@@ -992,11 +855,11 @@ export function Routines() {
                 }
               >
                 <Plus className="mr-2 h-4 w-4" />
-                {createRoutine.isPending ? copy.creating : copy.createRoutine}
+                {createRoutine.isPending ? "Creating..." : "Create routine"}
               </Button>
               {createRoutine.isError ? (
                 <p className="text-sm text-destructive">
-                  {createRoutine.error instanceof Error ? createRoutine.error.message : copy.failedCreateRoutine}
+                  {createRoutine.error instanceof Error ? createRoutine.error.message : "Failed to create routine"}
                 </p>
               ) : null}
             </div>
@@ -1007,7 +870,7 @@ export function Routines() {
       {error ? (
         <Card>
           <CardContent className="pt-6 text-sm text-destructive">
-            {error instanceof Error ? error.message : copy.failedLoadRoutines}
+            {error instanceof Error ? error.message : "Failed to load routines"}
           </CardContent>
         </Card>
       ) : null}
@@ -1018,54 +881,63 @@ export function Routines() {
             <div className="py-12">
               <EmptyState
                 icon={Repeat}
-                message={copy.noRoutinesYet}
+                message="No active routines. Use Create routine to define the first recurring workflow."
               />
             </div>
           ) : (
-            <div className="rounded-lg border border-border">
-              {routineGroups.map((group) => (
-                <Collapsible
-                  key={group.key}
-                  open={!routineViewState.collapsedGroups.includes(group.key)}
-                  onOpenChange={(open) => {
-                    updateRoutineView({
-                      collapsedGroups: open
-                        ? routineViewState.collapsedGroups.filter((item) => item !== group.key)
-                        : [...routineViewState.collapsedGroups, group.key],
-                    });
-                  }}
-                >
-                  {group.label ? (
-                    <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-                      <CollapsibleTrigger className="flex items-center gap-1.5">
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-90" />
-                        <span className="text-sm font-semibold uppercase tracking-wide">
-                          {group.label}
+            <div className="flex flex-col gap-3">
+              {routineGroups.map((group) => {
+                const isOpen = !routineViewState.collapsedGroups.includes(group.key);
+                return (
+                  <Collapsible
+                    key={group.key}
+                    open={isOpen}
+                    onOpenChange={(open) => {
+                      updateRoutineView({
+                        collapsedGroups: open
+                          ? routineViewState.collapsedGroups.filter((item) => item !== group.key)
+                          : [...routineViewState.collapsedGroups, group.key],
+                      });
+                    }}
+                  >
+                    {group.label ? (
+                      <div
+                        className={`flex items-center gap-2 rounded-lg border border-border px-3 py-2${
+                          isOpen ? " mb-1" : ""
+                        }`}
+                      >
+                        <CollapsibleTrigger className="flex items-center gap-1.5">
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-90" />
+                          <span className="text-sm font-semibold uppercase tracking-wide">
+                            {group.label}
+                          </span>
+                        </CollapsibleTrigger>
+                        <span className="text-xs text-muted-foreground">
+                          {group.items.length}
                         </span>
-                      </CollapsibleTrigger>
-                      <span className="text-xs text-muted-foreground">
-                        {group.items.length}
-                      </span>
-                    </div>
-                  ) : null}
-                  <CollapsibleContent>
-                    {group.items.map((routine) => (
-                      <RoutineListRow
-                        key={routine.id}
-                        routine={routine}
-                        projectById={projectById}
-                        agentById={agentById}
-                        runningRoutineId={runningRoutineId}
-                        statusMutationRoutineId={statusMutationRoutineId}
-                        href={`/routines/${routine.id}`}
-                        onRunNow={handleRunNow}
-                        onToggleEnabled={handleToggleEnabled}
-                        onToggleArchived={handleToggleArchived}
-                      />
-                    ))}
-                  </CollapsibleContent>
-                </Collapsible>
-              ))}
+                      </div>
+                    ) : null}
+                    <CollapsibleContent>
+                      {group.items.map((routine) => (
+                        <RoutineListRow
+                          key={routine.id}
+                          routine={routine}
+                          projectById={projectById}
+                          agentById={agentById}
+                          runningRoutineId={runningRoutineId}
+                          statusMutationRoutineId={statusMutationRoutineId}
+                          href={`/routines/${routine.id}`}
+                          runNowButton
+                          divider={false}
+                          onRunNow={handleRunNow}
+                          onToggleEnabled={handleToggleEnabled}
+                          onToggleArchived={handleToggleArchived}
+                        />
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })}
             </div>
           )}
         </div>

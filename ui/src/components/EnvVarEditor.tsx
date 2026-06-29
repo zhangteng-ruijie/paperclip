@@ -1,12 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 import type { CompanySecret, EnvBinding, SecretVersionSelector } from "@paperclipai/shared";
-import { AlertCircle, X } from "lucide-react";
+import { AlertCircle, KeyRound, X } from "lucide-react";
 import { cn } from "../lib/utils";
-import { useLocale } from "../context/LocaleContext";
-import { getEditorCopy } from "../lib/editor-copy";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
+
+// shadcn Select trigger sized to line up with the mono inputs above.
+const selectTriggerClass =
+  "h-[34px] min-h-[34px] rounded-md border-border bg-transparent px-2.5 text-sm font-mono shadow-none";
+
+/** Radix Select forbids empty-string item values; use a sentinel for "unset". */
+const SECRET_UNSET = "__unset__";
+
+/** Suggest an env-var-style KEY from a secret name (UPPER_SNAKE). */
+function envKeyFromSecretName(name: string): string {
+  return name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
 
 type Row = {
   key: string;
@@ -71,14 +93,18 @@ export function EnvVarEditor({
   secrets,
   onCreateSecret,
   onChange,
+  recentlyUsedSecrets,
 }: {
   value: Record<string, EnvBinding>;
   secrets: CompanySecret[];
   onCreateSecret: (name: string, value: string) => Promise<CompanySecret>;
   onChange: (env: Record<string, EnvBinding> | undefined) => void;
+  /**
+   * Optional project-scoped secrets to surface as one-tap "quick bind" chips
+   * below the editor (§3.4). Already-bound secrets are filtered out.
+   */
+  recentlyUsedSecrets?: CompanySecret[];
 }) {
-  const { locale } = useLocale();
-  const copy = getEditorCopy(locale);
   const [rows, setRows] = useState<Row[]>(() => toRows(value));
   const [sealError, setSealError] = useState<string | null>(null);
   const valueRef = useRef(value);
@@ -144,6 +170,26 @@ export function EnvVarEditor({
     emit(next);
   }
 
+  function bindRecentSecret(secret: CompanySecret) {
+    // Fill the trailing empty row (or append one) with this secret bound.
+    const next = rows.map((row) => ({ ...row }));
+    const trailing = next[next.length - 1];
+    let target: Row;
+    if (trailing && !trailing.key && !trailing.plainValue && !trailing.secretId) {
+      target = trailing;
+    } else {
+      target = emptyRow();
+      next.push(target);
+    }
+    target.source = "secret";
+    target.secretId = secret.id;
+    target.version = "latest";
+    if (!target.key) target.key = envKeyFromSecretName(secret.name);
+    next.push(emptyRow());
+    setRows(next);
+    emit(next);
+  }
+
   function defaultSecretName(key: string) {
     return key
       .trim()
@@ -160,8 +206,8 @@ export function EnvVarEditor({
     const plain = row.plainValue;
     if (!key || plain.length === 0) return;
 
-    const suggested = defaultSecretName(key) || copy.envEditor.defaultSecretName;
-    const name = window.prompt(copy.envEditor.secretNamePrompt, suggested)?.trim();
+    const suggested = defaultSecretName(key) || "secret";
+    const name = window.prompt("Secret name", suggested)?.trim();
     if (!name) return;
 
     try {
@@ -169,7 +215,7 @@ export function EnvVarEditor({
       const created = await onCreateSecret(name, plain);
       updateRow(index, { source: "secret", secretId: created.id });
     } catch (error) {
-      setSealError(error instanceof Error ? error.message : copy.envEditor.failedToCreateSecret);
+      setSealError(error instanceof Error ? error.message : "Failed to create secret");
     }
   }
 
@@ -185,81 +231,105 @@ export function EnvVarEditor({
           <div key={index} className="flex items-center gap-1.5">
             <input
               className={cn(inputClass, "flex-[2]")}
-              placeholder={copy.envEditor.keyPlaceholder}
+              placeholder="KEY"
               value={row.key}
               onChange={(event) => updateRow(index, { key: event.target.value })}
             />
-            <select
-              className={cn(inputClass, "flex-[1] bg-background")}
+            <Select
               value={row.source}
-              onChange={(event) =>
+              onValueChange={(next) =>
                 updateRow(index, {
-                  source: event.target.value === "secret" ? "secret" : "plain",
-                  ...(event.target.value === "plain" ? { secretId: "" } : {}),
+                  source: next === "secret" ? "secret" : "plain",
+                  ...(next === "plain" ? { secretId: "" } : {}),
                 })
               }
             >
-              <option value="plain">{copy.envEditor.plain}</option>
-              <option value="secret">{copy.envEditor.secret}</option>
-            </select>
+              <SelectTrigger className={cn(selectTriggerClass, "flex-[1]")} aria-label="Binding mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="plain">Plain</SelectItem>
+                <SelectItem value="secret">Secret</SelectItem>
+              </SelectContent>
+            </Select>
             {row.source === "secret" ? (
               <>
-                <select
-                  className={cn(inputClass, "flex-[3] bg-background", row.secretId && !secrets.some((s) => s.id === row.secretId) && "border-destructive text-destructive")}
-                  value={row.secretId}
-                  onChange={(event) => updateRow(index, { secretId: event.target.value })}
+                <Select
+                  value={row.secretId || SECRET_UNSET}
+                  onValueChange={(next) =>
+                    updateRow(index, { secretId: next === SECRET_UNSET ? "" : next })
+                  }
                 >
-                  <option value="">{copy.envEditor.selectSecret}</option>
-                  {row.secretId && !secrets.some((s) => s.id === row.secretId) ? (
-                    <option value={row.secretId}>Missing ({row.secretId.slice(0, 8)}…)</option>
-                  ) : null}
-                  {secrets.map((secret) => (
-                    <option key={secret.id} value={secret.id}>
-                      {secret.name}
-                      {secret.status !== "active" ? ` (${secret.status})` : ""}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className={cn(inputClass, "flex-[1] bg-background")}
+                  <SelectTrigger
+                    aria-label="Secret"
+                    className={cn(
+                      selectTriggerClass,
+                      "flex-[3]",
+                      row.secretId &&
+                        !secrets.some((s) => s.id === row.secretId) &&
+                        "border-destructive text-destructive",
+                    )}
+                  >
+                    <SelectValue placeholder="Select secret..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {row.secretId && !secrets.some((s) => s.id === row.secretId) ? (
+                      <SelectItem value={row.secretId}>
+                        Missing ({row.secretId.slice(0, 8)}…)
+                      </SelectItem>
+                    ) : null}
+                    {secrets.map((secret) => (
+                      <SelectItem key={secret.id} value={secret.id}>
+                        {secret.name}
+                        {secret.status !== "active" ? ` (${secret.status})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
                   value={row.version === "latest" ? "latest" : String(row.version)}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    updateRow(index, { version: raw === "latest" ? "latest" : Number.parseInt(raw, 10) });
-                  }}
+                  onValueChange={(raw) =>
+                    updateRow(index, {
+                      version: raw === "latest" ? "latest" : Number.parseInt(raw, 10),
+                    })
+                  }
                   disabled={!row.secretId}
-                  aria-label="Version"
                 >
-                  <option value="latest">latest</option>
-                  {(() => {
-                    const selected = secrets.find((s) => s.id === row.secretId);
-                    if (!selected) return null;
-                    return Array.from({ length: Math.max(0, selected.latestVersion) }, (_, idx) => {
-                      const version = selected.latestVersion - idx;
-                      if (version <= 0) return null;
-                      return (
-                        <option key={version} value={version}>
-                          v{version}
-                        </option>
-                      );
-                    });
-                  })()}
-                </select>
+                  <SelectTrigger className={cn(selectTriggerClass, "flex-[1]")} aria-label="Version">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="latest">latest</SelectItem>
+                    {(() => {
+                      const selected = secrets.find((s) => s.id === row.secretId);
+                      if (!selected) return null;
+                      return Array.from({ length: Math.max(0, selected.latestVersion) }, (_, idx) => {
+                        const version = selected.latestVersion - idx;
+                        if (version <= 0) return null;
+                        return (
+                          <SelectItem key={version} value={String(version)}>
+                            v{version}
+                          </SelectItem>
+                        );
+                      });
+                    })()}
+                  </SelectContent>
+                </Select>
                 <button
                   type="button"
                   className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent/50 transition-colors shrink-0"
                   onClick={() => sealRow(index)}
                   disabled={!row.key.trim() || !row.plainValue}
-                  title={copy.envEditor.createSecretTitle}
+                  title="Create secret from current plain value"
                 >
-                  {copy.envEditor.newSecret}
+                  New
                 </button>
               </>
             ) : (
               <>
                 <input
                   className={cn(inputClass, "flex-[3]")}
-                  placeholder={copy.envEditor.valuePlaceholder}
+                  placeholder="value"
                   value={row.plainValue}
                   onChange={(event) => updateRow(index, { plainValue: event.target.value })}
                 />
@@ -268,9 +338,9 @@ export function EnvVarEditor({
                   className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent/50 transition-colors shrink-0"
                   onClick={() => sealRow(index)}
                   disabled={!row.key.trim() || !row.plainValue}
-                  title={copy.envEditor.sealTitle}
+                  title="Store value as secret and replace with reference"
                 >
-                  {copy.envEditor.seal}
+                  Seal
                 </button>
               </>
             )}
@@ -288,6 +358,34 @@ export function EnvVarEditor({
           </div>
         );
       })}
+      {(() => {
+        const boundIds = new Set(
+          rows.filter((row) => row.source === "secret" && row.secretId).map((row) => row.secretId),
+        );
+        const quick = (recentlyUsedSecrets ?? [])
+          .filter((secret) => secret.status === "active" && !boundIds.has(secret.id))
+          .slice(0, 8);
+        if (quick.length === 0) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/70">
+              <KeyRound className="h-3 w-3" />
+              Recently used:
+            </span>
+            {quick.map((secret) => (
+              <button
+                key={secret.id}
+                type="button"
+                onClick={() => bindRecentSecret(secret)}
+                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                title={`Bind ${secret.name}`}
+              >
+                + {secret.name}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
       {sealError && <p className="text-[11px] text-destructive">{sealError}</p>}
       {(() => {
         const issues: { key: string; reason: string }[] = [];
@@ -319,7 +417,8 @@ export function EnvVarEditor({
         );
       })()}
       <p className="text-[11px] text-muted-foreground/60">
-        {copy.envEditor.runtimeHint}
+        Set KEY to the env var name the process expects, for example GH_TOKEN. Choose Secret to resolve a stored
+        value at run start. PAPERCLIP_* variables are injected automatically.
       </p>
     </div>
   );

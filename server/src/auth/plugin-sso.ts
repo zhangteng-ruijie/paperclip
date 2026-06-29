@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import type { BetterAuthPlugin } from "better-auth";
 import type { GenericOAuthConfig } from "better-auth/plugins";
 import { genericOAuth } from "better-auth/plugins";
 import type { Db } from "@paperclipai/db";
@@ -387,10 +388,10 @@ export function createPluginSsoStore(db: Db): PluginSsoStore {
   };
 }
 
-export function createGenericOAuthPlugin(store: PluginSsoStore) {
+export function createGenericOAuthPlugin(store: PluginSsoStore): BetterAuthPlugin {
   return genericOAuth({
     config: store.providerConfigs,
-  });
+  }) as BetterAuthPlugin;
 }
 
 export function sanitizeAuthNextPath(rawNext: unknown, fallback = "/"): string {

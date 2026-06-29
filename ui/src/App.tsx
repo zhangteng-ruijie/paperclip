@@ -1,8 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n";
 import { Layout } from "./components/Layout";
-import { OnboardingWizard } from "./components/OnboardingWizard";
+import { ConferenceRoomChatGate } from "./components/ConferenceRoomChatGate";
+import { PipelinesExperimentalGate } from "./components/PipelinesExperimentalGate";
+import { OnboardingWizardVariant } from "./components/OnboardingWizardVariant";
+import { CloudAccessGate } from "./components/CloudAccessGate";
 import { Dashboard } from "./pages/Dashboard";
 import { DashboardLive } from "./pages/DashboardLive";
 import { Companies } from "./pages/Companies";
@@ -17,6 +20,8 @@ import { Search } from "./pages/Search";
 import { IssueDetail } from "./pages/IssueDetail";
 import { IssueChatLongThreadPerf } from "./pages/IssueChatLongThreadPerf";
 import { Routines } from "./pages/Routines";
+import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
+import { PipelineSettings } from "./pages/PipelineSettings";
 import { RoutineDetail } from "./pages/RoutineDetail";
 import { UserProfile } from "./pages/UserProfile";
 import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
@@ -28,6 +33,7 @@ import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
+import { BoardChat } from "./pages/BoardChat";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
 import { CloudUpstream } from "./pages/CloudUpstream";
@@ -59,83 +65,14 @@ import { InviteLandingPage } from "./pages/InviteLanding";
 import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
 import { useCompany } from "./context/CompanyContext";
-import { useDialogActions } from "./context/DialogContext";
-import { useLocale } from "./context/LocaleContext";
-import { authApi } from "./api/auth";
-import { healthApi } from "./api/health";
+import { useDialogActions, useDialogState } from "./context/DialogContext";
 import { loadLastInboxTab } from "./lib/inbox";
-import { shouldRedirectCompanylessRouteToOnboarding } from "./lib/onboarding-route";
-import { queryKeys } from "./lib/queryKeys";
+import {
+  isOnboardingWizardActive,
+  shouldRedirectCompanylessRouteToOnboarding,
+} from "./lib/onboarding-route";
 import { normalizeRememberedInstanceSettingsPath } from "./lib/instance-settings";
 
-function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
-  const { t } = useLocale();
-  return (
-    <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{t("app.bootstrapPending.title")}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {hasActiveInvite
-            ? t("app.bootstrapPending.activeInvite")
-            : t("app.bootstrapPending.noInvite")}
-        </p>
-        <pre className="mt-4 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 text-xs">
-{`pnpm paperclipai auth bootstrap-ceo`}
-        </pre>
-      </div>
-    </div>
-  );
-}
-
-function CloudAccessGate() {
-  const { t } = useLocale();
-  const location = useLocation();
-  const healthQuery = useQuery({
-    queryKey: queryKeys.health,
-    queryFn: () => healthApi.get(),
-    retry: false,
-    refetchInterval: (query) => {
-      const data = query.state.data as
-        | { deploymentMode?: "local_trusted" | "authenticated"; bootstrapStatus?: "ready" | "bootstrap_pending" }
-        | undefined;
-      return data?.deploymentMode === "authenticated" && data.bootstrapStatus === "bootstrap_pending"
-        ? 2000
-        : false;
-    },
-    refetchIntervalInBackground: true,
-  });
-
-  const isAuthenticatedMode = healthQuery.data?.deploymentMode === "authenticated";
-  const sessionQuery = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
-    enabled: isAuthenticatedMode,
-    retry: false,
-  });
-
-  if (healthQuery.isLoading || (isAuthenticatedMode && sessionQuery.isLoading)) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
-  }
-
-  if (healthQuery.error) {
-    return (
-      <div className="mx-auto max-w-xl py-10 text-sm text-destructive">
-        {healthQuery.error instanceof Error ? healthQuery.error.message : t("common.failedLoadAppState")}
-      </div>
-    );
-  }
-
-  if (isAuthenticatedMode && healthQuery.data?.bootstrapStatus === "bootstrap_pending") {
-    return <BootstrapPendingPage hasActiveInvite={healthQuery.data.bootstrapInviteActive} />;
-  }
-
-  if (isAuthenticatedMode && !sessionQuery.data) {
-    const next = encodeURIComponent(`${location.pathname}${location.search}`);
-    return <Navigate to={`/auth?next=${next}`} replace />;
-  }
-
-  return <Outlet />;
-}
 function boardRoutes() {
   return (
     <>
@@ -145,7 +82,7 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
-      <Route path="company/settings/environments" element={<CompanyEnvironments />} />
+      <Route path="company/settings/environments" element={<Navigate to="/company/settings/instance/environments" replace />} />
       <Route path="company/settings/cloud-upstream" element={<CloudUpstream />} />
       <Route path="company/settings/members" element={<CompanyAccess />} />
       <Route path="company/settings/access" element={<CompanyAccessLegacyRoute />} />
@@ -157,6 +94,7 @@ function boardRoutes() {
       <Route path="company/settings/instance" element={<Navigate to="general" replace />} />
       <Route path="company/settings/instance/profile" element={<ProfileSettings />} />
       <Route path="company/settings/instance/general" element={<InstanceGeneralSettings />} />
+      <Route path="company/settings/instance/environments" element={<CompanyEnvironments />} />
       <Route path="company/settings/instance/access" element={<InstanceAccess />} />
       <Route path="company/settings/instance/heartbeats" element={<InstanceSettings />} />
       <Route path="company/settings/instance/experimental" element={<InstanceExperimentalSettings />} />
@@ -200,7 +138,40 @@ function boardRoutes() {
         <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
       ) : null}
       <Route path="routines" element={<Routines />} />
+      <Route
+        path="review-queue"
+        element={<PipelinesExperimentalGate><ReviewQueue /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="learnings"
+        element={<PipelinesExperimentalGate><Learnings /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines"
+        element={<PipelinesExperimentalGate><Pipelines /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines/:pipelineId"
+        element={<PipelinesExperimentalGate><Pipelines /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines/:pipelineId/add"
+        element={<PipelinesExperimentalGate><Pipelines /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines/:pipelineId/settings"
+        element={<PipelinesExperimentalGate><PipelineSettings /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines/:pipelineId/items/:caseId"
+        element={<PipelinesExperimentalGate><PipelineItemDetail /></PipelinesExperimentalGate>}
+      />
+      <Route
+        path="pipelines/:pipelineId/cases/:caseId"
+        element={<PipelinesExperimentalGate><PipelineItemLegacyRedirect /></PipelinesExperimentalGate>}
+      />
       <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="routines/:routineId/:section" element={<RoutineDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="execution-workspaces/:workspaceId/services" element={<ExecutionWorkspaceDetail />} />
       <Route path="execution-workspaces/:workspaceId/configuration" element={<ExecutionWorkspaceDetail />} />
@@ -216,6 +187,15 @@ function boardRoutes() {
       <Route path="approvals/:approvalId" element={<ApprovalDetail />} />
       <Route path="costs" element={<Costs />} />
       <Route path="activity" element={<Activity />} />
+      {/* Conference Room Chat surfaces (PAP-136/PAP-137): routes stay
+          registered but redirect to the company home while the experimental
+          flag is off. The board-level `artifacts` mount below is the new
+          conference-room one; the master-level mount above it still serves
+          `/artifacts` in both modes. */}
+      <Route element={<ConferenceRoomChatGate />}>
+        <Route path="board-chat" element={<BoardChat />} />
+        <Route path="artifacts" element={<Artifacts />} />
+      </Route>
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
       <Route path="inbox/recent" element={<Inbox />} />
@@ -279,24 +259,33 @@ function LegacySettingsRedirect() {
 }
 
 function OnboardingRoutePage() {
-  const { t } = useLocale();
   const { companies } = useCompany();
   const { openOnboarding } = useDialogActions();
+  const { onboardingOpen, onboardingRouteDismissed } = useDialogState();
   const { companyPrefix } = useParams<{ companyPrefix?: string }>();
+
+  // The OnboardingWizard auto-opens on this route (and can also be opened
+  // explicitly). While it is showing it covers the whole screen, so the
+  // launcher card below must not stay interactive behind it — otherwise users
+  // can tab/click through to the form behind the modal (PAP-52). The launcher
+  // only needs to render as a re-entry point once the wizard is dismissed.
+  if (isOnboardingWizardActive({ onboardingOpen, routeDismissed: onboardingRouteDismissed })) {
+    return null;
+  }
   const matchedCompany = companyPrefix
     ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase()) ?? null
     : null;
 
   const title = matchedCompany
-    ? t("app.onboarding.addAnotherAgentTitle", { company: matchedCompany.name })
+    ? `Add another agent to ${matchedCompany.name}`
     : companies.length > 0
-      ? t("app.onboarding.createAnotherCompanyTitle")
-      : t("app.onboarding.createFirstCompanyTitle");
+      ? "Create another company"
+      : "Create your first company";
   const description = matchedCompany
-    ? t("app.onboarding.addAnotherAgentDescription")
+    ? "Run onboarding again to add an agent and a starter task for this company."
     : companies.length > 0
-      ? t("app.onboarding.createAnotherCompanyDescription")
-      : t("app.onboarding.createFirstCompanyDescription");
+      ? "Run onboarding again to create another company and seed its first agent."
+      : "Get started by creating a company and your first agent.";
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -311,7 +300,7 @@ function OnboardingRoutePage() {
                 : openOnboarding()
             }
           >
-            {matchedCompany ? t("app.onboarding.addAgent") : t("app.onboarding.start")}
+            {matchedCompany ? "Add Agent" : "Start Onboarding"}
           </Button>
         </div>
       </div>
@@ -320,12 +309,11 @@ function OnboardingRoutePage() {
 }
 
 function CompanyRootRedirect() {
-  const { t } = useLocale();
   const { companies, selectedCompany, loading } = useCompany();
   const location = useLocation();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -345,12 +333,11 @@ function CompanyRootRedirect() {
 }
 
 function UnprefixedBoardRedirect() {
-  const { t } = useLocale();
   const location = useLocation();
   const { companies, selectedCompany, loading } = useCompany();
 
   if (loading) {
-    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">{t("common.loading")}</div>;
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
@@ -375,18 +362,22 @@ function UnprefixedBoardRedirect() {
 }
 
 function NoCompaniesStartPage() {
-  const { t } = useLocale();
   const { openOnboarding } = useDialogActions();
+  const { t } = useTranslation();
 
   return (
     <div className="mx-auto max-w-xl py-10">
       <div className="rounded-lg border border-border bg-card p-6">
-        <h1 className="text-xl font-semibold">{t("app.noCompanies.title")}</h1>
+        <h1 className="text-xl font-semibold">
+          {t("app.noCompanies.title", { defaultValue: "Create your first company" })}
+        </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          {t("app.noCompanies.description")}
+          {t("app.noCompanies.description", { defaultValue: "Get started by creating a company." })}
         </p>
         <div className="mt-4">
-          <Button onClick={() => openOnboarding()}>{t("app.noCompanies.newCompany")}</Button>
+          <Button onClick={() => openOnboarding()}>
+            {t("app.noCompanies.newCompany", { defaultValue: "New Company" })}
+          </Button>
         </div>
       </div>
     </div>
@@ -416,6 +407,14 @@ export function App() {
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />
           <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
+          <Route path="review-queue" element={<UnprefixedBoardRedirect />} />
+          <Route path="learnings" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId/add" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId/settings" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId/items/:caseId" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId/cases/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="artifacts" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
@@ -447,7 +446,7 @@ export function App() {
           <Route path="*" element={<NotFoundPage scope="global" />} />
         </Route>
       </Routes>
-      <OnboardingWizard />
+      <OnboardingWizardVariant />
     </>
   );
 }

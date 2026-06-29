@@ -12,6 +12,7 @@ function isZh(locale: CopyLocale) {
 export const accessPermissionLabels: Record<"en" | "zh-CN", Record<PermissionKey, string>> = {
   en: {
     "agents:create": "Create agents",
+    "skills:create": "Create skills",
     "users:invite": "Invite humans and agents",
     "users:manage_permissions": "Manage members and grants",
     "tasks:assign": "Assign tasks",
@@ -19,9 +20,11 @@ export const accessPermissionLabels: Record<"en" | "zh-CN", Record<PermissionKey
     "tasks:manage_active_checkouts": "Manage active task checkouts",
     "joins:approve": "Approve join requests",
     "environments:manage": "Manage environments",
+    "pipelines:write": "Manage pipelines",
   },
   "zh-CN": {
     "agents:create": "创建智能体",
+    "skills:create": "创建技能",
     "users:invite": "邀请人员和智能体",
     "users:manage_permissions": "管理成员和授权",
     "tasks:assign": "分配任务",
@@ -29,6 +32,7 @@ export const accessPermissionLabels: Record<"en" | "zh-CN", Record<PermissionKey
     "tasks:manage_active_checkouts": "管理活跃任务签出",
     "joins:approve": "审批加入请求",
     "environments:manage": "管理环境",
+    "pipelines:write": "管理流水线",
   },
 };
 

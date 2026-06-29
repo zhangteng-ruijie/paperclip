@@ -18,7 +18,6 @@ import { usePanel } from "../context/PanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useLocale } from "../context/LocaleContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildCompanyUserInlineOptions, buildCompanyUserLabelMap, buildCompanyUserProfileMap, buildMarkdownMentionOptions, isAgentTaskTarget } from "../lib/company-members";
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
@@ -61,16 +60,7 @@ import {
 } from "../lib/optimistic-issue-comments";
 import { clearIssueExecutionRun, removeLiveRunById, upsertInterruptedRun } from "../lib/optimistic-issue-runs";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import {
-  formatIssueDetailTokenSummary,
-  getIssueDetailCopy,
-  issueFeedbackToastTitle,
-} from "../lib/issue-detail-copy";
-import { getIssuesCopy } from "../lib/issues-copy";
-import { getShellCopy } from "../lib/shell-copy";
-import { hidePaperclipIngUrl } from "../lib/external-links";
 import { relativeTime, cn, formatDurationMs, formatTokens, visibleRunCostUsd } from "../lib/utils";
-import { localizedActorLabel } from "../lib/actor-labels";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import {
@@ -78,6 +68,7 @@ import {
   type IssueChatComposerHandle,
   type IssueChatRunFinalizationAction,
 } from "../components/IssueChatThread";
+import { workModeMetaFor } from "../lib/work-mode-meta";
 import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
 import { IssueAttachmentsSection } from "../components/IssueAttachmentsSection";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
@@ -86,6 +77,7 @@ import { IssueOutputSection } from "../components/issue-output/IssueOutputSectio
 import { isImageAttachment } from "../lib/issue-attachments";
 import { getPromotedOutputAttachmentIds } from "../lib/issue-output";
 import { IssueSiblingNavigation } from "../components/IssueSiblingNavigation";
+import type { MarkdownExternalReferenceMap } from "../components/MarkdownBody";
 import { IssuesList } from "../components/IssuesList";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { IssueReferenceActivitySummary } from "../components/IssueReferenceActivitySummary";
@@ -93,10 +85,16 @@ import { IssueRelatedWorkPanel } from "../components/IssueRelatedWorkPanel";
 import { IssueMonitorActivityCard } from "../components/IssueMonitorActivityCard";
 import { IssueScheduledRetryCard } from "../components/IssueScheduledRetryCard";
 import { IssueProperties } from "../components/IssueProperties";
+import { PauseAffectsSummaryView } from "../components/interrupt-handoff/InterruptHandoffViews";
+import { computePauseAffectsSummary } from "../lib/interrupt-handoff";
+import { useIssueExternalObjects } from "../hooks/useIssueExternalObjects";
 import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
+import { FileViewerProvider, useRequiredFileViewer } from "../context/FileViewerContext";
+import { FileViewerSheet } from "../components/FileViewerSheet";
+import { ArtifactFileChip } from "../components/ArtifactFileChip";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
@@ -121,6 +119,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { formatIssueActivityAction } from "@/lib/activity-format";
+import { copyTextToClipboard } from "../lib/clipboard";
 import { buildIssuePropertiesPanelKey } from "../lib/issue-properties-panel-key";
 import { buildIssueSiblingNavigation, shouldRenderRichSubIssuesSection } from "../lib/issue-detail-subissues";
 import { filterIssueDescendants } from "../lib/issue-tree";
@@ -141,7 +140,9 @@ import {
   Copy,
   Eye,
   EyeOff,
+  ScanEye,
   Flag,
+  FileCode2,
   Hexagon,
   ListTree,
   MessageSquare,
@@ -174,6 +175,8 @@ import {
   type RequestConfirmationInteraction,
   type SuggestTasksInteraction,
   type IssueTreeControlMode,
+  type WorkspaceFileRef,
+  workspaceFileRefSchema,
 } from "@paperclipai/shared";
 
 type StopAndFinalizeRunError = Error & {
@@ -210,7 +213,6 @@ type IssueDetailComment = (IssueComment | OptimisticIssueComment) & {
 };
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
-const VISIBLE_FEEDBACK_TERMS_URL = hidePaperclipIngUrl(FEEDBACK_TERMS_URL);
 const ISSUE_COMMENT_PAGE_SIZE = 50;
 const ISSUE_COMMENT_AUTOLOAD_LIMIT = ISSUE_COMMENT_PAGE_SIZE * 3;
 const JUMP_TO_LATEST_MAX_COMMENT_PAGES = 10;
@@ -272,13 +274,21 @@ export function canBoardResolveRecoveryAction(
   return membership.membershipRole !== "viewer" && membership.membershipRole !== null;
 }
 
+export function shouldScrollIssueDetailToTopOnNavigation(input: {
+  previousIssueId: string | undefined;
+  nextIssueId: string | undefined;
+  navigationType: ReturnType<typeof useNavigationType>;
+}): boolean {
+  if (input.navigationType === "POP") return false;
+  return input.previousIssueId !== input.nextIssueId;
+}
+
 function resolveRunningIssueRun(
   activeRun: ActiveRunForIssue | null | undefined,
   liveRuns: readonly LiveRunForIssue[] | undefined,
 ) {
-  return activeRun?.status === "running"
-    ? activeRun
-    : (liveRuns ?? []).find((run) => run.status === "running") ?? null;
+  const runningLiveRun = (liveRuns ?? []).find((run) => run.status === "running") ?? null;
+  return runningLiveRun ?? (activeRun?.status === "running" ? activeRun : null);
 }
 
 function dedupeLiveRunsById(liveRuns: readonly LiveRunForIssue[]) {
@@ -290,23 +300,43 @@ function dedupeLiveRunsById(liveRuns: readonly LiveRunForIssue[]) {
   });
 }
 
-function readIssueRunStateFromCache(queryClient: QueryClient, issueId: string) {
+function readIssueRunStateFromCache(
+  queryClient: QueryClient,
+  issueId: string,
+  issue: Pick<Issue, "executionRunId"> | null | undefined,
+) {
   const liveRuns = queryClient.getQueryData<LiveRunForIssue[]>(
     queryKeys.issues.liveRuns(issueId),
   );
   const activeRun = queryClient.getQueryData<ActiveRunForIssue | null>(
     queryKeys.issues.activeRun(issueId),
   );
+  const activeRunIsLive = Boolean(
+    activeRun && liveRuns?.some((run) => run.id === activeRun.id),
+  );
+  const activeRunMatchesIssueLock = Boolean(
+    activeRun && issue?.executionRunId && activeRun.id === issue.executionRunId,
+  );
+  const resolvedActiveRun = activeRunIsLive || activeRunMatchesIssueLock ? activeRun : null;
   return {
     liveRuns,
-    activeRun,
-    runningIssueRun: resolveRunningIssueRun(activeRun, liveRuns),
+    activeRun: resolvedActiveRun,
+    runningIssueRun: resolveRunningIssueRun(resolvedActiveRun, liveRuns),
   };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function extractWorkspaceFileRefFromWorkProduct(
+  workProduct: { metadata: Record<string, unknown> | null },
+): WorkspaceFileRef | null {
+  const metadata = asRecord(workProduct.metadata);
+  if (!metadata) return null;
+  const parsed = workspaceFileRefSchema.safeParse(metadata.resourceRef);
+  return parsed.success ? parsed.data : null;
 }
 
 function usageNumber(usage: Record<string, unknown> | null, ...keys: string[]) {
@@ -410,27 +440,18 @@ function mergeOptimisticFeedbackVote(
   ];
 }
 
-function ActorIdentity({
-  evt,
-  agentMap,
-  userProfileMap,
-}: {
-  evt: ActivityEvent;
-  agentMap: Map<string, Agent>;
-  userProfileMap?: Map<string, import("../lib/company-members").CompanyUserProfile>;
-}) {
-  const { locale } = useLocale();
+function ActorIdentity({ evt, agentMap, userProfileMap }: { evt: ActivityEvent; agentMap: Map<string, Agent>; userProfileMap?: Map<string, import("../lib/company-members").CompanyUserProfile> }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
     return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
   }
-  if (evt.actorType === "system") return <Identity name={localizedActorLabel("system", locale)} size="sm" />;
+  if (evt.actorType === "system") return <Identity name="System" size="sm" />;
   if (evt.actorType === "user") {
     const profile = userProfileMap?.get(id);
-    return <Identity name={profile?.label ?? localizedActorLabel("board", locale)} avatarUrl={profile?.image} size="sm" />;
+    return <Identity name={profile?.label ?? "Board"} avatarUrl={profile?.image} size="sm" />;
   }
-  return <Identity name={id || localizedActorLabel("unknown", locale)} size="sm" />;
+  return <Identity name={id || "Unknown"} size="sm" />;
 }
 
 function IssueSectionSkeleton({
@@ -732,6 +753,7 @@ type IssueDetailChatTabProps = {
   assigneeUserId: string | null;
   onResumeFromBacklog?: () => Promise<void> | void;
   resumeFromBacklogPending?: boolean;
+  externalReferences?: MarkdownExternalReferenceMap;
 };
 
 const IssueDetailChatTab = memo(function IssueDetailChatTab({
@@ -793,7 +815,9 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   assigneeUserId,
   onResumeFromBacklog,
   resumeFromBacklogPending,
+  externalReferences,
 }: IssueDetailChatTabProps) {
+  const ThreadComponent = IssueChatThread;
   const { data: activity } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
     queryFn: () => activityApi.forIssue(issueId),
@@ -944,7 +968,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           </Button>
         </div>
       ) : null}
-      <IssueChatThread
+      <ThreadComponent
         composerRef={composerRef}
         comments={commentsWithRunMeta}
         interactions={interactions}
@@ -1012,6 +1036,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         onResumeFromBacklog={onResumeFromBacklog}
         resumeFromBacklogPending={resumeFromBacklogPending}
         footer={footer}
+        externalReferences={externalReferences}
       />
     </div>
   );
@@ -1032,6 +1057,7 @@ type IssueDetailActivityTabProps = {
   onCheckMonitorNow: () => void;
   checkingMonitorNow: boolean;
   handoffFocusSignal?: number;
+  externalReferences?: MarkdownExternalReferenceMap;
 };
 
 function IssueDetailActivityTab({
@@ -1049,6 +1075,7 @@ function IssueDetailActivityTab({
   onCheckMonitorNow,
   checkingMonitorNow,
   handoffFocusSignal = 0,
+  externalReferences,
 }: IssueDetailActivityTabProps) {
   const { data: activity, isLoading: activityLoading } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
@@ -1250,6 +1277,11 @@ function IssueDetailActivityTab({
           }}
         />
       </div>
+      <IssueContinuationHandoff
+        document={continuationHandoff}
+        focusSignal={handoffFocusSignal}
+        externalReferences={externalReferences}
+      />
       {linkedApprovals && linkedApprovals.length > 0 && (
         <div className="mb-3 space-y-3">
           {linkedApprovals.map((approval) => (
@@ -1270,7 +1302,6 @@ function IssueDetailActivityTab({
           ))}
         </div>
       )}
-      <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
       <IssueScheduledRetryCard issueId={issue.id} scheduledRetry={issue.scheduledRetry ?? null} />
       <IssueMonitorActivityCard
         issue={issue}
@@ -1287,10 +1318,6 @@ export function IssueDetail() {
   const { openNewIssue } = useDialogActions();
   const { openPanel, closePanel, panelVisible, setPanelVisible } = usePanel();
   const { setBreadcrumbs, setMobileToolbar } = useBreadcrumbs();
-  const { locale } = useLocale();
-  const issueDetailCopy = getIssueDetailCopy(locale);
-  const issuesCopy = getIssuesCopy(locale);
-  const shell = getShellCopy(locale);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
@@ -1300,6 +1327,7 @@ export function IssueDetail() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
+  const [fileViewerPromptOpen, setFileViewerPromptOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
   const [handoffFocusSignal, setHandoffFocusSignal] = useState(0);
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
@@ -1320,6 +1348,7 @@ export function IssueDetail() {
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
+  const lastScrollIssueIdRef = useRef<string | undefined>(undefined);
   const commentComposerRef = useRef<IssueChatComposerHandle | null>(null);
   const cancelledQueuedOptimisticCommentIdsRef = useRef(new Set<string>());
   const resolvedIssueDetailState = useMemo(
@@ -1341,6 +1370,7 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.companyId ?? selectedCompanyId;
+  const externalObjectsState = useIssueExternalObjects(issue?.id ?? null);
   const commentComposerDisabledReason = useMemo(() => {
     if (!issue?.currentExecutionWorkspace || !isClosedIsolatedExecutionWorkspace(issue.currentExecutionWorkspace)) {
       return null;
@@ -1431,8 +1461,8 @@ export function IssueDetail() {
     }
   }, [hasLiveRuns, locallyQueuedCommentRunIds.size]);
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: issueDetailCopy.issues, href: "/issues" },
-    [issueId, location.state, location.search, issueDetailCopy.issues],
+    () => readIssueDetailBreadcrumb(issueId, location.state, location.search) ?? { label: "Tasks", href: "/issues" },
+    [issueId, location.state, location.search],
   );
 
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
@@ -1473,6 +1503,15 @@ export function IssueDetail() {
     queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
     queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
     enabled: !!selectedCompanyId,
+  });
+  // Bounded pool of recently-updated issues to back the `@task` reference picker.
+  // The picker filters this list client-side by identifier/title.
+  const { data: mentionIssues = [] } = useQuery({
+    queryKey: resolvedCompanyId ? queryKeys.issues.mentionPool(resolvedCompanyId) : ["issues", "mention-pool", "pending"],
+    queryFn: () => issuesApi.list(resolvedCompanyId!, { limit: 100, sortField: "updated", sortDir: "desc" }),
+    enabled: !!resolvedCompanyId,
+    staleTime: 60_000,
+    placeholderData: keepPreviousDataForSameQueryTail<Issue[]>(resolvedCompanyId ?? "pending"),
   });
 
   const { data: session } = useQuery({
@@ -1518,6 +1557,7 @@ export function IssueDetail() {
   const feedbackDataSharingPreference = instanceGeneralSettings?.feedbackDataSharingPreference ?? "prompt";
   const showPlanDecompositionsSection =
     instanceExperimentalSettings?.enableIssuePlanDecompositions === true;
+  const fileViewerEnabled = instanceExperimentalSettings?.enableExperimentalFileViewer === true;
   const { orderedProjects } = useProjectOrder({
     projects: projects ?? [],
     companyId: selectedCompanyId,
@@ -1605,8 +1645,9 @@ export function IssueDetail() {
       agents,
       projects: orderedProjects,
       members: companyMembers?.users,
+      issues: mentionIssues,
     });
-  }, [agents, companyMembers?.users, orderedProjects]);
+  }, [agents, companyMembers?.users, orderedProjects, mentionIssues]);
 
   const resolvedProject = useMemo(
     () => (issue?.projectId ? orderedProjects.find((project) => project.id === issue.projectId) ?? issue.project ?? null : null),
@@ -1658,10 +1699,10 @@ export function IssueDetail() {
       options.push({ id: `agent:${agent.id}`, label: agent.name });
     }
     if (currentUserId) {
-      options.push({ id: `user:${currentUserId}`, label: issuesCopy.me });
+      options.push({ id: `user:${currentUserId}`, label: "Me" });
     }
     return options;
-  }, [agents, companyMembers?.users, currentUserId, issuesCopy.me]);
+  }, [agents, companyMembers?.users, currentUserId]);
 
   const actualAssigneeValue = useMemo(
     () => assigneeValueFromSelection(issue ?? {}),
@@ -1683,6 +1724,24 @@ export function IssueDetail() {
     [comments, optimisticComments],
   );
   const breadcrumbTitle = issue?.title ?? issueId ?? "Task";
+  const breadcrumbStatus = issue?.status;
+  const breadcrumbBlockerAttention = issue?.blockerAttention;
+  // Stable identity for the breadcrumb status glyph. The glyph's shape/colour
+  // depend on status (+ covered state), and its accessible label is derived
+  // from the blocker counts — so the key signs over the full blockerAttention,
+  // not just `state`, to avoid a stale label when counts change.
+  const breadcrumbStatusKey = breadcrumbStatus
+    ? `${breadcrumbStatus}|${JSON.stringify(breadcrumbBlockerAttention ?? null)}`
+    : undefined;
+  const breadcrumbStatusLeading = useMemo(
+    () =>
+      breadcrumbStatus ? (
+        <StatusIcon status={breadcrumbStatus} size="lg" blockerAttention={breadcrumbBlockerAttention} />
+      ) : undefined,
+    // `breadcrumbStatusKey` is a complete signature of the inputs below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [breadcrumbStatusKey],
+  );
   const issueCacheRefs = useMemo(() => {
     const refs = new Set<string>();
     if (issueId) refs.add(issueId);
@@ -1857,8 +1916,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.list(context.selectedCompanyId), context.previousList);
       }
       pushToast({
-        title: issueDetailCopy.issueUpdateFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToSaveIssueChanges,
+        title: "Task update failed",
+        body: err instanceof Error ? err.message : "Unable to save task changes",
         tone: "error",
       });
     },
@@ -2119,18 +2178,14 @@ export function IssueDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(resolvedCompanyId) });
       }
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalApproved
-          : issueDetailCopy.approvalRejected,
+        title: variables.action === "approve" ? "Approval approved" : "Approval rejected",
         tone: "success",
       });
     },
     onError: (err, variables) => {
       pushToast({
-        title: variables.action === "approve"
-          ? issueDetailCopy.approvalFailed
-          : issueDetailCopy.rejectionFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToUpdateApproval,
+        title: variables.action === "approve" ? "Approval failed" : "Rejection failed",
+        body: err instanceof Error ? err.message : "Unable to update approval",
         tone: "error",
       });
     },
@@ -2147,7 +2202,7 @@ export function IssueDetail() {
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.detail(issueId!) });
 
       const previousIssue = queryClient.getQueryData<Issue>(queryKeys.issues.detail(issueId!));
-      const queuedComment = !interrupt ? readIssueRunStateFromCache(queryClient, issueId!).runningIssueRun : null;
+      const queuedComment = !interrupt ? readIssueRunStateFromCache(queryClient, issueId!, issue).runningIssueRun : null;
       const optimisticComment = issue
         ? createOptimisticIssueComment({
             companyId: issue.companyId,
@@ -2225,8 +2280,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -2373,7 +2428,7 @@ export function IssueDetail() {
       await queryClient.cancelQueries({ queryKey: queryKeys.issues.detail(issueId!) });
 
       const previousIssue = queryClient.getQueryData<Issue>(queryKeys.issues.detail(issueId!));
-      const queuedComment = !interrupt ? readIssueRunStateFromCache(queryClient, issueId!).runningIssueRun : null;
+      const queuedComment = !interrupt ? readIssueRunStateFromCache(queryClient, issueId!, issue).runningIssueRun : null;
       const optimisticComment = issue
         ? createOptimisticIssueComment({
             companyId: issue.companyId,
@@ -2456,8 +2511,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: issueDetailCopy.commentFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToPostComment,
+        title: "Comment failed",
+        body: err instanceof Error ? err.message : "Unable to post comment",
         tone: "error",
       });
     },
@@ -2537,8 +2592,8 @@ export function IssueDetail() {
       invalidateIssueDetail();
       invalidateIssueRunState();
       pushToast({
-        title: issueDetailCopy.interruptRequested,
-        body: issueDetailCopy.interruptRequestedBody,
+        title: "Interrupt requested",
+        body: "The active run is stopping so queued comments can continue next.",
         tone: "success",
       });
     },
@@ -2553,8 +2608,8 @@ export function IssueDetail() {
         setLocallyQueuedCommentRunIds(context.previousLocalQueuedCommentRunIds);
       }
       pushToast({
-        title: issueDetailCopy.interruptFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToInterruptRun,
+        title: "Interrupt failed",
+        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
         tone: "error",
       });
     },
@@ -2678,11 +2733,14 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.instance.generalSettings });
       pushToast({
-        title: issueFeedbackToastTitle({
-          locale,
-          sharingPreferenceAtSubmit: variables.sharingPreferenceAtSubmit,
-          allowSharing: variables.allowSharing,
-        }),
+        title:
+          variables.sharingPreferenceAtSubmit === "prompt"
+            ? variables.allowSharing
+              ? "Feedback saved. Future votes will share"
+              : "Feedback saved. Future votes will stay local"
+            : variables.allowSharing
+              ? "Feedback saved and sharing enabled"
+              : "Feedback saved",
         tone: "success",
       });
     },
@@ -2691,8 +2749,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.feedbackVotes(issueId!), context.previousVotes);
       }
       pushToast({
-        title: issueDetailCopy.failedToSaveFeedback,
-        body: err instanceof Error ? err.message : issueDetailCopy.unknownError,
+        title: "Failed to save feedback",
+        body: err instanceof Error ? err.message : "Unknown error",
         tone: "error",
       });
     },
@@ -2700,7 +2758,7 @@ export function IssueDetail() {
 
   const uploadAttachment = useMutation({
     mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error(issueDetailCopy.noCompanySelected);
+      if (!selectedCompanyId) throw new Error("No company selected");
       return issuesApi.uploadAttachment(selectedCompanyId, issueId!, file);
     },
     onSuccess: () => {
@@ -2709,7 +2767,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.uploadFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Upload failed");
     },
   });
 
@@ -2734,7 +2792,7 @@ export function IssueDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.documentImportFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
     },
   });
 
@@ -2746,7 +2804,7 @@ export function IssueDetail() {
       invalidateIssueDetail();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : issueDetailCopy.deleteFailed);
+      setAttachmentError(err instanceof Error ? err.message : "Delete failed");
     },
   });
 
@@ -2755,22 +2813,27 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssueCollections();
       navigate(sourceBreadcrumb.href.startsWith("/inbox") ? sourceBreadcrumb.href : "/inbox", { replace: true });
-      pushToast({ title: issueDetailCopy.issueArchivedFromInbox, tone: "success" });
+      pushToast({ title: "Task archived from inbox", tone: "success" });
     },
     onError: (err) => {
       pushToast({
-        title: issueDetailCopy.archiveFailed,
-        body: err instanceof Error ? err.message : issueDetailCopy.unableToArchiveIssue,
+        title: "Archive failed",
+        body: err instanceof Error ? err.message : "Unable to archive this task from the inbox",
         tone: "error",
       });
     },
   });
 
   useEffect(() => {
-
     setBreadcrumbs([
       sourceBreadcrumb,
-      { label: hasLiveRuns ? `🔵 ${breadcrumbTitle}` : breadcrumbTitle },
+      {
+        label: hasLiveRuns ? `🔵 ${breadcrumbTitle}` : breadcrumbTitle,
+        // Prepend the task's status glyph (lg/20px) to the breadcrumb so the
+        // current task's state reads at a glance.
+        leading: breadcrumbStatusLeading,
+        leadingKey: breadcrumbStatusKey,
+      },
     ]);
   }, [
     breadcrumbTitle,
@@ -2778,6 +2841,8 @@ export function IssueDetail() {
     setBreadcrumbs,
     sourceBreadcrumb.href,
     sourceBreadcrumb.label,
+    breadcrumbStatusLeading,
+    breadcrumbStatusKey,
   ]);
 
   const isFromInbox = resolvedIssueDetailState?.issueDetailSource === "inbox";
@@ -2785,7 +2850,9 @@ export function IssueDetail() {
   // Scroll to top on forward navigation (PUSH/REPLACE) so issue doesn't
   // inherit the inbox/issues-list scroll position on mobile.
   useEffect(() => {
-    if (navigationType === "POP") return;
+    const previousIssueId = lastScrollIssueIdRef.current;
+    lastScrollIssueIdRef.current = issueId;
+    if (!shouldScrollIssueDetailToTopOnNavigation({ previousIssueId, nextIssueId: issueId, navigationType })) return;
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const main = document.getElementById("main-content");
     if (main) main.scrollTop = 0;
@@ -2830,6 +2897,11 @@ export function IssueDetail() {
         childIssues={panelChildIssues}
         onAddSubIssue={openNewSubIssue}
         onUpdate={handleIssuePropertiesUpdate}
+        hasActiveRun={resolvedHasActiveRun}
+        externalObjects={externalObjectsState.isEnabled ? externalObjectsState.groups : undefined}
+        externalObjectsLoading={externalObjectsState.isEnabled ? externalObjectsState.isLoading : undefined}
+        externalObjectsError={externalObjectsState.isEnabled ? externalObjectsState.isError : undefined}
+        onRetryExternalObjects={externalObjectsState.isEnabled ? externalObjectsState.refetch : undefined}
       />
     );
     return () => closePanel();
@@ -2841,6 +2913,12 @@ export function IssueDetail() {
     openPanel,
     panelChildIssues,
     panelIssue,
+    resolvedHasActiveRun,
+    externalObjectsState.isEnabled,
+    externalObjectsState.groups,
+    externalObjectsState.isLoading,
+    externalObjectsState.isError,
+    externalObjectsState.refetch,
   ]);
 
   const goToInboxShortcutArmedRef = useRef(false);
@@ -2949,6 +3027,12 @@ export function IssueDetail() {
         setDetailTab("chat");
         setPendingCommentComposerFocusKey((current) => current + 1);
       }
+      if (action === "open_file_viewer") {
+        if (!fileViewerEnabled) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setFileViewerPromptOpen(true);
+      }
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
@@ -2960,7 +3044,7 @@ export function IssueDetail() {
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [keyboardShortcutsEnabled, navigate, sourceBreadcrumb.href]);
+  }, [fileViewerEnabled, keyboardShortcutsEnabled, navigate, sourceBreadcrumb.href]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -3008,6 +3092,20 @@ export function IssueDetail() {
     commentComposerRef.current?.focus();
   }, [detailTab, pendingCommentComposerFocusKey]);
 
+  useEffect(() => {
+    if (!fileViewerEnabled) return;
+    const handleOpenFileViewer = () => {
+      setFileViewerPromptOpen(true);
+    };
+    window.addEventListener("paperclip:open-file-viewer", handleOpenFileViewer as EventListener);
+    return () => {
+      window.removeEventListener(
+        "paperclip:open-file-viewer",
+        handleOpenFileViewer as EventListener,
+      );
+    };
+  }, [fileViewerEnabled]);
+
   const promotedOutputAttachmentIds = useMemo(() => getPromotedOutputAttachmentIds(workProducts), [workProducts]);
   const attachmentList = useMemo(
     () => (attachments ?? []).filter((attachment) => !promotedOutputAttachmentIds.has(attachment.id)),
@@ -3047,10 +3145,18 @@ export function IssueDetail() {
     const title = decodeEntities(issue.title);
     const body = decodeEntities(issue.description ?? "");
     const md = `# ${issue.identifier}: ${title}\n\n${body}`.trimEnd();
-    await navigator.clipboard.writeText(md);
-    setCopied(true);
-    pushToast({ title: issueDetailCopy.copiedToClipboard, tone: "success" });
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await copyTextToClipboard(md);
+      setCopied(true);
+      pushToast({ title: "Copied to clipboard", tone: "success" });
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      pushToast({
+        title: "Copy failed",
+        body: error instanceof Error ? error.message : "Unable to copy task markdown",
+        tone: "error",
+      });
+    }
   };
 
   // Gmail-style mobile toolbar when viewing an issue from inbox.
@@ -3258,6 +3364,11 @@ export function IssueDetail() {
     () => (treeControlPreview?.issues ?? []).filter((candidate) => !candidate.skipped),
     [treeControlPreview],
   );
+  // "What this affects" buckets for the pause/hold dialog (design surface 4).
+  const pauseAffectsSummary = useMemo(
+    () => computePauseAffectsSummary(treeControlPreview?.issues ?? []),
+    [treeControlPreview],
+  );
   const treePreviewDisplayIssues = useMemo(
     () => {
       const previewIssues = treeControlPreview?.issues ?? [];
@@ -3438,10 +3549,10 @@ export function IssueDetail() {
         )}
       >
         <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-        {uploadAttachment.isPending || importMarkdownDocument.isPending ? shell.uploading : (
+        {uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading..." : (
           <>
-            <span className="hidden sm:inline">{shell.uploadAttachment}</span>
-            <span className="sm:hidden">{shell.upload}</span>
+            <span className="hidden sm:inline">Upload attachment</span>
+            <span className="sm:hidden">Upload</span>
           </>
         )}
       </Button>
@@ -3449,6 +3560,7 @@ export function IssueDetail() {
   );
 
   return (
+    <FileViewerProvider issueId={issue.id} enabled={fileViewerEnabled}>
     <div className="max-w-3xl space-y-6">
       {/* Parent chain breadcrumb */}
       {ancestors.length > 0 && (
@@ -3480,7 +3592,7 @@ export function IssueDetail() {
       {issue.hiddenAt && (
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <EyeOff className="h-4 w-4 shrink-0" />
-          {shell.hiddenIssue}
+          This task is hidden
         </div>
       )}
       {activePauseHold && (
@@ -3563,6 +3675,7 @@ export function IssueDetail() {
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <StatusIcon
             status={issue.status}
+            size="lg"
             blockerAttention={issue.blockerAttention}
             onChange={(status) => updateIssue.mutate({ status })}
           />
@@ -3578,7 +3691,7 @@ export function IssueDetail() {
                 <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-400" />
               </span>
-              {shell.live}
+              Live
             </span>
           )}
 
@@ -3588,7 +3701,7 @@ export function IssueDetail() {
               className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0 hover:bg-violet-500/20 transition-colors"
             >
               <Repeat className="h-3 w-3" />
-              {shell.routine}
+              Routine
             </Link>
           )}
 
@@ -3606,14 +3719,29 @@ export function IssueDetail() {
             </span>
           ) : null}
 
-          {issue.workMode === "planning" ? (
+          {issue.originKind === "task_watchdog" ? (
             <span
-              className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 shrink-0"
-              title="This task is in planning mode."
+              className="inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300 shrink-0"
+              title="This task is a generated watchdog task. It verifies whether stopped work in the watched task tree is legitimate."
             >
-              Planning
+              <ScanEye className="h-3 w-3" />
+              Watchdog
             </span>
           ) : null}
+
+          {issue.workMode === "ask" || issue.workMode === "planning" ? (() => {
+            const workModeMeta = workModeMetaFor(issue.workMode);
+            const WorkModeIcon = workModeMeta.icon;
+            return (
+              <span
+                className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shrink-0", workModeMeta.classes.badge)}
+                title={`This task is in ${workModeMeta.label.toLowerCase()}.`}
+              >
+                <WorkModeIcon className="h-3 w-3" aria-hidden />
+                {workModeMeta.label}
+              </span>
+            );
+          })() : null}
 
           {hasAssignedBacklogBlocker(issue.blockedBy) ? (
             <span
@@ -3637,7 +3765,7 @@ export function IssueDetail() {
           ) : (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50 px-1 -mx-1 py-0.5">
               <Hexagon className="h-3 w-3 shrink-0" />
-              {shell.noProject}
+              No project
             </span>
           )}
 
@@ -3668,7 +3796,7 @@ export function IssueDetail() {
                 variant="ghost"
                 size="icon-xs"
                 onClick={copyIssueToClipboard}
-                title={shell.copyIssueMarkdown}
+                title="Copy task as markdown"
               >
                 {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
               </Button>
@@ -3676,7 +3804,7 @@ export function IssueDetail() {
                 variant="ghost"
                 size="icon-xs"
                 onClick={() => setMobilePropsOpen(true)}
-                title={shell.properties}
+                title="Properties"
               >
                 <SlidersHorizontal className="h-4 w-4" />
               </Button>
@@ -3698,11 +3826,22 @@ export function IssueDetail() {
                 <Archive className="h-4 w-4" />
               </Button>
             )}
+            {fileViewerEnabled ? (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setFileViewerPromptOpen(true)}
+                title="Open file... (g f)"
+                aria-label="Open file in this issue"
+              >
+                <FileCode2 className="h-4 w-4" />
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="icon-xs"
               onClick={copyIssueToClipboard}
-              title={shell.copyIssueMarkdown}
+              title="Copy task as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -3714,7 +3853,7 @@ export function IssueDetail() {
                 panelVisible ? "opacity-0 pointer-events-none w-0 overflow-hidden" : "opacity-100",
               )}
               onClick={() => setPanelVisible(true)}
-              title={shell.showProperties}
+              title="Show properties"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
@@ -3834,7 +3973,7 @@ export function IssueDetail() {
                 }}
               >
                 <EyeOff className="h-3 w-3" />
-                {shell.hideIssue}
+                Hide this task
               </button>
             </PopoverContent>
             </Popover>
@@ -3853,10 +3992,11 @@ export function IssueDetail() {
           onSave={(description) => updateIssue.mutateAsync({ description })}
           as="p"
           className="text-[15px] leading-7 text-foreground"
-          placeholder={shell.addDescription}
+          placeholder="Add a description..."
           multiline
           foldable
           mentions={mentionOptions}
+          externalReferences={externalObjectsState.isEnabled ? externalObjectsState.markdownReferences : undefined}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync(file);
             return attachment.contentPath;
@@ -3911,12 +4051,7 @@ export function IssueDetail() {
       {showRichSubIssuesSection ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-medium text-muted-foreground">{shell.subIssues}</h3>
-            <Button variant="outline" size="sm" onClick={openNewSubIssue} className="shadow-none">
-              <ListTree className="h-3.5 w-3.5 mr-1.5" />
-              <span className="hidden sm:inline">{shell.addSubIssue}</span>
-              <span className="sm:hidden">{shell.subIssue}</span>
-            </Button>
+            <h3 className="text-sm font-medium text-muted-foreground">Sub-tasks</h3>
           </div>
           <IssuesList
             issues={childIssues}
@@ -3962,8 +4097,9 @@ export function IssueDetail() {
         canManageDocumentLocks={Boolean(session?.user?.id)}
         feedbackVotes={feedbackVotes}
         feedbackDataSharingPreference={feedbackDataSharingPreference}
-        feedbackTermsUrl={VISIBLE_FEEDBACK_TERMS_URL}
+        feedbackTermsUrl={FEEDBACK_TERMS_URL}
         mentions={mentionOptions}
+        externalReferences={externalObjectsState.isEnabled ? externalObjectsState.markdownReferences : undefined}
         imageUploadHandler={async (file) => {
           const attachment = await uploadAttachment.mutateAsync(file);
           return attachment.contentPath;
@@ -4027,7 +4163,34 @@ export function IssueDetail() {
         issue={issue}
         project={resolvedProject}
         onUpdate={(data) => updateIssue.mutate(data)}
+        onBrowseFiles={fileViewerEnabled ? () => setFileViewerPromptOpen(true) : undefined}
+        onOpenFileByPath={fileViewerEnabled ? () => setFileViewerPromptOpen(true) : undefined}
       />
+
+      {fileViewerEnabled && issue.workProducts && issue.workProducts.length > 0 && (() => {
+        const workProductsWithFileRefs = issue.workProducts
+          .map((product) => ({ product, fileRef: extractWorkspaceFileRefFromWorkProduct(product) }))
+          .filter(({ fileRef }) => fileRef !== null);
+
+        if (workProductsWithFileRefs.length === 0) return null;
+
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium text-muted-foreground">Artifacts</h3>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {workProductsWithFileRefs.map(({ product, fileRef }) => (
+                <ArtifactFileChip
+                  key={product.id}
+                  workspaceFileRef={fileRef!}
+                  title={product.title}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <Separator />
 
@@ -4035,11 +4198,11 @@ export function IssueDetail() {
         <TabsList variant="line" className="w-full justify-start gap-1">
           <TabsTrigger value="chat" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            {shell.chat}
+            Chat
           </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
-            {shell.activity}
+            Activity
           </TabsTrigger>
           <TabsTrigger value="related-work" className="gap-1.5">
             <ListTree className="h-3.5 w-3.5" />
@@ -4087,7 +4250,7 @@ export function IssueDetail() {
               }
               feedbackVotes={feedbackVotes}
               feedbackDataSharingPreference={feedbackDataSharingPreference}
-              feedbackTermsUrl={VISIBLE_FEEDBACK_TERMS_URL}
+              feedbackTermsUrl={FEEDBACK_TERMS_URL}
               agentMap={agentMap}
               currentUserId={currentUserId}
               userLabelMap={userLabelMap}
@@ -4128,6 +4291,7 @@ export function IssueDetail() {
               resumeFromBacklogPending={
                 updateIssue.isPending && updateIssue.variables?.status === "todo"
               }
+              externalReferences={externalObjectsState.isEnabled ? externalObjectsState.markdownReferences : undefined}
             />
           ) : null}
         </TabsContent>
@@ -4151,12 +4315,20 @@ export function IssueDetail() {
               }}
               onCheckMonitorNow={() => checkIssueMonitorNow.mutate()}
               checkingMonitorNow={checkIssueMonitorNow.isPending}
+              externalReferences={externalObjectsState.isEnabled ? externalObjectsState.markdownReferences : undefined}
             />
           ) : null}
         </TabsContent>
 
         <TabsContent value="related-work">
-          <IssueRelatedWorkPanel relatedWork={issue.relatedWork} />
+          <IssueRelatedWorkPanel
+            relatedWork={issue.relatedWork}
+            externalObjectsEnabled={externalObjectsState.isEnabled}
+            externalObjects={externalObjectsState.isEnabled ? externalObjectsState.groups : undefined}
+            externalObjectsLoading={externalObjectsState.isEnabled ? externalObjectsState.isLoading : undefined}
+            externalObjectsError={externalObjectsState.isEnabled ? externalObjectsState.isError : undefined}
+            onRetryExternalObjects={externalObjectsState.isEnabled ? externalObjectsState.refetch : undefined}
+          />
         </TabsContent>
 
         {activePluginTab && (
@@ -4271,6 +4443,9 @@ export function IssueDetail() {
                 </div>
               ) : treeControlPreview ? (
                 <div className="space-y-2">
+                  {treeControlMode === "pause" ? (
+                    <PauseAffectsSummaryView summary={pauseAffectsSummary} />
+                  ) : null}
                   {treePreviewWarnings.length > 0 ? (
                     <div className="space-y-1">
                       {treePreviewWarnings.map((warning) => (
@@ -4330,7 +4505,7 @@ export function IssueDetail() {
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>
         <SheetContent side="bottom" className="max-h-[85dvh] pb-[env(safe-area-inset-bottom)]">
           <SheetHeader>
-            <SheetTitle className="text-sm">{shell.properties}</SheetTitle>
+            <SheetTitle className="text-sm">Properties</SheetTitle>
           </SheetHeader>
           <ScrollArea className="flex-1 overflow-y-auto">
             <div className="px-4 pb-4">
@@ -4340,12 +4515,64 @@ export function IssueDetail() {
                 onAddSubIssue={openNewSubIssue}
                 onUpdate={(data) => updateIssue.mutate(data)}
                 inline
+                hasActiveRun={resolvedHasActiveRun}
+                externalObjects={externalObjectsState.isEnabled ? externalObjectsState.groups : undefined}
+                externalObjectsLoading={externalObjectsState.isEnabled ? externalObjectsState.isLoading : undefined}
+                externalObjectsError={externalObjectsState.isEnabled ? externalObjectsState.isError : undefined}
+                onRetryExternalObjects={externalObjectsState.isEnabled ? externalObjectsState.refetch : undefined}
               />
             </div>
           </ScrollArea>
         </SheetContent>
       </Sheet>
+      {fileViewerEnabled ? (
+        <IssueFileViewer
+          issueId={issue.id}
+          companyId={issue.companyId}
+          promptOpen={fileViewerPromptOpen}
+          onPromptOpenChange={setFileViewerPromptOpen}
+        />
+      ) : null}
       <ScrollToBottom />
     </div>
+    </FileViewerProvider>
+  );
+}
+
+function IssueFileViewer({
+  issueId,
+  companyId,
+  promptOpen,
+  onPromptOpenChange,
+}: {
+  issueId: string;
+  companyId: string;
+  promptOpen: boolean;
+  onPromptOpenChange: (next: boolean) => void;
+}) {
+  const viewer = useRequiredFileViewer();
+  const open = viewer.state !== null || viewer.browse || promptOpen;
+  const showPromptWhenEmpty = (promptOpen || viewer.browse) && viewer.state === null;
+
+  useEffect(() => {
+    if (!promptOpen) return;
+    if (viewer.state === null && !viewer.browse) return;
+    onPromptOpenChange(false);
+  }, [onPromptOpenChange, promptOpen, viewer.browse, viewer.state]);
+
+  return (
+    <FileViewerSheet
+      issueId={issueId}
+      companyId={companyId}
+      open={open}
+      showPromptWhenEmpty={showPromptWhenEmpty}
+      onOpenChange={(next) => {
+        if (!next) {
+          onPromptOpenChange(false);
+          // Clears any file view and browse state from the URL.
+          viewer.close();
+        }
+      }}
+    />
   );
 }
