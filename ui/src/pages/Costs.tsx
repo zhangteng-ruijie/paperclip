@@ -576,6 +576,7 @@ export function Costs() {
                   variant={preset === key ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => setPreset(key)}
+                  aria-pressed={preset === key}
                 >
                   {costsPresetLabel(key, locale)}
                 </Button>
