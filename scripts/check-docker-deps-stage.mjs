@@ -75,6 +75,34 @@ function walkPackageJsonFiles(rootRelative, maxDepth) {
   return results;
 }
 
+function walkFiles(rootRelative) {
+  const results = [];
+  const rootAbsolute = path.join(repoRoot, rootRelative);
+
+  if (!existsSync(rootAbsolute)) return results;
+
+  function visit(currentAbsolute) {
+    const entries = readdirSync(currentAbsolute, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+
+      const absolute = path.join(currentAbsolute, entry.name);
+      const relative = path.relative(repoRoot, absolute).split(path.sep).join("/");
+
+      if (entry.isDirectory()) {
+        visit(absolute);
+        continue;
+      }
+
+      results.push(relative);
+    }
+  }
+
+  visit(rootAbsolute);
+  return results;
+}
+
 function globToRegExp(pattern) {
   const normalized = pattern.replace("/./", "/");
   let regex = "";
@@ -100,6 +128,17 @@ function globToRegExp(pattern) {
   }
 
   return new RegExp(`^${regex}$`);
+}
+
+function copySourceExists(source, repoFiles) {
+  const normalized = source.replace("/./", "/");
+
+  if (/[*?]/.test(normalized)) {
+    const regex = globToRegExp(source);
+    return repoFiles.some((file) => regex.test(file));
+  }
+
+  return existsSync(path.join(repoRoot, normalized));
 }
 
 function parseCopySources(depsStage) {
@@ -143,12 +182,20 @@ function main() {
   )].sort();
 
   const copySources = parseCopySources(depsStage);
+  const repoFiles = walkFiles(".");
   const copyMatchers = copySources.map((source) => ({
     source,
     regex: globToRegExp(source),
   }));
 
   let missing = 0;
+  for (const source of copySources) {
+    if (!copySourceExists(source, repoFiles)) {
+      console.error(`Dockerfile deps stage COPY source does not exist: ${source}`);
+      missing = 1;
+    }
+  }
+
   for (const pkg of requiredPackageJsons) {
     const covered = copyMatchers.some(({ regex }) => regex.test(pkg));
     if (!covered) {
