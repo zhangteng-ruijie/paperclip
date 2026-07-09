@@ -14,6 +14,7 @@ import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { activityApi } from "../api/activity";
+import { accessApi } from "../api/access";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { usePanel } from "../context/PanelContext";
@@ -49,6 +50,7 @@ import { MarkdownBody } from "../components/MarkdownBody";
 import { CopyText } from "../components/CopyText";
 import { EntityRow } from "../components/EntityRow";
 import { MembershipAction } from "../components/MembershipAction";
+import { StarToggle } from "../components/StarToggle";
 import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentActionButtons } from "../components/AgentActionButtons";
@@ -104,15 +106,20 @@ import {
   type AgentRuntimeState,
   type LiveEvent,
   type WorkspaceOperation,
+  isResponsibleUserDenialCode,
+  responsibleUserLabel,
 } from "@paperclipai/shared";
+import { ResponsibleUserDenialNotice } from "../components/ResponsibleUserDenialNotice";
 import { buildPermissionsForTrustPreset, getTrustPreset } from "../lib/trust-policy-ui";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@paperclipai/adapter-utils";
 import { agentRouteRef } from "../lib/utils";
 import {
+  isStarred,
   resourceMembershipState,
   useResourceMembershipMutation,
   useResourceMemberships,
 } from "../hooks/useResourceMemberships";
+import { Badge } from "@/components/ui/badge";
 import {
   applyAgentSkillSnapshot,
   arraysEqual,
@@ -122,7 +129,7 @@ import {
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
   failed: { icon: XCircle, color: "text-red-600 dark:text-red-400" },
-  running: { icon: Loader2, color: "text-cyan-600 dark:text-cyan-400" },
+  running: { icon: Loader2, color: "text-blue-600 dark:text-blue-400" }, // Gallery feedback r1: running = status blue, not cyan.
   queued: { icon: Clock, color: "text-yellow-600 dark:text-yellow-400" },
   scheduled_retry: { icon: Clock, color: "text-sky-600 dark:text-sky-400" },
   timed_out: { icon: Timer, color: "text-orange-600 dark:text-orange-400" },
@@ -313,7 +320,11 @@ function runMetrics(run: HeartbeatRun) {
   };
 }
 
-type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };
+export type RunLogChunk = {
+  ts: string;
+  stream: "stdout" | "stderr" | "system";
+  chunk: string;
+};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -324,6 +335,22 @@ function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function buildHeartbeatProgressLogLine(
+  payload: Record<string, unknown>,
+  fallbackTimestamp: string,
+): RunLogChunk | null {
+  const message = asNonEmptyString(payload.message);
+  if (!message) return null;
+  const phase = asNonEmptyString(payload.phase);
+  const ts = asNonEmptyString(payload.updatedAt) ?? fallbackTimestamp;
+  const chunk = phase ? `[${phase}] ${message}` : message;
+  return { ts, stream: "system", chunk };
+}
+
+export function heartbeatProgressLogLineKey(line: RunLogChunk): string {
+  return `${line.ts}\u0000${line.stream}\u0000${line.chunk}`;
 }
 
 export function RunInvocationCard({
@@ -453,7 +480,7 @@ function workspaceOperationStatusTone(status: WorkspaceOperation["status"]) {
     case "failed":
       return "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-300";
     case "running":
-      return "border-cyan-500/20 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300";
+      return "border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300";
     case "skipped":
       return "border-yellow-500/20 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300";
     default:
@@ -469,7 +496,7 @@ function WorkspaceOperationStatusBadge({
   locale?: string | null;
 }) {
   return (
-    <span
+    <Badge variant="outline"
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
         workspaceOperationStatusTone(status),
@@ -507,7 +534,7 @@ function WorkspaceOperationLogViewer({
     <div className="space-y-2">
       <button
         type="button"
-        className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        className="text-(length:--text-micro) text-muted-foreground underline underline-offset-2 hover:text-foreground"
         onClick={() => setOpen((value) => !value)}
       >
         {open ? copy.hideFullLog : copy.showFullLog}
@@ -948,19 +975,22 @@ export function AgentDetail() {
     membershipMutation.isPending &&
     membershipMutation.variables?.resourceType === "agent" &&
     membershipMutation.variables.resourceId === agent.id;
+  const agentStarred = isStarred(membershipsQuery.data, "agent", agent.id);
+  const agentStarPending = agentMembershipPending && membershipMutation.variables?.starred !== undefined;
+  const agentJoinLeavePending = agentMembershipPending && membershipMutation.variables?.starred === undefined;
 
   return (
     <div className={cn("space-y-6", isMobile && showConfigActionBar && "pb-24")}>
       {showLeftAgentNotice ? (
-        <div className="flex items-center gap-3 border border-yellow-300/35 bg-yellow-300/10 px-3 py-2 text-sm text-yellow-100">
+        <div className="flex items-center gap-3 border border-yellow-300/35 bg-yellow-300/10 px-3 py-2 text-sm text-yellow-900 dark:text-yellow-100">
           <p className="min-w-0 flex-1">
             You left this agent. It no longer appears in your sidebar.
           </p>
           <MembershipAction
             compact
             state="left"
-            pending={agentMembershipPending}
-            pendingState={agentMembershipPending ? membershipMutation.variables?.state : null}
+            pending={agentJoinLeavePending}
+            pendingState={agentJoinLeavePending ? membershipMutation.variables?.state : null}
             resourceName={agent.name}
             onJoin={() => membershipMutation.mutate({
               resourceType: "agent",
@@ -977,7 +1007,7 @@ export function AgentDetail() {
           />
           <button
             type="button"
-            className="h-6 w-6 shrink-0 text-yellow-100/70 hover:text-yellow-100"
+            className="h-6 w-6 shrink-0 text-yellow-900/70 hover:text-yellow-900 dark:text-yellow-100/70 dark:hover:text-yellow-100"
             aria-label="Dismiss agent membership notice"
             onClick={() => setDismissedLeftAgentIds((current) => new Set(current).add(agent.id))}
           >
@@ -986,20 +1016,20 @@ export function AgentDetail() {
         </div>
       ) : null}
       {hasInvalidOrgChain ? (
-        <div className="flex items-start gap-3 border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+        <div className="flex items-start gap-3 border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="min-w-0 space-y-1">
             <p className="font-medium">Invalid reporting chain</p>
-            <p className="text-amber-100/90">
+            <p className="text-amber-900/90 dark:text-amber-100/90">
               {agent.name} cannot accept tasks or start runs until its reporting chain is repaired.
             </p>
-            <p className="break-words font-mono text-xs text-amber-100/80">
+            <p className="break-words font-mono text-xs text-amber-900/80 dark:text-amber-100/80">
               {formatOrgChainHealthPath(agent)}
             </p>
             {agent.orgChainHealth?.repairGuidance ? (
-              <p className="text-amber-100/85">{agent.orgChainHealth.repairGuidance}</p>
+              <p className="text-amber-900/85 dark:text-amber-100/85">{agent.orgChainHealth.repairGuidance}</p>
             ) : (
-              <p className="text-amber-100/85">
+              <p className="text-amber-900/85 dark:text-amber-100/85">
                 Assign this agent to an active manager/root, or explicitly pause or terminate the affected agent/subtree.
               </p>
             )}
@@ -1281,8 +1311,8 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
         <h3 className="flex items-center gap-2 text-sm font-medium">
           {isLive && (
             <span className="relative flex h-2 w-2">
-              <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
+              <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
             </span>
           )}
           {isLive ? copy.liveRun : copy.latestRun}
@@ -1299,15 +1329,15 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
         to={`/agents/${agentId}/runs/${run.id}`}
         className={cn(
           "block border rounded-lg p-4 space-y-2 w-full no-underline transition-colors hover:bg-muted/50 cursor-pointer",
-          isLive ? "border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.08)]" : "border-border"
+          isLive ? "border-blue-500/30 shadow-(--shadow-extract-14)" : "border-border"
         )}
       >
         <div className="flex items-center gap-2">
           <StatusIcon className={cn("h-3.5 w-3.5", statusInfo.color, run.status === "running" && "animate-spin")} />
           <StatusBadge status={run.status} />
           <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 8)}</span>
-          <span className={cn(
-            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+          <Badge variant="ghost" className={cn(
+            "px-1.5 text-(length:--text-nano)",
             run.invocationSource === "timer" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
               : run.invocationSource === "assignment" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
               : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
@@ -2164,7 +2194,7 @@ function PromptsTab({
       {(bundle?.warnings ?? []).length > 0 && (
         <div className="space-y-2">
           {(bundle?.warnings ?? []).map((warning) => (
-            <div key={warning} className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+            <div key={warning} className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-900 dark:text-sky-100">
               {warning}
             </div>
           ))}
@@ -2181,7 +2211,7 @@ function PromptsTab({
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-4 pb-6">
           <TooltipProvider>
-            <div className="grid gap-x-6 gap-y-4 md:grid-cols-[auto_minmax(0,1fr)_minmax(12rem,0.65fr)]">
+            <div className="grid gap-x-6 gap-y-4 md:grid-cols-(--gtc-18)">
               <label className="space-y-1.5 min-w-0">
                 <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                   Mode
@@ -2443,7 +2473,7 @@ function PromptsTab({
                 return (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="ml-3 shrink-0 rounded border border-amber-500/40 bg-amber-500/10 text-amber-200 px-1.5 py-0.5 text-[10px] uppercase tracking-wide cursor-help">
+                      <span className="ml-3 shrink-0 rounded border border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200 px-1.5 py-0.5 text-(length:--text-nano) uppercase tracking-wide cursor-help">
                         virtual file
                       </span>
                     </TooltipTrigger>
@@ -2454,7 +2484,7 @@ function PromptsTab({
                 );
               }
               return (
-                <span className="ml-3 shrink-0 rounded border border-border text-muted-foreground px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                <span className="ml-3 shrink-0 rounded border border-border text-muted-foreground px-1.5 py-0.5 text-(length:--text-nano) uppercase tracking-wide">
                   {file.isEntryFile ? "entry" : `${file.size}b`}
                 </span>
               );
@@ -2539,7 +2569,7 @@ function PromptsTab({
               onChange={(value) => setDraft(value ?? "")}
               placeholder="# Agent instructions"
               className="min-w-0 overflow-hidden"
-              contentClassName="min-h-[420px] max-w-full break-words text-sm font-mono"
+              contentClassName="min-h-(--sz-420px) max-w-full break-words text-sm font-mono"
               imageUploadHandler={async (file) => {
                 const namespace = `agents/${agent.id}/instructions/${selectedOrEntryFile.replaceAll("/", "-")}`;
                 const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
@@ -2550,7 +2580,7 @@ function PromptsTab({
             <textarea
               value={displayValue}
               onChange={(event) => setDraft(event.target.value)}
-              className="min-h-[420px] w-full min-w-0 rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm outline-none"
+              className="min-h-(--sz-420px) w-full min-w-0 rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm outline-none"
               placeholder="File contents"
             />
           )}
@@ -2568,7 +2598,7 @@ function PromptsTabSkeleton() {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
             <Skeleton className="h-4 w-40" />
-            <Skeleton className="h-4 w-[30rem] max-w-full" />
+            <Skeleton className="h-4 w-(--sz-30rem) max-w-full" />
           </div>
           <Skeleton className="h-4 w-16" />
         </div>
@@ -2581,7 +2611,7 @@ function PromptsTabSkeleton() {
           ))}
         </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-(--gtc-19)">
         <div className="rounded-lg border border-border p-3 space-y-3">
           <div className="flex items-center justify-between">
             <Skeleton className="h-4 w-12" />
@@ -2610,7 +2640,7 @@ function PromptEditorSkeleton() {
   return (
     <div className="space-y-3">
       <Skeleton className="h-10 w-full" />
-      <Skeleton className="h-[420px] w-full" />
+      <Skeleton className="h-(--sz-420px) w-full" />
     </div>
   );
 }
@@ -3055,8 +3085,8 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
         <span className="font-mono text-xs text-muted-foreground">
           {run.id.slice(0, 8)}
         </span>
-        <span className={cn(
-          "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+        <Badge variant="ghost" className={cn(
+          "px-1.5 text-(length:--text-nano)",
           run.invocationSource === "timer" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
             : run.invocationSource === "assignment" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
             : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
@@ -3181,6 +3211,20 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
   });
   const run = hydratedRun ?? initialRun;
   const metrics = runMetrics(run);
+  const { data: userDirectory } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(run.companyId),
+    queryFn: () => accessApi.listUserDirectory(run.companyId),
+    enabled: Boolean(run.companyId && run.responsibleUserId),
+    retry: false,
+  });
+  const responsibleUserName = useMemo(() => {
+    if (!run.responsibleUserId) return null;
+    const entry = userDirectory?.users.find(
+      (candidate) => candidate.principalId === run.responsibleUserId,
+    );
+    return entry?.user?.name ?? entry?.user?.email ?? null;
+  }, [run.responsibleUserId, userDirectory]);
+  const responsibleDenialCode = isResponsibleUserDenialCode(run.errorCode) ? run.errorCode : null;
   const [sessionOpen, setSessionOpen] = useState(false);
   const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
 
@@ -3373,9 +3417,9 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 ?? asNonEmptyString(adapterConfig?.model);
               if (!adapterType && !displayProvider && !displayModel) return null;
               return (
-                <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5 flex-wrap">
+                <div className="text-(length:--text-micro) text-muted-foreground font-mono flex items-center gap-1.5 flex-wrap">
                   {adapterType && (
-                    <span className="bg-muted rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">{adapterType.replace(/_/g, " ")}</span>
+                    <span className="bg-muted rounded px-1.5 py-0.5 text-(length:--text-nano) font-medium uppercase tracking-wide">{adapterType.replace(/_/g, " ")}</span>
                   )}
                   {displayProvider && displayModel && (
                     <span>{displayProvider}/{displayModel}</span>
@@ -3386,6 +3430,17 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 </div>
               );
             })()}
+            {run.responsibleUserId && (
+              <div
+                data-testid="run-detail-on-behalf-of"
+                className="text-xs text-muted-foreground"
+              >
+                On behalf of{" "}
+                <span className="text-foreground">
+                  {responsibleUserName ?? responsibleUserLabel(null)}
+                </span>
+              </div>
+            )}
             {resumeRun.isError && (
               <div className="text-xs text-destructive">
                 {resumeRun.error instanceof Error ? resumeRun.error.message : runCopy.failedToResumeRun}
@@ -3403,7 +3458,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                   {endTime && <span className="text-muted-foreground"> &rarr; </span>}
                   {endTime}
                 </div>
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-(length:--text-micro) text-muted-foreground">
                   {relativeTime(run.startedAt!)}
                   {run.finishedAt && <> &rarr; {relativeTime(run.finishedAt)}</>}
                 </div>
@@ -3467,6 +3522,12 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 )}
               </div>
             )}
+            {responsibleDenialCode && (
+              <ResponsibleUserDenialNotice
+                code={responsibleDenialCode}
+                userName={responsibleUserName}
+              />
+            )}
             {hasNonZeroExit && (
               <div className="text-xs text-red-600 dark:text-red-400">
                 {runCopy.exitCode} {run.exitCode}
@@ -3478,7 +3539,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={cn(
-                      "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                      "rounded-md border px-1.5 py-0.5 text-(length:--text-micro) font-medium",
                       retryState.tone,
                     )}
                   >
@@ -3551,7 +3612,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                   <div className="pt-1">
                     <button
                       type="button"
-                      className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+                      className="text-(length:--text-micro) text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
                       disabled={clearSessionsForTouchedIssues.isPending}
                       onClick={() => {
                         const issueCount = touchedIssueIds.length;
@@ -3567,7 +3628,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                         : runCopy.clearSessionForTheseIssues}
                     </button>
                     {clearSessionsForTouchedIssues.isError && (
-                      <p className="text-[11px] text-destructive mt-1">
+                      <p className="text-(length:--text-micro) text-destructive mt-1">
                         {clearSessionsForTouchedIssues.error instanceof Error
                           ? clearSessionsForTouchedIssues.error.message
                           : runCopy.failedToClearSessions}
@@ -3651,6 +3712,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const logEndRef = useRef<HTMLDivElement>(null);
   const pendingLogLineRef = useRef("");
+  const seenProgressLogLineKeysRef = useRef<Set<string>>(new Set());
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
   const isFollowingRef = useRef(false);
   const lastMetricsRef = useRef<{ scrollHeight: number; distanceFromBottom: number }>({
@@ -3798,6 +3860,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
   useEffect(() => {
     let cancelled = false;
     pendingLogLineRef.current = "";
+    seenProgressLogLineKeysRef.current = new Set();
     setLogLines([]);
     setLogOffset(0);
     setHasMoreLog(false);
@@ -3945,6 +4008,16 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
           return;
         }
 
+        if (event.type === "heartbeat.run.progress") {
+          const line = buildHeartbeatProgressLogLine(payload, event.createdAt);
+          if (!line) return;
+          const key = heartbeatProgressLogLineKey(line);
+          if (seenProgressLogLineKeysRef.current.has(key)) return;
+          seenProgressLogLineKeysRef.current.add(key);
+          setLogLines((prev) => [...prev, line]);
+          return;
+        }
+
         if (event.type !== "heartbeat.run.event") return;
 
         const seq = typeof payload.seq === "number" ? payload.seq : null;
@@ -4083,7 +4156,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
                 key={mode}
                 type="button"
                 className={cn(
-                  "rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
+                  "rounded-md px-2.5 py-1 text-(length:--text-micro) font-medium capitalize transition-colors",
                   transcriptMode === mode
                     ? "bg-accent text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
@@ -4110,17 +4183,17 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
             </Button>
           )}
           {isLive && (
-            <span className="flex items-center gap-1 text-xs text-cyan-400">
+            <span className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
               <span className="relative flex h-2 w-2">
-                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-400" />
+                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
               </span>
               {copy.live}
             </span>
           )}
         </div>
       </div>
-      <div className="max-h-[38rem] overflow-y-auto rounded-2xl border border-border/70 bg-background/40 p-3 sm:p-4">
+      <div className="max-h-(--sz-38rem) overflow-y-auto rounded-2xl border border-border/70 bg-background/40 p-3 sm:p-4">
         <RunTranscriptView
           entries={transcript}
           mode={transcriptMode}

@@ -58,7 +58,7 @@ export function BoardClaimPage() {
           <p className="mt-2 text-sm text-muted-foreground">
             {statusQuery.error instanceof Error ? statusQuery.error.message : t("board.challengeInvalidOrExpired")}
           </p>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -79,7 +79,7 @@ export function BoardClaimPage() {
           <Button asChild className="mt-4">
             <Link to="/">{t("board.openBoard")}</Link>
           </Button>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -95,7 +95,7 @@ export function BoardClaimPage() {
           <Button asChild className="mt-4">
             <Link to={`/auth?next=${encodeURIComponent(currentPath)}`}>{t("board.signInCreateAccount")}</Link>
           </Button>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -121,7 +121,7 @@ export function BoardClaimPage() {
         >
           {claimMutation.isPending ? t("board.claiming") : t("board.claimOwnership")}
         </Button>
-      </div>
+      </Card>
     </div>
   );
 }

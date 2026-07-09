@@ -11,6 +11,7 @@ import { useToast } from "@/context/ToastContext";
 import { Link } from "@/lib/router";
 import { formatAccessRoleLabel, formatInviteState, getAccessPageCopy } from "@/lib/access-page-copy";
 import { queryKeys } from "@/lib/queryKeys";
+import { Badge } from "@/components/ui/badge";
 
 const inviteRoleOptions = [
   { value: "viewer" },

@@ -330,7 +330,7 @@ export function CompanySettings() {
                 companyName={companyName || selectedCompany.name}
                 logoUrl={logoUrl || null}
                 brandColor={brandColor || null}
-                className="rounded-[14px]"
+                className="rounded-(--rad-14)"
               />
             </div>
             <div className="flex-1 space-y-3">
@@ -380,6 +380,7 @@ export function CompanySettings() {
                 hint={copy.brandColorHint}
               >
                 <div className="flex items-center gap-2">
+                  {/* token-extraction: allowlisted — <input type="color"> value must be a real hex string, not a var() reference. */}
                   <input
                     type="color"
                     value={brandColor || "#6366f1"}

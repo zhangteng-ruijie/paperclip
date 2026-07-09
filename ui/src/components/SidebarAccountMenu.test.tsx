@@ -137,7 +137,7 @@ describe("SidebarAccountMenu", () => {
     expect(document.body.textContent).toContain("Paperclip v1.2.3");
     expect(document.body.textContent).toContain("jane@example.com");
     expect(document.body.querySelector('[data-slot="popover-content"]')?.className)
-      .toContain("w-[277px]");
+      .toContain("w-(--sz-277px)");
     expect(document.body.querySelector('a[href="/company/settings/instance/profile"]')).not.toBeNull();
     expect(document.body.querySelector('a[href="/company/settings/instance/general"]')).not.toBeNull();
     expect(document.body.querySelector('a[href*="paperclip.ing"]')).not.toBeNull();

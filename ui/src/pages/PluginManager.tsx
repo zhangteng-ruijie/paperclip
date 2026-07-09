@@ -276,7 +276,8 @@ export function PluginManager() {
             {copy.plugins.noExamples}
           </div>
         ) : (
-          <ul className="divide-y rounded-md border bg-card">
+          <Card className="block py-0">
+          <ul className="divide-y">
             {bundledPlugins.map((bundledPlugin) => {
               const installedPlugin = installedByPackageName.get(bundledPlugin.packageName);
               const installPending =
@@ -354,6 +355,7 @@ export function PluginManager() {
               );
             })}
           </ul>
+          </Card>
         )}
       </section>
 
@@ -374,7 +376,8 @@ export function PluginManager() {
             </CardContent>
           </Card>
         ) : (
-          <ul className="divide-y rounded-md border bg-card">
+          <Card className="block py-0">
+          <ul className="divide-y">
             {installedPlugins.map((plugin) => (
               <li key={plugin.id}>
                 <div className="flex items-start gap-4 px-4 py-3">
@@ -496,6 +499,7 @@ export function PluginManager() {
               </li>
             ))}
           </ul>
+          </Card>
         )}
       </section>
 

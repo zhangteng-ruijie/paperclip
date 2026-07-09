@@ -17,6 +17,7 @@ import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { ModeBadge } from "@/components/access/ModeBadge";
 import { Button } from "../components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useLocale } from "../context/LocaleContext";
 import {
@@ -231,9 +232,9 @@ export function InstanceGeneralSettings() {
             />
           </div>
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">{t("settings.general.censorTitle")}</h2>
@@ -248,9 +249,9 @@ export function InstanceGeneralSettings() {
             aria-label={adminCopy.general.toggleCensorAria}
           />
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">{t("settings.general.keyboardTitle")}</h2>
@@ -265,9 +266,9 @@ export function InstanceGeneralSettings() {
             aria-label={adminCopy.general.toggleKeyboardAria}
           />
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="space-y-5">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">{adminCopy.general.backupRetention}</h2>
@@ -363,9 +364,9 @@ export function InstanceGeneralSettings() {
             </div>
           </div>
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="space-y-4">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">{t("settings.general.feedbackTitle")}</h2>
@@ -433,9 +434,9 @@ export function InstanceGeneralSettings() {
             {t("settings.general.feedbackResetNote")}
           </p>
         </div>
-      </section>
+      </Card>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <h2 className="text-sm font-semibold">{t("settings.general.signOutTitle")}</h2>
@@ -453,7 +454,7 @@ export function InstanceGeneralSettings() {
             {signOutMutation.isPending ? t("settings.general.signingOut") : t("settings.general.signOut")}
           </Button>
         </div>
-      </section>
+      </Card>
     </div>
   );
 }
