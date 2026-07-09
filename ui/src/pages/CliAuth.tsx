@@ -58,7 +58,7 @@ export function CliAuthPage() {
   if (challengeQuery.error) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-lg font-semibold">{t("cli.challengeUnavailable")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {challengeQuery.error instanceof Error ? challengeQuery.error.message : t("cli.challengeInvalidOrExpired")}
@@ -76,7 +76,7 @@ export function CliAuthPage() {
   if (challenge.status === "approved") {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-xl font-semibold">{t("cli.accessApproved")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {t("cli.canFinishAuth")}
@@ -107,7 +107,7 @@ export function CliAuthPage() {
   if (challenge.requiresSignIn || !sessionQuery.data) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-xl font-semibold">{t("cli.signInRequired")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {t("cli.signInToApprove")}
@@ -122,7 +122,7 @@ export function CliAuthPage() {
 
   return (
     <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
+      <Card className="block p-6">
         <h1 className="text-xl font-semibold">{t("cli.approveAccess")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {t("cli.requestingBoardAccess")}

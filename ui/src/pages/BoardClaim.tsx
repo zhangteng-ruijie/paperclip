@@ -5,6 +5,7 @@ import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useLocale } from "../context/LocaleContext";
 
 export function BoardClaimPage() {
@@ -53,7 +54,7 @@ export function BoardClaimPage() {
   if (statusQuery.error) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-lg font-semibold">{t("board.claimUnavailable")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {statusQuery.error instanceof Error ? statusQuery.error.message : t("board.challengeInvalidOrExpired")}
@@ -71,7 +72,7 @@ export function BoardClaimPage() {
   if (status.status === "claimed") {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-lg font-semibold">{t("board.ownershipClaimed")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {t("board.linkedToUser")}
@@ -87,7 +88,7 @@ export function BoardClaimPage() {
   if (!sessionQuery.data) {
     return (
       <div className="mx-auto max-w-xl py-10">
-        <div className="rounded-lg border border-border bg-card p-6">
+        <Card className="block p-6">
           <h1 className="text-lg font-semibold">{t("board.signInRequired")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {t("board.signInToClaim")}
@@ -102,7 +103,7 @@ export function BoardClaimPage() {
 
   return (
     <div className="mx-auto max-w-xl py-10">
-      <div className="rounded-lg border border-border bg-card p-6">
+      <Card className="block p-6">
         <h1 className="text-xl font-semibold">{t("board.claimOwnership")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {t("board.promoteToAdmin")}

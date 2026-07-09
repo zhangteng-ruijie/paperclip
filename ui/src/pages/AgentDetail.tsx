@@ -503,7 +503,7 @@ function WorkspaceOperationStatusBadge({
       )}
     >
       {formatWorkspaceOperationStatusLabel(status, locale)}
-    </span>
+    </Badge>
   );
 }
 
@@ -1344,7 +1344,7 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
               : "bg-muted text-muted-foreground"
           )}>
             {sourceLabelMap[run.invocationSource as keyof typeof sourceLabelMap] ?? run.invocationSource}
-          </span>
+          </Badge>
           <span className="ml-auto text-xs text-muted-foreground">{relativeTime(run.createdAt)}</span>
         </div>
 
@@ -3093,7 +3093,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
             : "bg-muted text-muted-foreground"
         )}>
           {sourceLabelMap[run.invocationSource as keyof typeof sourceLabelMap] ?? run.invocationSource}
-        </span>
+        </Badge>
         {sourceResolvedFold ? <SourceResolvedFoldBadge showIcon={false} className="shrink-0 text-[10px] py-0" /> : null}
         <span className="ml-auto text-[11px] text-muted-foreground shrink-0">
           {relativeTime(run.createdAt)}

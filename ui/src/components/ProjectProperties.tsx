@@ -807,7 +807,7 @@ export function ProjectProperties({ project, onUpdate, onFieldUpdate, getFieldSa
                           )}
                         >
                           {formatStatusLabel(service.status, locale)}
-                        </span>
+                        </Badge>
                       </div>
                       <div className="text-(length:--text-micro) text-muted-foreground">
                         {service.url ? (

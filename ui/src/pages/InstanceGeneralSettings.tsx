@@ -201,7 +201,7 @@ export function InstanceGeneralSettings() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-5">
+      <Card className="block p-5">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold">Deployment and auth</h2>

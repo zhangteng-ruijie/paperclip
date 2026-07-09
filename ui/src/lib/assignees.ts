@@ -73,13 +73,11 @@ export function currentUserAssigneeOption(currentUserId: string | null | undefin
   }];
 }
 
-export function formatAssigneeUserLabel(
+export function formatUserLabel(
   userId: string | null | undefined,
-  currentUserId: string | null | undefined,
   userLabels?: ReadonlyMap<string, string> | Record<string, string> | null,
 ): string | null {
   if (!userId) return null;
-  if (currentUserId && userId === currentUserId) return runtimeActorLabel("you");
   if (userLabels) {
     const label = userLabels instanceof Map
       ? userLabels.get(userId)
@@ -88,4 +86,14 @@ export function formatAssigneeUserLabel(
   }
   if (userId === "local-board") return runtimeActorLabel("board");
   return userId.slice(0, 5);
+}
+
+export function formatAssigneeUserLabel(
+  userId: string | null | undefined,
+  currentUserId: string | null | undefined,
+  userLabels?: ReadonlyMap<string, string> | Record<string, string> | null,
+): string | null {
+  if (!userId) return null;
+  if (currentUserId && userId === currentUserId) return runtimeActorLabel("you");
+  return formatUserLabel(userId, userLabels);
 }

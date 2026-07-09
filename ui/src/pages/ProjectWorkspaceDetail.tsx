@@ -691,7 +691,7 @@ export function ProjectWorkspaceDetail() {
             </DetailRow>
             <DetailRow label="Default ref">{workspace.defaultRef ?? "None"}</DetailRow>
             <DetailRow label="Updated">{formatDateTime(workspace.updatedAt)}</DetailRow>
-          </div>
+          </Card>
 
           <Card className="block p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
