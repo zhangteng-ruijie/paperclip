@@ -17,6 +17,7 @@ import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
 import { RunChatSurface } from "./RunChatSurface";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
+import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 import { Badge } from "@/components/ui/badge";
 
 function RunCardRecoveryChip({ action }: { action: IssueRecoveryAction }) {
@@ -82,10 +83,20 @@ export function ActiveAgentsPanel({
   const copy = getDashboardCopy(locale);
   const resolvedTitle = title ?? copy.agentsHeading;
   const resolvedEmptyMessage = emptyMessage ?? copy.noRecentAgentRuns;
-  const { data: liveRuns } = useQuery({
-    queryKey: [...queryKeys.liveRuns(companyId), queryScope, { minRunCount, fetchLimit }],
-    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, { minCount: minRunCount, limit: fetchLimit }),
+  const liveRunsQueryKey = [...queryKeys.liveRuns(companyId), queryScope, { minRunCount, fetchLimit }] as const;
+  const sharedLiveRuns = useSharedPollingQuery({
+    companyId,
+    resourceKey: `live-runs:${queryScope}:${minRunCount}:${fetchLimit ?? "default"}`,
+    queryKey: liveRunsQueryKey,
+    enabled: !!companyId,
+    leaderOnly: true,
   });
+  const { data: liveRuns, dataUpdatedAt: liveRunsUpdatedAt } = useQuery({
+    queryKey: liveRunsQueryKey,
+    queryFn: () => heartbeatsApi.liveRunsForCompany(companyId, { minCount: minRunCount, limit: fetchLimit }),
+    enabled: sharedLiveRuns.enabled,
+  });
+  usePublishSharedQueryData(sharedLiveRuns, liveRuns, liveRunsUpdatedAt);
 
   const runs = liveRuns ?? [];
   const visibleRuns = useMemo(() => runs.slice(0, cardLimit), [cardLimit, runs]);

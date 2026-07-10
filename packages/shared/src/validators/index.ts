@@ -364,6 +364,7 @@ export {
   requestConfirmationCustomTargetSchema,
   requestConfirmationTargetSchema,
   requestConfirmationPayloadSchema,
+  requestConfirmationResumeFailureSchema,
   requestConfirmationResultSchema,
   requestCheckboxConfirmationOptionSchema,
   requestCheckboxConfirmationPayloadSchema,

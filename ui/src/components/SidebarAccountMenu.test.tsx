@@ -13,12 +13,23 @@ const mockAuthApi = vi.hoisted(() => ({
   updateProfile: vi.fn(),
   signOut: vi.fn(),
 }));
+const mockInstanceSettingsApi = vi.hoisted(() => ({
+  getExperimental: vi.fn(),
+}));
 const mockToggleTheme = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
 const mockLocale = vi.hoisted(() => ({ current: "en" }));
 
 vi.mock("@/api/auth", () => ({
   authApi: mockAuthApi,
+}));
+
+vi.mock("@/api/instanceSettings", () => ({
+  instanceSettingsApi: mockInstanceSettingsApi,
+}));
+
+vi.mock("../api/instanceSettings", () => ({
+  instanceSettingsApi: mockInstanceSettingsApi,
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -76,6 +87,9 @@ describe("SidebarAccountMenu", () => {
         email: "jane@example.com",
         image: "https://example.com/jane.png",
       },
+    });
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({
+      enableIsolatedWorkspaces: false,
     });
   });
 
