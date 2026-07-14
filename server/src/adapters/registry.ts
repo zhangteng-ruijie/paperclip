@@ -83,10 +83,6 @@ import {
   models as grokModels,
 } from "@paperclipai/adapter-grok-local";
 import {
-  createHermesGatewayServerAdapter,
-  createHermesLocalServerAdapter,
-} from "@paperclipai/hermes-paperclip-adapter";
-import {
   execute as openCodeExecute,
   listOpenCodeSkills,
   syncOpenCodeSkills,
@@ -367,10 +363,6 @@ const grokLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: grokAgentConfigurationDoc,
 };
 
-const hermesGatewayAdapter = createHermesGatewayServerAdapter();
-
-const hermesLocalAdapter = createHermesLocalServerAdapter();
-
 const openclawGatewayAdapter: ServerAdapterModule = {
   type: "openclaw_gateway",
   execute: openclawGatewayExecute,
@@ -443,8 +435,6 @@ function registerBuiltInAdapters() {
     cursorLocalAdapter,
     geminiLocalAdapter,
     grokLocalAdapter,
-    hermesGatewayAdapter,
-    hermesLocalAdapter,
     openclawGatewayAdapter,
     processAdapter,
     httpAdapter,

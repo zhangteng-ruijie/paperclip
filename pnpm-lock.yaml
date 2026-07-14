@@ -828,9 +828,6 @@ importers:
       '@paperclipai/db':
         specifier: workspace:*
         version: link:../packages/db
-      '@paperclipai/hermes-paperclip-adapter':
-        specifier: workspace:*
-        version: link:../packages/adapters/hermes
       '@paperclipai/plugin-sdk':
         specifier: workspace:*
         version: link:../packages/plugins/sdk
@@ -997,9 +994,6 @@ importers:
       '@paperclipai/adapter-utils':
         specifier: workspace:*
         version: link:../packages/adapter-utils
-      '@paperclipai/hermes-paperclip-adapter':
-        specifier: workspace:*
-        version: link:../packages/adapters/hermes
       '@paperclipai/shared':
         specifier: workspace:*
         version: link:../packages/shared

@@ -130,22 +130,9 @@ describe("server adapter registry", () => {
     ]);
   });
 
-  it("ships Hermes adapters as built-ins and still accepts external overrides", () => {
-    const builtInLocal = findServerAdapter("hermes_local");
-    const builtInGateway = findServerAdapter("hermes_gateway");
-
-    expect(builtInLocal).not.toBeNull();
-    expect(builtInLocal?.supportsLocalAgentJwt).toBe(true);
-    expect(builtInLocal?.supportsInstructionsBundle).toBe(true);
-    expect(builtInLocal?.requiresMaterializedRuntimeSkills).toBe(false);
-    expect(builtInLocal?.detectModel).toBeTypeOf("function");
-    expect(builtInLocal?.getConfigSchema).toBeTypeOf("function");
-
-    expect(builtInGateway).not.toBeNull();
-    expect(builtInGateway?.supportsLocalAgentJwt).toBe(false);
-    expect(builtInGateway?.supportsInstructionsBundle).toBe(false);
-    expect(builtInGateway?.requiresMaterializedRuntimeSkills).toBe(false);
-    expect(builtInGateway?.getConfigSchema).toBeTypeOf("function");
+  it("loads Hermes adapters only from external registrations", () => {
+    expect(findServerAdapter("hermes_local")).toBeNull();
+    expect(findServerAdapter("hermes_gateway")).toBeNull();
 
     const hermesLocalExternalAdapter: ServerAdapterModule = {
       type: "hermes_local",
@@ -200,7 +187,8 @@ describe("server adapter registry", () => {
 
     unregisterServerAdapter("hermes_local");
 
-    expect(requireServerAdapter("hermes_local")).toBe(builtInLocal);
+    expect(findServerAdapter("hermes_local")).toBeNull();
+    expect(() => requireServerAdapter("hermes_local")).toThrow("Unknown adapter type: hermes_local");
 
     registerServerAdapter(hermesGatewayExternalAdapter);
 
@@ -209,7 +197,8 @@ describe("server adapter registry", () => {
 
     unregisterServerAdapter("hermes_gateway");
 
-    expect(requireServerAdapter("hermes_gateway")).toBe(builtInGateway);
+    expect(findServerAdapter("hermes_gateway")).toBeNull();
+    expect(() => requireServerAdapter("hermes_gateway")).toThrow("Unknown adapter type: hermes_gateway");
   });
 
   it("exposes capability flags from registered adapters", () => {
