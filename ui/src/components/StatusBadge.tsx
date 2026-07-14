@@ -29,9 +29,9 @@ export function formatStatusLabel(status: string, _locale?: string): string {
 /**
  * Generic status badge for runs / goals / approvals (not task status).
  */
-// design-allow(pill-pattern): DECISION-SHEET.md C8 — status badges keep the bespoke WCAG-tuned
+// design-allow(pill-pattern): DECISION-SHEET.md C8 - status badges keep the bespoke WCAG-tuned
 // .status-chip color-mix mechanic and do not wrap the Badge primitive.
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status, label }: { status: string; label?: string }) {
   return (
     <span
       className={cn(
@@ -39,7 +39,7 @@ export function StatusBadge({ status }: { status: string }) {
         statusBadge[status] ?? statusBadgeDefault
       )}
     >
-      {status.replace(/_/g, " ")}
+      {label ?? status.replace(/[_-]/g, " ")}
     </span>
   );
 }
