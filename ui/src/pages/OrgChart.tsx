@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, type MouseEvent } from "react";
 import { Link, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
@@ -9,6 +9,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { agentUrl } from "../lib/utils";
 import { getOrgChartCopy, orgRoleLabel, translateOrgAdapterLabel, translateOrgCopy } from "../lib/org-chart-copy";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -577,7 +578,7 @@ export function OrgChart() {
                   minHeight: CARD_H,
                 }}
                 onClick={() => navigate(agent ? agentUrl(agent) : `/agents/${node.id}`)}
-                onClickCapture={(e) => {
+                onClickCapture={(e: MouseEvent<HTMLElement>) => {
                   if (!suppressNextCardClick.current) return;
                   suppressNextCardClick.current = false;
                   e.preventDefault();

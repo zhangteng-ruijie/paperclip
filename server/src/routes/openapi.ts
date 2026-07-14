@@ -683,6 +683,9 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/companies/{companyId}/secret-provider-configs",
   "POST /api/companies/{companyId}/secret-provider-configs",
   "GET /api/companies/{companyId}/secret-providers/health",
+  "GET /api/auth/sso/providers",
+  "GET /api/auth/sso/{providerId}/sign-in",
+  "GET /api/auth/sso/{providerId}/callback",
   "POST /api/companies/{companyId}/secret-provider-configs/discovery/preview",
   "GET /api/secret-provider-configs/{id}",
   "PATCH /api/secret-provider-configs/{id}",
@@ -5090,6 +5093,19 @@ registerCurrentRoute({
   summary: "Activate cloud upstream push run entities",
   body: cloudPushRunActivationSchema,
 });
+
+for (const route of [
+  ["get", "/api/auth/sso/providers", "List plugin SSO providers"],
+  ["get", "/api/auth/sso/{providerId}/sign-in", "Start plugin SSO sign-in"],
+  ["get", "/api/auth/sso/{providerId}/callback", "Handle plugin SSO callback"],
+] as const) {
+  registerCurrentRoute({
+    method: route[0],
+    path: route[1],
+    tags: ["auth"],
+    summary: route[2],
+  });
+}
 
 for (const route of [
   ["get", "/api/companies/{companyId}/secret-providers/health", "Check configured secret providers"],

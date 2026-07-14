@@ -185,6 +185,13 @@ vi.mock("../middleware/logger.js", () => ({
   },
 }));
 
+vi.mock("../auth/plugin-sso.js", () => ({
+  createPluginSsoStore: vi.fn(() => ({
+    reload: vi.fn(async () => []),
+    getProviders: vi.fn(async () => []),
+  })),
+}));
+
 vi.mock("../realtime/live-events-ws.js", () => ({
   setupLiveEventsWebSocketServer: vi.fn(),
 }));
@@ -392,6 +399,9 @@ describe("startServer authenticated auth origin setup", () => {
         authPublicBaseUrl: "http://127.0.0.1:3211/",
       }),
       ["http://board.example.test:3211"],
+      expect.objectContaining({
+        pluginSsoStore: expect.anything(),
+      }),
     );
     expect(createAppMock.mock.calls[0]?.[1]).toMatchObject({
       serverPort: 3211,

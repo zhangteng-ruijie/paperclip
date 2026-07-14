@@ -35,6 +35,8 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 vi.mock("pino", () => ({
+  pino: mockPino,
+  transport: mockTransport,
   default: mockPino,
 }));
 vi.mock("pino-http", () => ({

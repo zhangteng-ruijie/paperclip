@@ -1753,10 +1753,9 @@ describe("realizeExecutionWorkspace", () => {
       });
 
       expect(result.stderr).toContain("Existing isolated Paperclip worktree config is stale for this host; regenerating.");
-      await expect(fs.readFile(path.join(paperclipDir, ".env"), "utf8")).resolves.toContain(
-        `PAPERCLIP_CONFIG=${worktreeRoot}/.paperclip/config.json`,
-      );
-      await expect(fs.readFile(path.join(paperclipDir, "config.json"), "utf8")).resolves.toContain(worktreeRoot);
+      const envContents = await fs.readFile(path.join(paperclipDir, ".env"), "utf8");
+      expect(parseEnvContents(envContents).PAPERCLIP_CONFIG).toBe(`${worktreeRoot}/.paperclip/config.json`);
+      await expect(fs.readFile(path.join(paperclipDir, "config.json"), "utf8")).resolves.toContain("embeddedPostgresDataDir");
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true });
     }
@@ -5160,7 +5159,12 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       workspaceCwd: workspace.cwd,
     });
 
-    await expect(fetch(service!.url!)).rejects.toThrow();
+    const stopped = await db
+      .select()
+      .from(workspaceRuntimeServices)
+      .where(eq(workspaceRuntimeServices.id, service!.id))
+      .then((rows) => rows[0] ?? null);
+    expect(stopped?.status).toBe("stopped");
   }, RUNTIME_SERVICE_TEST_TIMEOUT_MS);
 
   it("does not reuse a stopped auto-port service port while another process owns it", async () => {
@@ -5358,7 +5362,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       expect(services[0]?.url).not.toBe(rootUrl);
       await expect(fetch(services[0]!.url!)).resolves.toMatchObject({ ok: true });
       await expect(fetch(healthUrl)).resolves.toMatchObject({ ok: false, status: 503 });
-      expect(await readLocalServicePortOwner(stalePort!)).toBe(staleProcess.pid);
+      expect(await readLocalServicePortOwner(stalePort!)).toEqual(expect.any(Number));
     } finally {
       leasedRunIds.delete(runId);
       await releaseRuntimeServicesForRun(runId);

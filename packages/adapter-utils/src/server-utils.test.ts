@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,17 @@ import {
 } from "./server-utils.js";
 
 function isPidAlive(pid: number) {
+  if (process.platform !== "win32") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const commandEndIndex = stat.lastIndexOf(")");
+      const state = commandEndIndex >= 0 ? stat.slice(commandEndIndex + 2, commandEndIndex + 3) : null;
+      if (state === "Z") return false;
+    } catch {
+      // Fall through to the portable liveness probe.
+    }
+  }
+
   try {
     process.kill(pid, 0);
     return true;

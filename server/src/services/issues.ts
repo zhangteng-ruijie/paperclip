@@ -96,6 +96,7 @@ import {
   issueTreeControlService,
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
+import { scheduleIssueStatusWebhook } from "./issue-status-webhook.js";
 import {
   parseIssueGraphLivenessIncidentKey,
   RECOVERY_ORIGIN_KINDS,
@@ -6468,7 +6469,16 @@ export function issueService(db: Db) {
         return enriched;
       };
 
-      return dbOrTx === db ? db.transaction(runUpdate) : runUpdate(dbOrTx);
+      const updated = await (dbOrTx === db ? db.transaction(runUpdate) : runUpdate(dbOrTx));
+      if (updated && dbOrTx === db && issueData.status && existing.status !== updated.status) {
+        scheduleIssueStatusWebhook({
+          db,
+          issue: updated,
+          previousStatus: existing.status,
+          source: "issue.update",
+        });
+      }
+      return updated;
     },
 
     clearExecutionWorkspaceEnvironmentSelection: async (companyId: string, environmentId: string) => {
@@ -6540,7 +6550,7 @@ export function issueService(db: Db) {
 
     checkout: async (id: string, agentId: string, expectedStatuses: string[], checkoutRunId: string | null) => {
       const issueCompany = await db
-        .select({ companyId: issues.companyId })
+        .select({ companyId: issues.companyId, status: issues.status })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
@@ -6603,6 +6613,15 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (updated) {
+        if (issueCompany.status !== updated.status) {
+          scheduleIssueStatusWebhook({
+            db,
+            issue: updated,
+            previousStatus: issueCompany.status,
+            source: "issue.checkout",
+            changedAt: now,
+          });
+        }
         const [enriched] = await withIssueLabels(db, [updated]);
         return enriched;
       }
@@ -6879,8 +6898,8 @@ export function issueService(db: Db) {
       });
     },
 
-    release: async (id: string, actorAgentId?: string, actorRunId?: string | null) =>
-      db.transaction(async (tx) => {
+    release: async (id: string, actorAgentId?: string, actorRunId?: string | null) => {
+      const result = await db.transaction(async (tx) => {
         await tx.execute(
           sql`select ${issues.id} from ${issues} where ${issues.id} = ${id} for update`,
         );
@@ -6928,8 +6947,23 @@ export function issueService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!updated) return null;
         const [enriched] = await withIssueLabels(tx, [updated]);
-        return enriched;
-      }),
+        return {
+          issue: enriched,
+          previousStatus: existing.status,
+          changedAt: updated.updatedAt,
+        };
+      });
+      if (result?.issue && result.previousStatus !== result.issue.status) {
+        scheduleIssueStatusWebhook({
+          db,
+          issue: result.issue,
+          previousStatus: result.previousStatus,
+          source: "issue.release",
+          changedAt: result.changedAt,
+        });
+      }
+      return result?.issue ?? null;
+    },
 
     adminForceRelease: async (id: string, options: { clearAssignee?: boolean } = {}) =>
       db.transaction(async (tx) => {

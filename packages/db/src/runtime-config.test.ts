@@ -1,11 +1,29 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveDatabaseTarget } from "./runtime-config.js";
 
 const ORIGINAL_CWD = process.cwd();
 const ORIGINAL_ENV = { ...process.env };
+
+function restoreOriginalProcessState() {
+  process.chdir(ORIGINAL_CWD);
+  for (const key of Object.keys(process.env)) {
+    if (!(key in ORIGINAL_ENV)) delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+function clearDatabaseTargetEnv() {
+  delete process.env.DATABASE_URL;
+  delete process.env.PAPERCLIP_CONFIG;
+  delete process.env.PAPERCLIP_HOME;
+  delete process.env.PAPERCLIP_INSTANCE_ID;
+}
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -17,15 +35,13 @@ function writeText(filePath: string, value: string) {
   fs.writeFileSync(filePath, value);
 }
 
+beforeEach(() => {
+  restoreOriginalProcessState();
+  clearDatabaseTargetEnv();
+});
+
 afterEach(() => {
-  process.chdir(ORIGINAL_CWD);
-  for (const key of Object.keys(process.env)) {
-    if (!(key in ORIGINAL_ENV)) delete process.env[key];
-  }
-  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+  restoreOriginalProcessState();
 });
 
 describe("resolveDatabaseTarget", () => {

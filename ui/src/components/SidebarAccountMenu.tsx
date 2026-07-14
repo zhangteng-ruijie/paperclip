@@ -4,6 +4,7 @@ import {
   BookOpen,
   LogOut,
   Megaphone,
+  Settings,
   type LucideIcon,
   UserRound,
   UserRoundPen,
@@ -12,6 +13,8 @@ import type { DeploymentMode } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { authApi } from "@/api/auth";
 import { queryKeys } from "@/lib/queryKeys";
+import { getShellCopy } from "@/lib/shell-copy";
+import { useLocale } from "@/context/LocaleContext";
 import { useSidebar } from "../context/SidebarContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -106,11 +109,14 @@ export function SidebarAccountMenu({
   deploymentMode,
   open: controlledOpen,
   onOpenChange,
+  instanceSettingsTarget,
   version,
 }: SidebarAccountMenuProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const queryClient = useQueryClient();
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
+  const { locale } = useLocale();
+  const shellCopy = getShellCopy(locale);
   const rail = collapsed && !peeking;
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
@@ -134,6 +140,39 @@ export function SidebarAccountMenu({
   const accountBadge = deploymentMode === "authenticated" ? "Account" : "Local";
   const initials = deriveInitials(displayName);
   const profileHref = `/u/${deriveUserSlug(session?.user.name, session?.user.email, session?.user.id)}`;
+  const menuCopy = locale === "zh-CN"
+    ? {
+        openAccountMenu: "打开账号菜单",
+        account: deploymentMode === "authenticated" ? "账号" : "本地",
+        viewProfile: "查看个人资料",
+        viewProfileDescription: "打开你的活动、任务和使用记录。",
+        editProfile: "编辑个人资料",
+        editProfileDescription: "更新显示名称和头像。",
+        instanceSettingsDescription: "打开实例级配置。",
+        documentation: "文档",
+        documentationDescription: "在新标签页打开 Paperclip 文档。",
+        feedback: "反馈",
+        feedbackDescription: "分享反馈或报告问题。",
+        signOut: "退出登录",
+        signingOut: "正在退出...",
+        signOutDescription: "结束当前浏览器会话。",
+      }
+    : {
+        openAccountMenu: "Open account menu",
+        account: accountBadge,
+        viewProfile: "View profile",
+        viewProfileDescription: "Open your activity, task, and usage ledger.",
+        editProfile: "Edit profile",
+        editProfileDescription: "Update your display name and avatar.",
+        instanceSettingsDescription: "Open instance-level configuration.",
+        documentation: "Documentation",
+        documentationDescription: "Open Paperclip docs in a new tab.",
+        feedback: "Feedback",
+        feedbackDescription: "Share feedback or report an issue.",
+        signOut: "Sign out",
+        signingOut: "Signing out...",
+        signOutDescription: "End this browser session.",
+      };
 
   function closeNavigationChrome() {
     setOpen(false);
@@ -147,7 +186,7 @@ export function SidebarAccountMenu({
           <button
             type="button"
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-(length:--text-compact) font-medium text-foreground/80 transition-colors hover:bg-accent/50 hover:text-foreground"
-            aria-label="Open account menu"
+            aria-label={menuCopy.openAccountMenu}
           >
             <Avatar size="sm">
               {session?.user.image ? <AvatarImage src={session.user.image} alt={displayName} /> : null}
@@ -175,7 +214,7 @@ export function SidebarAccountMenu({
                 <div className="flex items-center gap-2">
                   <h2 className="truncate text-base font-semibold text-foreground">{displayName}</h2>
                   <Badge variant="ghost" className="bg-accent text-(length:--text-nano) font-semibold uppercase tracking-wide text-muted-foreground">
-                    {accountBadge}
+                    {menuCopy.account}
                   </Badge>
                 </div>
                 <p className="truncate text-sm text-muted-foreground">{secondaryLabel}</p>
@@ -187,30 +226,39 @@ export function SidebarAccountMenu({
 
             <div className="mt-4 space-y-1">
               <MenuAction
-                label="View profile"
-                description="Open your activity, task, and usage ledger."
+                label={menuCopy.viewProfile}
+                description={menuCopy.viewProfileDescription}
                 icon={UserRound}
                 href={profileHref}
                 onClick={closeNavigationChrome}
               />
               <MenuAction
-                label="Edit profile"
-                description="Update your display name and avatar."
+                label={menuCopy.editProfile}
+                description={menuCopy.editProfileDescription}
                 icon={UserRoundPen}
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
               />
+              {instanceSettingsTarget ? (
+                <MenuAction
+                  label={shellCopy.instanceSettings}
+                  description={menuCopy.instanceSettingsDescription}
+                  icon={Settings}
+                  href={instanceSettingsTarget}
+                  onClick={closeNavigationChrome}
+                />
+              ) : null}
               <MenuAction
-                label="Documentation"
-                description="Open Paperclip docs in a new tab."
+                label={menuCopy.documentation}
+                description={menuCopy.documentationDescription}
                 icon={BookOpen}
                 href={DOCS_URL}
                 external
                 onClick={() => setOpen(false)}
               />
               <MenuAction
-                label="Feedback"
-                description="Share feedback or report an issue."
+                label={menuCopy.feedback}
+                description={menuCopy.feedbackDescription}
                 icon={Megaphone}
                 href={FEEDBACK_URL}
                 external
@@ -232,10 +280,10 @@ export function SidebarAccountMenu({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-foreground">
-                      {signOutMutation.isPending ? "Signing out..." : "Sign out"}
+                      {signOutMutation.isPending ? menuCopy.signingOut : menuCopy.signOut}
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      End this browser session.
+                      {menuCopy.signOutDescription}
                     </span>
                   </span>
                 </button>

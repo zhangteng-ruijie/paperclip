@@ -283,6 +283,7 @@ describe("Inbox toolbar", () => {
 
   beforeEach(() => {
     resetInboxApiMocks();
+    window.localStorage.clear();
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -310,7 +311,7 @@ describe("Inbox toolbar", () => {
     expect(container.querySelector('[data-testid="inbox-blocked-tab-badge"]')).toBeNull();
     expect(container.querySelector('button[title="Filter"]')).not.toBeNull();
     expect(container.querySelector('button[title="Group"]')).not.toBeNull();
-    expect(container.querySelector('button[title="Columns"]')).not.toBeNull();
+    expect(container.querySelector('button[title="Table columns"]')).not.toBeNull();
     expect(container.querySelector('button[title="Sort"]')).not.toBeNull();
     expect(container.querySelector('button[title="Enable parent-child nesting"]')).toBeNull();
     expect(container.textContent).not.toContain("Mark all as read");
@@ -528,7 +529,7 @@ describe("Inbox toolbar", () => {
     });
 
     const initialArchiveButtons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('button[aria-label="Archive"]'),
+      container.querySelectorAll<HTMLButtonElement>('button[aria-label="Dismiss from inbox"]'),
     );
     expect(initialArchiveButtons.length).toBeGreaterThanOrEqual(2);
 
@@ -543,7 +544,7 @@ describe("Inbox toolbar", () => {
     });
 
     const remainingArchiveButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Archive"]',
+      'button[aria-label="Dismiss from inbox"]',
     );
     expect(remainingArchiveButton).not.toBeNull();
     expect(remainingArchiveButton?.disabled).toBe(false);

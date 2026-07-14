@@ -414,8 +414,42 @@ export async function readLocalServicePortOwner(port: number) {
       .find((value) => Number.isInteger(value) && value > 0);
     return firstPid ?? null;
   } catch {
-    return null;
+    return await readLinuxTcpPortOwnerFromProc(port);
   }
+}
+
+async function readLinuxTcpPortOwnerFromProc(port: number) {
+  if (process.platform !== "linux") return null;
+  const inode = await findListeningTcpSocketInode(port);
+  if (!inode) return null;
+
+  const procEntries = await fs.readdir("/proc", { withFileTypes: true }).catch(() => []);
+  for (const entry of procEntries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    const fdDir = path.join("/proc", entry.name, "fd");
+    const fds = await fs.readdir(fdDir).catch(() => []);
+    for (const fd of fds) {
+      const link = await fs.readlink(path.join(fdDir, fd)).catch(() => null);
+      if (link === `socket:[${inode}]`) return Number.parseInt(entry.name, 10);
+    }
+  }
+  return null;
+}
+
+async function findListeningTcpSocketInode(port: number) {
+  const wantedPortHex = port.toString(16).toUpperCase().padStart(4, "0");
+  for (const tablePath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    const contents = await fs.readFile(tablePath, "utf8").catch(() => "");
+    for (const line of contents.split("\n").slice(1)) {
+      const columns = line.trim().split(/\s+/);
+      const localAddress = columns[1] ?? "";
+      const state = columns[3] ?? "";
+      const inode = columns[9] ?? "";
+      const localPortHex = localAddress.split(":")[1]?.toUpperCase();
+      if (localPortHex === wantedPortHex && state === "0A" && inode) return inode;
+    }
+  }
+  return null;
 }
 
 export async function readLocalServiceProcessCwd(pid: number) {

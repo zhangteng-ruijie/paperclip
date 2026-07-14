@@ -4,6 +4,12 @@ import { MarkdownBody, type MarkdownExternalReferenceMap } from "../MarkdownBody
 import { cn, formatTokens } from "../../lib/utils";
 import { runningLabelText } from "../../lib/status-colors";
 import {
+  formatTranscriptCommandGroupTitle,
+  formatTranscriptLogLinesLabel,
+  formatTranscriptSystemMessagesLabel,
+  getRunDetailCopy,
+} from "../../lib/run-detail-copy";
+import {
   Check,
   ChevronDown,
   ChevronRight,
@@ -178,6 +184,16 @@ function formatToolPayload(value: unknown): string {
     }
   }
   return formatUnknown(value);
+}
+
+function localizeTranscriptText(text: string, locale: string): string {
+  if (locale !== "zh-CN") return text;
+  return text
+    .replace(
+      "⚠️ DANGEROUS COMMAND: script execution via -e/-c flag",
+      "⚠️ 危险命令：通过 -e/-c 参数执行脚本",
+    )
+    .replace("✗ Denied", "✗ 已拒绝");
 }
 
 function extractToolUseId(input: unknown): string | undefined {
@@ -663,21 +679,24 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
 function TranscriptMessageBlock({
   block,
   density,
+  locale,
   externalReferences,
 }: {
   block: Extract<TranscriptBlock, { type: "message" }>;
   density: TranscriptDensity;
+  locale: string;
   externalReferences?: MarkdownExternalReferenceMap;
 }) {
   const isAssistant = block.role === "assistant";
   const compact = density === "compact";
+  const copy = getRunDetailCopy(locale);
 
   return (
     <div>
       {!isAssistant && (
         <div className="mb-1.5 flex items-center gap-2 text-(length:--text-micro) font-semibold uppercase tracking-(--tracking-caps) text-muted-foreground">
           <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
-          <span>User</span>
+          <span>{copy.user}</span>
         </div>
       )}
       <MarkdownBody
@@ -695,7 +714,7 @@ function TranscriptMessageBlock({
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-70" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
           </span>
-          Streaming
+          {copy.streaming}
         </div>
       )}
     </div>
@@ -838,9 +857,11 @@ function hasSelectedText() {
 function TranscriptCommandGroup({
   block,
   density,
+  locale,
 }: {
   block: Extract<TranscriptBlock, { type: "command_group" }>;
   density: TranscriptDensity;
+  locale: string;
 }) {
   const [open, setOpen] = useState(false);
   const compact = density === "compact";
@@ -849,11 +870,12 @@ function TranscriptCommandGroup({
   const hasError = block.items.some((item) => item.status === "error");
   const isRunning = Boolean(runningItem);
   const showExpandedErrorState = open && hasError;
-  const title = isRunning
-    ? "Executing command"
-    : block.items.length === 1
-      ? "Executed command"
-      : `Executed ${block.items.length} commands`;
+  const copy = getRunDetailCopy(locale);
+  const title = formatTranscriptCommandGroupTitle({
+    locale,
+    isRunning,
+    commandCount: block.items.length,
+  });
   const subtitle = runningItem
     ? summarizeToolInput("command_execution", runningItem.input, density)
     : null;
@@ -906,7 +928,7 @@ function TranscriptCommandGroup({
           )}
           {!subtitle && latestItem?.status === "error" && open && (
             <div className={cn("mt-1", compact ? "text-xs" : "text-sm", statusTone)}>
-              Command failed
+              {copy.commandFailed}
             </div>
           )}
         </div>
@@ -920,7 +942,7 @@ function TranscriptCommandGroup({
             event.stopPropagation();
             setOpen((value) => !value);
           }}
-          aria-label={open ? "Collapse command details" : "Expand command details"}
+          aria-label={open ? copy.collapseCommandDetails : copy.expandCommandDetails}
         >
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -949,7 +971,7 @@ function TranscriptCommandGroup({
                   "overflow-x-auto whitespace-pre-wrap break-words font-mono text-(length:--text-micro)",
                   item.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
                 )}>
-                  {formatToolPayload(item.result)}
+                  {localizeTranscriptText(formatToolPayload(item.result), locale)}
                 </pre>
               )}
             </div>
@@ -1280,9 +1302,11 @@ function TranscriptDiffGroup({
 function TranscriptStderrGroup({
   block,
   density,
+  locale,
 }: {
   block: Extract<TranscriptBlock, { type: "stderr_group" }>;
   density: TranscriptDensity;
+  locale: string;
 }) {
   const [open, setOpen] = useState(false);
   const compact = density === "compact";
@@ -1296,7 +1320,7 @@ function TranscriptStderrGroup({
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((v) => !v); } }}
       >
         <span className={cn("text-(length:--text-nano) font-semibold uppercase tracking-(--tracking-eyebrow)")}>
-          {block.lines.length} log {block.lines.length === 1 ? "line" : "lines"}
+          {formatTranscriptLogLinesLabel(block.lines.length, locale)}
         </span>
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
       </div>
@@ -1317,9 +1341,11 @@ function TranscriptStderrGroup({
 function TranscriptSystemGroup({
   block,
   density,
+  locale,
 }: {
   block: Extract<TranscriptBlock, { type: "system_group" }>;
   density: TranscriptDensity;
+  locale: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1333,7 +1359,7 @@ function TranscriptSystemGroup({
       >
         <TerminalSquare className="h-3.5 w-3.5 shrink-0" />
         <span className="text-(length:--text-nano) font-semibold uppercase tracking-(--tracking-eyebrow)">
-          {block.lines.length} system {block.lines.length === 1 ? "message" : "messages"}
+          {formatTranscriptSystemMessagesLabel(block.lines.length, locale)}
         </span>
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
       </div>
@@ -1355,12 +1381,15 @@ function TranscriptStdoutRow({
   block,
   density,
   collapseByDefault,
+  locale,
 }: {
   block: Extract<TranscriptBlock, { type: "stdout" }>;
   density: TranscriptDensity;
   collapseByDefault: boolean;
+  locale: string;
 }) {
   const [open, setOpen] = useState(!collapseByDefault);
+  const copy = getRunDetailCopy(locale);
 
   return (
     <div>
@@ -1372,7 +1401,7 @@ function TranscriptStdoutRow({
           type="button"
           className="inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
           onClick={() => setOpen((value) => !value)}
-          aria-label={open ? "Collapse stdout" : "Expand stdout"}
+          aria-label={open ? copy.collapseStdout : copy.expandStdout}
         >
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -1382,7 +1411,7 @@ function TranscriptStdoutRow({
           "mt-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-foreground/80",
           density === "compact" ? "text-(length:--text-micro)" : "text-xs",
         )}>
-          {block.text}
+          {localizeTranscriptText(block.text, locale)}
         </pre>
       )}
     </div>
@@ -1507,11 +1536,14 @@ export function RunTranscriptView({
   limit,
   streaming = false,
   collapseStdout = false,
-  emptyMessage = "No transcript yet.",
+  locale = "en",
+  emptyMessage,
   className,
   thinkingClassName,
   externalReferences,
 }: RunTranscriptViewProps) {
+  const resolvedLocale = locale === "zh-CN" ? "zh-CN" : "en";
+  const copy = getRunDetailCopy(resolvedLocale);
   const blocks = useMemo(
     () => (mode === "raw" ? [] : normalizeTranscript(entries, streaming)),
     [entries, mode, streaming],
@@ -1522,7 +1554,7 @@ export function RunTranscriptView({
   if (entries.length === 0) {
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
-        {emptyMessage}
+        {emptyMessage ?? copy.noTranscriptYet}
       </div>
     );
   }
@@ -1546,6 +1578,7 @@ export function RunTranscriptView({
             <TranscriptMessageBlock
               block={block}
               density={density}
+              locale={resolvedLocale}
               externalReferences={externalReferences}
             />
           )}
@@ -1558,13 +1591,13 @@ export function RunTranscriptView({
             />
           )}
           {block.type === "tool" && <TranscriptToolCard block={block} density={density} />}
-          {block.type === "command_group" && <TranscriptCommandGroup block={block} density={density} />}
+          {block.type === "command_group" && <TranscriptCommandGroup block={block} density={density} locale={resolvedLocale} />}
           {block.type === "tool_group" && <TranscriptToolGroup block={block} density={density} />}
           {block.type === "diff_group" && <TranscriptDiffGroup block={block} density={density} />}
-          {block.type === "stderr_group" && <TranscriptStderrGroup block={block} density={density} />}
-          {block.type === "system_group" && <TranscriptSystemGroup block={block} density={density} />}
+          {block.type === "stderr_group" && <TranscriptStderrGroup block={block} density={density} locale={resolvedLocale} />}
+          {block.type === "system_group" && <TranscriptSystemGroup block={block} density={density} locale={resolvedLocale} />}
           {block.type === "stdout" && (
-            <TranscriptStdoutRow block={block} density={density} collapseByDefault={collapseStdout} />
+            <TranscriptStdoutRow block={block} density={density} collapseByDefault={collapseStdout} locale={resolvedLocale} />
           )}
           {block.type === "activity" && <TranscriptActivityRow block={block} density={density} />}
           {block.type === "event" && (

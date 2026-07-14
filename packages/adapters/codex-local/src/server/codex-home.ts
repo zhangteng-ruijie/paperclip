@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-utils/server-utils";
+import { formatUsingCodexHomeLog } from "./localization.js";
 
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
@@ -204,7 +205,7 @@ export async function seedManagedCodexHome(
   targetHome: string,
   env: NodeJS.ProcessEnv,
   onLog: AdapterExecutionContext["onLog"],
-  options: { apiKey?: string | null } = {},
+  options: { apiKey?: string | null; locale?: string | null } = {},
 ): Promise<void> {
   const apiKey = nonEmpty(options.apiKey ?? undefined);
 
@@ -240,7 +241,12 @@ export async function seedManagedCodexHome(
 
     await onLog(
       "stdout",
-      `[paperclip] Using ${isWorktreeMode(env) ? "worktree-isolated" : "Paperclip-managed"} Codex home "${targetHome}" (seeded from "${sourceHome}").\n`,
+      formatUsingCodexHomeLog({
+        locale: options.locale,
+        isWorktreeMode: isWorktreeMode(env),
+        targetHome,
+        sourceHome,
+      }),
     );
   }
 
@@ -257,7 +263,7 @@ export async function prepareManagedCodexHome(
   env: NodeJS.ProcessEnv,
   onLog: AdapterExecutionContext["onLog"],
   companyId?: string,
-  options: { apiKey?: string | null } = {},
+  options: { apiKey?: string | null; locale?: string | null } = {},
 ): Promise<string> {
   const targetHome = resolveManagedCodexHomeDir(env, companyId);
   await seedManagedCodexHome(targetHome, env, onLog, options);

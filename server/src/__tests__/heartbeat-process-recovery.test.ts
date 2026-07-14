@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { and, eq, or, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -127,6 +128,17 @@ function spawnAliveProcess() {
 
 function isPidAlive(pid: number | null | undefined) {
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  if (process.platform !== "win32") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const commandEndIndex = stat.lastIndexOf(")");
+      const state = commandEndIndex >= 0 ? stat.slice(commandEndIndex + 2, commandEndIndex + 3) : null;
+      if (state === "Z") return false;
+    } catch {
+      // Fall through to the portable liveness probe.
+    }
+  }
+
   try {
     process.kill(pid, 0);
     return true;

@@ -263,6 +263,9 @@ export function InboxIssueTrailingColumns({
   const copy = getIssuesCopy(locale);
   const activityText = timeAgo(issue.lastActivityAt ?? issue.lastExternalCommentAt ?? issue.updatedAt);
   const userLabel = assigneeUserName ?? formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? copy.userFallback;
+  const originatingActor = deriveOriginatingActor(issue);
+  const originatingUserId = originatingActor?.kind === "user" ? originatingActor.id : null;
+  const creatorUserLabel = creatorUserName ?? formatAssigneeUserLabel(originatingUserId, currentUserId) ?? copy.userFallback;
 
   return (
     <span

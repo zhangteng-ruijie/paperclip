@@ -31,6 +31,7 @@ import {
   refreshPaperclipWorkspaceEnvForExecution,
   readPaperclipRuntimeSkillEntries,
   readPaperclipIssueWorkModeFromContext,
+  resolvePaperclipLocale,
   resolvePaperclipDesiredSkillNames,
   renderTemplate,
   renderPaperclipWakePrompt,
@@ -412,10 +413,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (configuredCodexHome == null) {
     await prepareManagedCodexHome(process.env, onLog, agent.companyId, {
       apiKey: configuredOpenAiApiKey,
+      locale: resolvePaperclipLocale(context.paperclipLocale),
     });
   } else if (configuredHomeIsManaged) {
     await seedManagedCodexHome(configuredCodexHome, process.env, onLog, {
       apiKey: configuredOpenAiApiKey,
+      locale: resolvePaperclipLocale(context.paperclipLocale),
     });
   }
   const defaultCodexHome = resolveManagedCodexHomeDir(process.env, agent.companyId);
@@ -532,7 +535,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : null;
     const hasExplicitApiKey =
       typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
-    const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+    const paperclipLocale = resolvePaperclipLocale(context.paperclipLocale);
+    const env: Record<string, string> = { ...buildPaperclipEnv(agent, { locale: paperclipLocale }) };
     env.PAPERCLIP_RUN_ID = runId;
     const wakeTaskId =
       (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||

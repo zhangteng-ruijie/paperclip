@@ -1,17 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  PERMISSION_KEYS,
-  type Agent,
-  type PermissionKey,
-} from "@paperclipai/shared";
+import { type Agent } from "@paperclipai/shared";
 import { Shield, ShieldCheck, Trash2, Users } from "lucide-react";
 import { accessApi, type CompanyMember } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +21,6 @@ import { useCompany } from "@/context/CompanyContext";
 import { useLocale } from "@/context/LocaleContext";
 import { useToast } from "@/context/ToastContext";
 import {
-  formatAccessGrantSummary,
   formatAccessMemberStatus,
   formatAccessRoleLabel,
   formatInviteContext,
@@ -35,32 +29,19 @@ import {
   formatReassignedIssueCleanup,
   formatSubmittedAt,
   getAccessPageCopy,
-  getAccessPermissionLabels,
 } from "@/lib/access-page-copy";
 import { Link, Navigate } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
 import { usePluginSlots } from "@/plugins/slots";
 
-const implicitRoleGrantMap: Record<NonNullable<CompanyMember["membershipRole"]>, PermissionKey[]> = {
-  owner: ["agents:create", "users:invite", "users:manage_permissions", "tasks:assign", "joins:approve"],
-  admin: ["agents:create", "users:invite", "tasks:assign", "joins:approve"],
-  operator: ["tasks:assign"],
-  viewer: [],
-};
-
 const reassignmentIssueStatuses = "backlog,todo,in_progress,in_review,blocked,failed,timed_out";
 type EditableMemberStatus = "pending" | "active" | "suspended";
-
-function getImplicitGrantKeys(role: CompanyMember["membershipRole"]) {
-  return role ? implicitRoleGrantMap[role] : [];
-}
 
 export function CompanyAccess() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { locale } = useLocale();
   const copy = getAccessPageCopy(locale);
-  const permissionLabels = getAccessPermissionLabels(locale);
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
@@ -68,7 +49,6 @@ export function CompanyAccess() {
   const [reassignmentTarget, setReassignmentTarget] = useState<string>("__unassigned");
   const [draftRole, setDraftRole] = useState<CompanyMember["membershipRole"]>(null);
   const [draftStatus, setDraftStatus] = useState<EditableMemberStatus>("active");
-  const [draftGrants, setDraftGrants] = useState<Set<PermissionKey>>(new Set());
 
   useEffect(() => {
     setBreadcrumbs([
@@ -104,11 +84,10 @@ export function CompanyAccess() {
   };
 
   const updateMemberMutation = useMutation({
-    mutationFn: async (input: { memberId: string; membershipRole: CompanyMember["membershipRole"]; status: EditableMemberStatus; grants: PermissionKey[] }) => {
-      return accessApi.updateMemberAccess(selectedCompanyId!, input.memberId, {
+    mutationFn: async (input: { memberId: string; membershipRole: CompanyMember["membershipRole"]; status: EditableMemberStatus }) => {
+      return accessApi.updateMember(selectedCompanyId!, input.memberId, {
         membershipRole: input.membershipRole,
         status: input.status,
-        grants: input.grants.map((permissionKey) => ({ permissionKey })),
       });
     },
     onSuccess: async () => {
@@ -221,7 +200,6 @@ export function CompanyAccess() {
     if (!editingMember) return;
     setDraftRole(editingMember.membershipRole);
     setDraftStatus(isEditableMemberStatus(editingMember.status) ? editingMember.status : "suspended");
-    setDraftGrants(new Set(editingMember.grants.map((grant) => grant.permissionKey)));
   }, [editingMember]);
 
   useEffect(() => {
@@ -253,8 +231,6 @@ export function CompanyAccess() {
     joinRequestsQuery.data?.filter((request) => request.requestType === "human") ?? [];
   const joinRequestActionPending =
     approveJoinRequestMutation.isPending || rejectJoinRequestMutation.isPending;
-  const implicitGrantKeys = getImplicitGrantKeys(draftRole);
-  const implicitGrantSet = new Set(implicitGrantKeys);
   const activeReassignmentUsers = members.filter(
     (member) =>
       member.status === "active" &&
@@ -334,11 +310,10 @@ export function CompanyAccess() {
         ) : null}
 
         <div className="overflow-hidden rounded-xl border border-border">
-          <div className="grid grid-cols-[minmax(0,1.5fr)_120px_120px_minmax(0,1.2fr)_180px] gap-3 border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="grid grid-cols-[minmax(0,1.5fr)_120px_120px_180px] gap-3 border-b border-border px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <div>{copy.companyAccess.userAccount}</div>
             <div>{copy.companyAccess.role}</div>
             <div>{copy.companyAccess.status}</div>
-            <div>{copy.companyAccess.grants}</div>
             <div className="text-right">{copy.companyAccess.action}</div>
           </div>
           {members.length === 0 ? (
@@ -350,7 +325,7 @@ export function CompanyAccess() {
               return (
                 <div
                   key={member.id}
-                  className="grid grid-cols-[minmax(0,1.5fr)_120px_120px_minmax(0,1.2fr)_180px] gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1.5fr)_120px_120px_180px] gap-3 border-b border-border px-4 py-3 last:border-b-0"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-medium">{member.user?.name?.trim() || member.user?.email || member.principalId}</div>
@@ -364,7 +339,6 @@ export function CompanyAccess() {
                       {formatAccessMemberStatus(member.status, locale)}
                     </Badge>
                   </div>
-                  <div className="min-w-0 text-sm text-muted-foreground">{formatAccessGrantSummary(member, locale)}</div>
                   <div className="space-y-1 text-right">
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="outline" onClick={() => setEditingMemberId(member.id)}>
@@ -435,66 +409,6 @@ export function CompanyAccess() {
                   </select>
                 </label>
               </div>
-
-              <div className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-medium">{copy.companyAccess.grants}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {copy.companyAccess.grantsDescription}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border px-3 py-3">
-                  <div className="text-sm font-medium">{copy.companyAccess.implicitGrants}</div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {draftRole
-                      ? copy.companyAccess.implicitGrantsForRole(formatAccessRoleLabel(draftRole, locale))
-                      : copy.companyAccess.noImplicitGrants}
-                  </p>
-                  {implicitGrantKeys.length > 0 ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {implicitGrantKeys.map((permissionKey) => (
-                        <Badge key={permissionKey} variant="outline">
-                          {permissionLabels[permissionKey]}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {PERMISSION_KEYS.map((permissionKey) => (
-                    <label
-                      key={permissionKey}
-                      className="flex items-start gap-3 rounded-lg border border-border px-3 py-2"
-                    >
-                      <Checkbox
-                        checked={draftGrants.has(permissionKey)}
-                        onCheckedChange={(checked) => {
-                          setDraftGrants((current) => {
-                            const next = new Set(current);
-                            if (checked) next.add(permissionKey);
-                            else next.delete(permissionKey);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span className="space-y-1">
-                        <span className="block text-sm font-medium">{permissionLabels[permissionKey]}</span>
-                        <span className="block text-xs text-muted-foreground">{permissionKey}</span>
-                        {implicitGrantSet.has(permissionKey) ? (
-                          <span className="block text-xs text-muted-foreground">
-                            {copy.companyAccess.includedImplicitly(draftRole ? formatAccessRoleLabel(draftRole, locale) : "selected")}
-                          </span>
-                        ) : null}
-                        {draftGrants.has(permissionKey) ? (
-                          <span className="block text-xs text-muted-foreground">
-                            {copy.companyAccess.storedExplicitly}
-                          </span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
           <DialogFooter>
@@ -508,7 +422,6 @@ export function CompanyAccess() {
                   memberId: editingMember.id,
                   membershipRole: draftRole,
                   status: draftStatus,
-                  grants: [...draftGrants],
                 });
               }}
               disabled={updateMemberMutation.isPending}

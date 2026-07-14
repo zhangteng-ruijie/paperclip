@@ -950,6 +950,16 @@ export const pluginManifestV1Schema = z.object({
         path: ["capabilities"],
       });
     }
+
+    const providerIds = manifest.authProviders.map((provider) => provider.providerId);
+    const duplicateProviderIds = providerIds.filter((providerId, i) => providerIds.indexOf(providerId) !== i);
+    if (duplicateProviderIds.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate auth provider ids: ${[...new Set(duplicateProviderIds)].join(", ")}`,
+        path: ["authProviders"],
+      });
+    }
   }
 
   if (manifest.objectReferences && manifest.objectReferences.length > 0) {

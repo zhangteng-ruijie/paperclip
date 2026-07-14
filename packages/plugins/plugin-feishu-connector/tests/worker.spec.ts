@@ -23,6 +23,7 @@ function company(): Company {
     budgetMonthlyCents: 0,
     spentMonthlyCents: 0,
     attachmentMaxBytes: 10 * 1024 * 1024,
+    defaultResponsibleUserId: null,
     requireBoardApprovalForNewAgents: false,
     feedbackDataSharingEnabled: false,
     feedbackDataSharingConsentAt: null,

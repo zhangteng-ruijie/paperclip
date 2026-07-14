@@ -133,16 +133,13 @@ export function extractSecretRefPathsFromConfig(
     if (KNOWN_ID_FIELD_NAMES.has(fieldName)) return true;
     // Skip fields ending with Id (e.g., someCustomId)
     if (fieldName.endsWith("Id")) return true;
-    // Skip fields ending with Ref that aren't secret refs
-    // (actual secret refs have format: "secret-ref" in schema)
-    if (fieldName.endsWith("Ref") && !fieldName.includes("Secret")) return true;
     return false;
   }
 
   // Fallback: no schema or no secret-ref annotations — collect UUIDs
-  // but exclude known ID fields to avoid false positives.
-  // This preserves backwards compatibility for plugins that omit
-  // instanceConfigSchema.
+  // but exclude known entity ID fields to avoid false positives. Do not
+  // blanket-exclude "*Ref": names like apiKeyRef/tokenRef are the legacy shape
+  // this fail-closed guard is meant to catch.
   function walkAll(value: unknown, currentPath: string[] = []): void {
     if (typeof value === "string") {
       if (isUuidSecretRef(value)) {
