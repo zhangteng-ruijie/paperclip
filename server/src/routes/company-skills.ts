@@ -38,7 +38,7 @@ import {
   listCatalogSkillsOrEmpty,
   readCatalogSkillFile,
 } from "../services/skills-catalog.js";
-import { forbidden, unauthorized } from "../errors.js";
+import { badRequest, forbidden, unauthorized } from "../errors.js";
 import { assertAuthenticated, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
 import {
@@ -113,6 +113,14 @@ export function companySkillRoutes(db: Db) {
     if (typeof value === "string") return value;
     if (Array.isArray(value) && typeof value[0] === "string") return value[0];
     return undefined;
+  }
+
+  function optionalQueryBoolean(value: unknown) {
+    const parsed = firstQueryString(value);
+    if (parsed === undefined) return undefined;
+    if (parsed === "true") return true;
+    if (parsed === "false") return false;
+    throw badRequest("Boolean query parameters must be true or false");
   }
 
   function queryStringArray(value: unknown): string[] {
@@ -305,12 +313,17 @@ export function companySkillRoutes(db: Db) {
         ...queryStringArray(req.query.category),
         ...queryStringArray(req.query.categories),
         ...queryStringArray(req.query["categories[]"]),
+        ...queryStringArray(req.query.tag),
+        ...queryStringArray(req.query.tags),
+        ...queryStringArray(req.query["tags[]"]),
       ],
       scope: firstQueryString(req.query.scope),
       include: [
         ...queryStringArray(req.query.include),
         ...queryStringArray(req.query["include[]"]),
       ],
+      folderId: firstQueryString(req.query.folderId),
+      includeSubtree: optionalQueryBoolean(req.query.includeSubtree),
     }));
     res.json(result);
   });
@@ -1145,9 +1158,11 @@ export function companySkillRoutes(db: Db) {
         entityType: "company",
         entityId: companyId,
         details: {
+          mode: req.body.mode ?? "import",
           scannedProjects: result.scannedProjects,
           scannedWorkspaces: result.scannedWorkspaces,
           discovered: result.discovered,
+          candidateCount: result.candidates.length,
           importedCount: result.imported.length,
           updatedCount: result.updated.length,
           conflictCount: result.conflicts.length,

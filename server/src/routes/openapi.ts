@@ -47,6 +47,13 @@ import {
   updateRoutineTriggerSchema,
   rotateRoutineTriggerSecretSchema,
   runRoutineSchema,
+  // Folders
+  createFolderSchema,
+  ensureMySkillFolderSchema,
+  folderKindSchema,
+  moveFolderItemSchema,
+  moveFolderSchema,
+  updateFolderSchema,
   // Goal
   createGoalSchema,
   updateGoalSchema,
@@ -95,6 +102,7 @@ import {
   companySkillFileUpdateSchema,
   companySkillImportSchema,
   companySkillProjectScanRequestSchema,
+  companySkillProjectScanResultSchema,
   companySkillTestInputCreateSchema,
   companySkillTestInputUpdateSchema,
   companySkillTestRunCreateSchema,
@@ -103,6 +111,7 @@ import {
   companySkillTestRunTemplateUpdateSchema,
   evaluateSkillPolicySchema,
   replaceSkillPolicySchema,
+  updateInboxAgentPolicySchema,
   // Issue tree
   createIssueTreeHoldSchema,
   previewIssueTreeControlSchema,
@@ -864,6 +873,8 @@ const CREATED_OPERATIONS = new Set([
   "POST /api/companies/{companyId}/projects",
   "POST /api/projects/{id}/workspaces",
   "POST /api/companies/{companyId}/routines",
+  "POST /api/companies/{companyId}/folders",
+  "POST /api/companies/{companyId}/folders/ensure-my",
   "POST /api/routines/{id}/triggers",
   "POST /api/companies/{companyId}/secrets",
   "POST /api/companies/{companyId}/user-secret-definitions",
@@ -2059,8 +2070,11 @@ registry.registerPath({
   path: "/api/issues/{id}/inbox-archive",
   tags: ["issues"],
   summary: "Archive issue from inbox",
-  request: { params: z.object({ id: z.string() }) },
-  responses: { 200: r.ok(), 401: r.unauthorized },
+  request: {
+    params: z.object({ id: z.string() }),
+    body: jsonBody(z.object({ userId: z.string().min(1).optional() })),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
 registry.registerPath({
@@ -2068,8 +2082,11 @@ registry.registerPath({
   path: "/api/issues/{id}/inbox-archive",
   tags: ["issues"],
   summary: "Un-archive issue from inbox",
-  request: { params: z.object({ id: z.string() }) },
-  responses: { 200: r.ok(), 401: r.unauthorized },
+  request: {
+    params: z.object({ id: z.string() }),
+    body: jsonBody(z.object({ userId: z.string().min(1).optional() })),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
 registry.registerPath({
@@ -2926,6 +2943,21 @@ registry.registerPath({
   tags: ["dashboard"],
   summary: "Get dashboard data",
   request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/recovery-observability",
+  tags: ["dashboard"],
+  summary: "Get recovery observability report",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({
+      weeks: z.string().optional(),
+      threshold: z.string().optional(),
+    }),
+  },
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 
@@ -3961,7 +3993,7 @@ registry.registerPath({
     params: z.object({ companyId: z.string() }),
     body: jsonBody(companySkillProjectScanRequestSchema),
   },
-  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+  responses: { 200: r.ok(companySkillProjectScanResultSchema), 400: r.badRequest, 401: r.unauthorized },
 });
 
 registry.registerPath({
@@ -4022,6 +4054,48 @@ registry.registerPath({
     body: jsonBody(evaluateSkillPolicySchema),
   },
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/users/me/inbox-agent-policy",
+  tags: ["companies"],
+  summary: "Get the current user's inbox agent policy",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/users/me/inbox-agent-policy",
+  tags: ["companies"],
+  summary: "Update the current user's inbox agent policy",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(updateInboxAgentPolicySchema),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/users/{userId}/inbox-agent-policy",
+  tags: ["companies"],
+  summary: "Get a company user's inbox agent policy",
+  request: { params: z.object({ companyId: z.string(), userId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/users/{userId}/inbox-agent-policy",
+  tags: ["companies"],
+  summary: "Update a company user's inbox agent policy",
+  request: {
+    params: z.object({ companyId: z.string(), userId: z.string() }),
+    body: jsonBody(updateInboxAgentPolicySchema),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
 });
 
 // ─── Execution workspaces ─────────────────────────────────────────────────────
@@ -5144,6 +5218,7 @@ registerCurrentRoute({
 for (const route of [
   ["get", "/api/companies/import/jobs/{jobId}", "Get company import job status"],
   ["get", "/api/companies/{companyId}/search", "Search company data"],
+  ["get", "/api/companies/{companyId}/search/extract", "Extract company search matches"],
   ["get", "/api/companies/{companyId}/issues/count", "Count issues in a company"],
 ] as const) {
   registerCurrentRoute({
@@ -5153,6 +5228,61 @@ for (const route of [
     summary: route[2],
   });
 }
+
+registerCurrentRoute({
+  method: "get",
+  path: "/api/companies/{companyId}/folders",
+  tags: ["folders"],
+  summary: "List folders for a company item kind",
+  query: z.object({ kind: folderKindSchema }),
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/folders",
+  tags: ["folders"],
+  summary: "Create a folder",
+  body: createFolderSchema,
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/folders/ensure-my",
+  tags: ["folders"],
+  summary: "Ensure the current user's personal skill folder exists",
+  body: ensureMySkillFolderSchema,
+});
+
+registerCurrentRoute({
+  method: "patch",
+  path: "/api/companies/{companyId}/folders/{folderId}",
+  tags: ["folders"],
+  summary: "Update a folder",
+  body: updateFolderSchema,
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/folders/items/move",
+  tags: ["folders"],
+  summary: "Move an item into or out of a folder",
+  body: moveFolderItemSchema,
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/folders/{folderId}/move",
+  tags: ["folders"],
+  summary: "Move or reorder a folder",
+  body: moveFolderSchema,
+});
+
+registerCurrentRoute({
+  method: "delete",
+  path: "/api/companies/{companyId}/folders/{folderId}",
+  tags: ["folders"],
+  summary: "Delete a folder",
+});
 
 registerCurrentRoute({
   method: "get",
