@@ -1357,14 +1357,21 @@ describe("Secrets page layout", () => {
     expect(document.body.textContent).toContain("Agent access");
     expect(document.body.textContent).toContain("Reviewer");
 
-    const agentSelect = document.getElementById("agent-access-agent") as HTMLSelectElement;
+    const agentSelect = document.getElementById("agent-access-agent") as HTMLButtonElement;
     const envKeyInput = document.getElementById("agent-access-env-key") as HTMLInputElement;
     expect(envKeyInput.value).toBe("OPENAI_API_KEY");
-    // Agents that already have access are not offered again.
-    expect(Array.from(agentSelect.options).map((option) => option.textContent)).not.toContain("Reviewer");
 
     await act(async () => {
-      setSelectValue(agentSelect, "agent-coder");
+      agentSelect.click();
+    });
+    await flushReact();
+
+    // Agents that already have access are not offered again.
+    expect(document.body.textContent).toContain("CodexCoder");
+    expect(document.body.querySelector('[aria-label="Select Reviewer"]')).toBeNull();
+
+    await act(async () => {
+      (document.body.querySelector('[aria-label="Select CodexCoder"]') as HTMLButtonElement | null)?.click();
     });
     await flushReact();
 
@@ -1572,6 +1579,122 @@ describe("Secrets folder view (PAP-14698)", () => {
 
     expect(container.textContent).toContain("No secrets match your filters.");
     expect(container.textContent).not.toContain("New secret here");
+
+    await act(async () => root.unmount());
+  });
+
+  it("creates a company secret from a folder prefix and derives the key from the full name", async () => {
+    mockSecretsApi.create.mockResolvedValue(
+      makeCompanySecret({ id: "created", name: "dev/github/oauth/clientsecret/deeper" }),
+    );
+    const root = await renderAt("/?path=dev/github/oauth");
+
+    const newSecretButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "New secret",
+    ) as HTMLButtonElement;
+    await act(async () => newSecretButton.click());
+    await flushReact();
+
+    expect(document.body.textContent).toContain("dev/github/oauth/");
+    const nameInput = document.getElementById("new-secret-name") as HTMLInputElement;
+    expect(nameInput.placeholder).toBe("clientsecret");
+    expect(nameInput.value).toBe("");
+    await act(async () => setInputValue(nameInput, "clientsecret/deeper"));
+    await flushReact();
+
+    expect((document.getElementById("new-secret-key") as HTMLInputElement).value).toBe(
+      "dev-github-oauth-clientsecret-deeper",
+    );
+    await act(async () =>
+      setTextareaValue(document.getElementById("new-secret-value") as HTMLTextAreaElement, "secret-value"),
+    );
+    const createButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Create secret",
+    ) as HTMLButtonElement;
+    await act(async () => createButton.click());
+    await flushReact();
+
+    expect(mockSecretsApi.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({ name: "dev/github/oauth/clientsecret/deeper" }),
+    );
+
+    await act(async () => root.unmount());
+  });
+
+  it("keeps the folder prefix for Each user and exposes the full name when the chip is removed", async () => {
+    const root = await renderAt("/?path=dev/github/oauth");
+    const newSecretButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "New secret",
+    ) as HTMLButtonElement;
+    await act(async () => newSecretButton.click());
+    await flushReact();
+
+    const eachUserTab = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Each user",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      eachUserTab.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      eachUserTab.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      eachUserTab.click();
+    });
+    await flushReact();
+
+    const nameInput = document.getElementById("new-secret-name") as HTMLInputElement;
+    await act(async () => setInputValue(nameInput, "personal-token"));
+    await flushReact();
+    expect((document.getElementById("new-secret-key") as HTMLInputElement).value).toBe(
+      "DEV_GITHUB_OAUTH_PERSONAL_TOKEN",
+    );
+
+    const removePrefix = document.querySelector(
+      'button[aria-label="Remove folder prefix"]',
+    ) as HTMLButtonElement;
+    await act(async () => removePrefix.click());
+    await flushReact();
+    expect((document.getElementById("new-secret-name") as HTMLInputElement).value).toBe(
+      "dev/github/oauth/personal-token",
+    );
+    expect(document.querySelector('button[aria-label="Remove folder prefix"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it("validates New folder inline and stages the trimmed segment in the URL-backed folder view", async () => {
+    const root = await renderAt("/?path=dev/github/oauth");
+    const newFolderButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "New folder",
+    ) as HTMLButtonElement;
+    await act(async () => newFolderButton.click());
+    await flushReact();
+
+    const folderInput = container.querySelector('input[aria-label="Folder name"]') as HTMLInputElement;
+    await act(async () => setInputValue(folderInput, "bad/name"));
+    const createFolderButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Create folder",
+    ) as HTMLButtonElement;
+    await act(async () => createFolderButton.click());
+    await flushReact();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Folder name cannot contain slashes.",
+    );
+
+    await act(async () => setInputValue(folderInput, "  staged  "));
+    await flushReact();
+    await act(async () => createFolderButton.click());
+    await waitForReact(() =>
+      [...container.querySelectorAll('[aria-current="page"]')].some((node) =>
+        node.textContent?.includes("staged"),
+      ),
+    );
+
+    expect(
+      [...container.querySelectorAll('[aria-current="page"]')].some((node) =>
+        node.textContent?.includes("staged"),
+      ),
+    ).toBe(true);
+    expect(container.textContent).toContain("No secrets in this folder yet.");
+    expect(container.querySelector('input[aria-label="Folder name"]')).toBeNull();
 
     await act(async () => root.unmount());
   });
