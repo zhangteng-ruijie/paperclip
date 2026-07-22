@@ -239,8 +239,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
 
   const envConfig = parseObject(config.env);
-  const hasExplicitApiKey =
-    typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const paperclipLocale = resolvePaperclipLocale(context.paperclipLocale);
   let env: Record<string, string> = {
     ...buildPaperclipEnv(agent, { locale: paperclipLocale }),
@@ -308,7 +306,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     executionTargetIsRemote,
     executionCwd: effectiveExecutionCwd,
   });
-  if (!hasExplicitApiKey && authToken) {
+  if (authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
   const timeoutSec = resolveAdapterExecutionTargetTimeoutSec(
