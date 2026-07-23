@@ -58,6 +58,7 @@ interface CompanyExportOptions extends BaseClientOptions {
   issues?: string;
   projectIssues?: string;
   expandReferencedSkills?: boolean;
+  force?: boolean;
 }
 
 interface CompanyFeedbackOptions extends BaseClientOptions {
@@ -1031,7 +1032,10 @@ export function resolveExportOutputPath(root: string, relativePath: string): str
   return filePath;
 }
 
-async function confirmOverwriteExportDirectory(outDir: string): Promise<void> {
+export async function confirmOverwriteExportDirectory(
+  outDir: string,
+  opts: { force?: boolean } = {},
+): Promise<void> {
   const root = path.resolve(outDir);
   const stats = await stat(root).catch(() => null);
   if (!stats) return;
@@ -1042,8 +1046,13 @@ async function confirmOverwriteExportDirectory(outDir: string): Promise<void> {
   const entries = await readdir(root);
   if (entries.length === 0) return;
 
+  // --force skips the guard for non-interactive/automated callers (e.g. the
+  // nightly backup routine, which exports into a git clone that legitimately
+  // still holds .git and BACKUP-README.md after cleaning tracked content).
+  if (opts.force) return;
+
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error(`Export output directory ${root} already contains files. Re-run interactively or choose an empty directory.`);
+    throw new Error(`Export output directory ${root} already contains files. Re-run interactively, pass --force, or choose an empty directory.`);
   }
 
   const confirmed = await p.confirm({
@@ -1382,6 +1391,11 @@ export function registerCompanyCommands(program: Command): void {
       .option("--issues <values>", "Comma-separated issue identifiers/ids to export")
       .option("--project-issues <values>", "Comma-separated project shortnames/ids whose issues should be exported")
       .option("--expand-referenced-skills", "Vendor skill contents instead of exporting upstream references", false)
+      .option(
+        "--force",
+        "Overwrite a non-empty output directory without the interactive confirmation (required for non-interactive/automated runs such as the nightly backup routine)",
+        false,
+      )
       .action(async (companyId: string, opts: CompanyExportOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
@@ -1401,7 +1415,7 @@ export function registerCompanyCommands(program: Command): void {
             throw new Error("Export request returned no data");
           }
           assertEssentialExportFiles(exported.files);
-          await confirmOverwriteExportDirectory(opts.out!);
+          await confirmOverwriteExportDirectory(opts.out!, { force: Boolean(opts.force) });
           await writeExportToFolder(opts.out!, exported);
           printOutput(
             {
