@@ -2643,6 +2643,14 @@ export function buildHostServices(
           triggerDetail: "system",
           reason: params.reason ?? null,
           payload: { prompt: params.prompt },
+          contextSnapshot: {
+            wakeReason: params.reason ?? null,
+            paperclipAgentMessage: {
+              text: params.prompt,
+              source: "plugin_invoke",
+              pluginKey,
+            },
+          },
           requestedByActorType: "system",
           requestedByActorId: pluginId,
         });
@@ -3119,8 +3127,15 @@ export function buildHostServices(
             taskKey: session.taskKey,
             issueId: params.issueId ?? undefined,
             taskId: params.taskId ?? params.issueId ?? undefined,
+            wakeReason: params.reason ?? null,
             wakeSource: "automation",
             wakeTriggerDetail: "system",
+            paperclipAgentMessage: {
+              text: params.prompt,
+              source: "plugin_session",
+              pluginKey,
+              sessionId: params.sessionId,
+            },
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,
@@ -3162,7 +3177,9 @@ export function buildHostServices(
                   seq: 0,
                   eventType: status === "succeeded" ? "done" : "error",
                   stream: "system",
-                  message: status === "succeeded" ? "Run completed" : `Run ${status}`,
+                  message: status === "succeeded"
+                    ? (typeof payload.finalText === "string" ? payload.finalText : null)
+                    : `Run ${status}`,
                   payload: payload,
                 });
                 cleanup();
