@@ -92,6 +92,10 @@ export async function resolveEnvironmentExecutionTarget(input: {
       streamRunLogs: parsed.config.streamRunLogs !== false,
       runner: input.environmentRuntime && input.lease
         ? {
+            // Provider-backed sandbox RPCs do not surface bounded mid-stream
+            // progress for a single stdin upload, so keep the capability disabled
+            // here. The client falls back to the chunked upload path when this is
+            // false.
             supportsSingleStreamStdinProgress: false,
             // Round-trip counter + provider-duration accumulators on the single
             // host→sandbox exec seam (Open Q1). `measureStartupStep` reads the
@@ -114,6 +118,7 @@ export async function resolveEnvironmentExecutionTarget(input: {
                 env: commandInput.env,
                 stdin: commandInput.stdin,
                 timeoutMs: commandInput.timeoutMs,
+                noProfile: commandInput.noProfile,
               });
               accumulateProviderDurations(result.metadata);
               if (result.stdout) await commandInput.onLog?.("stdout", result.stdout);
