@@ -1194,6 +1194,7 @@ export function AgentDetail() {
                 : "Repair this agent's reporting chain before assigning tasks or starting runs"
             }
             onActionError={setActionError}
+            onTerminateSuccess={() => navigate("/agents/all", { replace: true })}
             hideTerminate={Boolean(builtInState)}
             pauseConfirm={
               builtInState
