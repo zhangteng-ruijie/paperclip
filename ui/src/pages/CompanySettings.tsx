@@ -1,14 +1,9 @@
 import { ChangeEvent, useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  AGENT_ADAPTER_TYPES,
   DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES,
   DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION,
-  getAdapterEnvironmentSupport,
   MAX_COMPANY_ATTACHMENT_MAX_BYTES,
-  type Environment,
-  type EnvironmentProbeResult,
-  type JsonSchema,
 } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -17,9 +12,6 @@ import { useToast } from "../context/ToastContext";
 import { companiesApi } from "../api/companies";
 import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
-import { environmentsApi } from "../api/environments";
-import { instanceSettingsApi } from "../api/instanceSettings";
-import { secretsApi } from "../api/secrets";
 import {
   formatArchiveCompanyConfirmation,
   formatFeedbackSharingStatus,
@@ -30,10 +22,9 @@ import { hidePaperclipIngUrl } from "../lib/external-links";
 import { queryKeys } from "../lib/queryKeys";
 import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Settings, Check, CloudUpload, Download, Upload } from "lucide-react";
+import { Settings, Check, Download, Upload } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import { formatDateTime } from "../lib/utils";
-import { JsonSchemaForm, getDefaultValues, validateJsonSchemaForm } from "@/components/JsonSchemaForm";
 import {
   Field,
   ToggleField,
@@ -42,12 +33,6 @@ import {
 
 const FEEDBACK_TERMS_URL = import.meta.env.VITE_FEEDBACK_TERMS_URL?.trim() || "https://paperclip.ing/tos";
 const VISIBLE_FEEDBACK_TERMS_URL = hidePaperclipIngUrl(FEEDBACK_TERMS_URL);
-
-type AgentSnippetInput = {
-  onboardingTextUrl: string;
-  connectionCandidates?: string[] | null;
-  testResolutionUrl?: string | null;
-};
 
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_COMPANY_ATTACHMENT_MAX_MIB = DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES / BYTES_PER_MIB;
@@ -64,10 +49,6 @@ export function CompanySettings() {
   const copy = getCompanySettingsCopy(locale);
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
-  const { data: experimentalSettings } = useQuery({
-    queryKey: queryKeys.instance.experimentalSettings,
-    queryFn: () => instanceSettingsApi.getExperimental(),
-  });
   // General settings local state
   const [companyName, setCompanyName] = useState("");
   const [description, setDescription] = useState("");
@@ -95,7 +76,6 @@ export function CompanySettings() {
     Number.isInteger(attachmentMaxBytes)
     && attachmentMaxBytes >= BYTES_PER_MIB
     && attachmentMaxBytes <= MAX_COMPANY_ATTACHMENT_MAX_BYTES;
-  const cloudSyncEnabled = experimentalSettings?.enableCloudSync === true;
 
   const generalDirty =
     !!selectedCompany &&
@@ -611,14 +591,6 @@ export function CompanySettings() {
             {copy.companyPackagesDescriptionSuffix}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {cloudSyncEnabled ? (
-              <Button size="sm" asChild>
-                <Link to="/company/settings/cloud-upstream">
-                  <CloudUpload className="mr-1.5 h-3.5 w-3.5" />
-                  Send to Paperclip Cloud
-                </Link>
-              </Button>
-            ) : null}
             <Button size="sm" variant="outline" asChild>
               <Link to="/company/export">
                 <Download className="mr-1.5 h-3.5 w-3.5" />

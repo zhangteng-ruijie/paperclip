@@ -32,4 +32,3 @@ export { accessRoutes } from "./access.js";
 export { authSsoRoutes } from "./auth-sso.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
 export { instanceDatabaseBackupRoutes } from "./instance-database-backups.js";
-export { cloudUpstreamRoutes } from "./cloud-upstreams.js";
