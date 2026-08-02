@@ -42,6 +42,9 @@ import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { attentionRoutes } from "./routes/attention.js";
 import { decisionTrainingRoutes } from "./routes/decision-training.js";
+import { decisionRoutes } from "./routes/decisions.js";
+import { decisionQueueRoutes } from "./routes/decision-queues.js";
+import type { DecisionServiceOptions } from "./services/decisions.js";
 import { userProfileRoutes } from "./routes/user-profiles.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { sidebarPreferenceRoutes } from "./routes/sidebar-preferences.js";
@@ -278,6 +281,7 @@ export async function createApp(
     pluginMigrationDb?: Db;
     pluginWorkerManager?: PluginWorkerManager;
     betterAuth?: BetterAuthInstance;
+    decisionServiceOptions: DecisionServiceOptions;
     betterAuthHandler?: express.RequestHandler;
     pluginSsoStore?: PluginSsoStore;
     resolveSession?: (req: ExpressRequest) => Promise<BetterAuthSessionResult | null>;
@@ -448,6 +452,8 @@ export async function createApp(
   api.use(dashboardRoutes(db));
   api.use(attentionRoutes(db));
   api.use(decisionTrainingRoutes(db));
+  api.use(decisionRoutes(db, opts.decisionServiceOptions));
+  api.use(decisionQueueRoutes(db));
   api.use(userProfileRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(sidebarPreferenceRoutes(db));

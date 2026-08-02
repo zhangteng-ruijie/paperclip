@@ -43,14 +43,50 @@ import { registerAdapterCommands } from "./commands/client/adapter.js";
 import { registerAssetCommands } from "./commands/client/asset.js";
 import { registerSkillCommands } from "./commands/client/skill.js";
 import { cliVersion } from "./version.js";
+import { installCommand } from "./commands/install.js";
+import { uninstallCommand } from "./commands/uninstall.js";
+import { updateCommand } from "./commands/update.js";
+import { registerServiceCommands } from "./commands/service.js";
 
 const program = new Command();
 const DATA_DIR_OPTION_HELP = cliT("option.dataDir");
+
+program.enablePositionalOptions();
 
 program
   .name("paperclipai")
   .description(cliT("program.description"))
   .version(cliVersion);
+
+program
+  .command("install")
+  .description("Install Paperclip into a managed per-user CLI store")
+  .option("--canary", "Install the npm canary channel")
+  .option("--version <version>", "Install an exact published npm version")
+  .option("--ref <ref>", "Install a GitHub branch, tag, or commit SHA")
+  .option("--repo <owner/name>", "Override the GitHub repository used with --ref")
+  .option("-y, --yes", "Consent to git-ref code execution and supported shell PATH updates without prompting")
+  .action(installCommand);
+
+program
+  .command("uninstall")
+  .description("Remove the managed CLI install while preserving user data")
+  .action(uninstallCommand);
+
+program
+  .command("update")
+  .alias("upgrade")
+  .description("Check, update, or roll back the Paperclip CLI")
+  .option("--latest", "Switch to the latest stable channel")
+  .option("--canary", "Switch to the canary channel")
+  .option("--version <version>", "Install an exact published version")
+  .option("--rollback", "Flip back to the retained previous managed payload")
+  .option("--check", "Check for an available update without applying it")
+  .option("--dry-run", "Print the action without changing anything")
+  .option("--json", "Print machine-readable output")
+  .option("-y, --yes", "Confirm an explicit downgrade")
+  .option("--no-backup", "Skip the pre-update database backup")
+  .action(updateCommand);
 
 program.hook("preAction", (_thisCommand, actionCommand) => {
   const options = actionCommand.optsWithGlobals() as DataDirOptionLike;
@@ -70,6 +106,8 @@ program
   .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
   .option("--bind <mode>", cliT("command.onboard.bind"))
   .option("-y, --yes", cliT("command.onboard.yes"), false)
+  .option("--install-service", "Install and start the background service after onboarding")
+  .option("--no-install-service", "Do not install or suggest the background service")
   .option("--run", cliT("command.onboard.run"), false)
   .action(onboard);
 
@@ -130,9 +168,11 @@ const run = program
   .option("--bind <mode>", cliT("command.run.bind"))
   .option("--repair", cliT("command.run.repair"), true)
   .option("--no-repair", cliT("command.run.noRepair"))
+  .option("--force", "Run even when the same instance is active under the service manager")
   .action(runCommand);
 
 registerRunCommands(run);
+registerServiceCommands(program);
 
 const heartbeat = program.command("heartbeat").description(cliT("command.heartbeat.description"));
 

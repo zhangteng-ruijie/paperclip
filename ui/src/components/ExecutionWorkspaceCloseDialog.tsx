@@ -292,7 +292,7 @@ export function ExecutionWorkspaceCloseDialog({
             ) : null}
 
             <div className="text-xs text-muted-foreground">
-              {copy.lastChecked(formatDateTime(new Date()))}
+              {copy.lastChecked(formatDateTime(new Date(readinessQuery.dataUpdatedAt)))}
             </div>
           </div>
         ) : null}
